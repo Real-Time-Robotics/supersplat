@@ -7,8 +7,8 @@ import cameraFrameSelectionSvg from './svg/camera-frame-selection.svg';
 import cameraResetSvg from './svg/camera-reset.svg';
 import centersSvg from './svg/centers.svg';
 import colorPanelSvg from './svg/color-panel.svg';
+import cubeSvg from './svg/cube.svg';
 import flyCameraSvg from './svg/fly-camera.svg';
-import sceneImportSvg from './svg/import.svg';
 import orbitCameraSvg from './svg/orbit-camera.svg';
 import ringsSvg from './svg/rings.svg';
 import showHideSplatsSvg from './svg/show-hide-splats.svg';
@@ -89,7 +89,7 @@ class RightToolbar extends Container {
         flyMode.dom.appendChild(createSvg(flyCameraSvg));
         cameraFrameSelection.dom.appendChild(createSvg(cameraFrameSelectionSvg));
         cameraReset.dom.appendChild(createSvg(cameraResetSvg));
-        reconstructionPanel.dom.appendChild(createSvg(sceneImportSvg));
+        reconstructionPanel.dom.appendChild(createSvg(cubeSvg));
         colorPanel.dom.appendChild(createSvg(colorPanelSvg));
 
         this.append(ringsModeToggle);

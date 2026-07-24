@@ -120,7 +120,7 @@ class ReconstructionPanel extends Container {
         body.className = 'recon-body blocks-shortcuts';
         body.innerHTML = `
             <div class="recon-intro">
-                <strong>Ảnh thành Gaussian Splat</strong>
+                <strong>Images to Gaussian Splat</strong>
                 <span>Genesis Point · Polar sandbox</span>
             </div>
             <section class="recon-credit">
@@ -128,50 +128,50 @@ class ReconstructionPanel extends Container {
                     <span><i></i> CREDIT BALANCE</span>
                     <strong><span class="recon-credit-value">—</span> credits</strong>
                 </div>
-                <button class="recon-button recon-buy-credits" type="button" aria-expanded="false">＋ Mua credit</button>
+                <button class="recon-button recon-buy-credits" type="button" aria-expanded="false">＋ Buy credits</button>
             </section>
             <section class="recon-pricing" aria-hidden="true">
                 <div class="recon-section-heading">
-                    <strong>Mua credit PAYG</strong>
-                    <span>Polar sandbox · không dùng tiền thật</span>
+                    <strong>Buy PAYG credits</strong>
+                    <span>Polar sandbox · no real charges</span>
                 </div>
-                <div class="recon-pricing-packs"><span>Đang tải pricing…</span></div>
+                <div class="recon-pricing-packs"><span>Loading pricing…</span></div>
                 <div class="recon-custom-credits">
-                    <label for="recon-custom-credits">Số credit tùy chỉnh</label>
+                    <label for="recon-custom-credits">Custom credits</label>
                     <div>
                         <input id="recon-custom-credits" type="number" min="100" max="1000000" step="100" value="1000">
                         <span class="recon-custom-price">≈ $10.00</span>
-                        <button class="recon-button recon-primary recon-custom-buy" type="button">Mua</button>
+                        <button class="recon-button recon-primary recon-custom-buy" type="button">Buy</button>
                     </div>
                 </div>
                 <p class="recon-pricing-note"></p>
                 <p class="recon-purchase-status" role="status"></p>
-                <a class="recon-purchase-checkout" target="genesis-polar-checkout" rel="noopener" hidden>Mở lại Polar checkout ↗</a>
+                <a class="recon-purchase-checkout" target="genesis-polar-checkout" rel="noopener" hidden>Reopen Polar checkout ↗</a>
             </section>
             <div class="recon-dropzone" tabindex="0">
                 <div class="recon-drop-icon">＋</div>
-                <strong>Thả folder ảnh vào đây</strong>
-                <span>JPG, PNG, TIFF, BMP hoặc WebP</span>
+                <strong>Drop an image folder here</strong>
+                <span>JPG, PNG, TIFF, BMP or WebP</span>
                 <div class="recon-file-actions">
-                    <button class="recon-button recon-folder-button" type="button">Chọn folder</button>
-                    <button class="recon-button recon-images-button" type="button">Chọn nhiều ảnh</button>
+                    <button class="recon-button recon-folder-button" type="button">Choose folder</button>
+                    <button class="recon-button recon-images-button" type="button">Choose images</button>
                 </div>
             </div>
             <input class="recon-folder-input" type="file" accept="image/*,.tif,.tiff" multiple hidden>
             <input class="recon-image-input" type="file" accept="image/*,.tif,.tiff" multiple hidden>
-            <div class="recon-file-summary">Chưa chọn ảnh</div>
+            <div class="recon-file-summary">No images selected</div>
             <div class="recon-progress-track"><div class="recon-progress-bar"></div></div>
             <div class="recon-state">
-                <strong class="recon-status">Sẵn sàng</strong>
-                <span class="recon-status-detail">Chọn một bộ ảnh chụp quanh vật thể hoặc không gian.</span>
+                <strong class="recon-status">Ready</strong>
+                <span class="recon-status-detail">Choose a set of photos captured around an object or space.</span>
             </div>
-            <a class="recon-checkout" target="genesis-polar-checkout" rel="noopener" hidden>Mở Polar sandbox checkout ↗</a>
+            <a class="recon-checkout" target="genesis-polar-checkout" rel="noopener" hidden>Open Polar sandbox checkout ↗</a>
             <pre class="recon-logs" hidden></pre>
             <footer class="recon-footer">
-                <button class="recon-button recon-cancel" type="button" hidden>Huỷ</button>
-                <button class="recon-button recon-primary recon-start" type="button" disabled>Tạo Gaussian Splat</button>
+                <button class="recon-button recon-cancel" type="button" hidden>Cancel</button>
+                <button class="recon-button recon-primary recon-start" type="button" disabled>Create Gaussian Splat</button>
             </footer>
-            <p class="recon-note">Credit chỉ được giữ khi job bắt đầu. Model hoàn tất sẽ tự mở trong SuperSplat.</p>`;
+            <p class="recon-note">Credits are only held once the job starts. The finished model opens automatically in SuperSplat.</p>`;
         this.dom.appendChild(body);
 
         this.fileSummary = this.query('.recon-file-summary');
@@ -256,12 +256,12 @@ class ReconstructionPanel extends Container {
         const bytes = candidates.reduce((sum, file) => sum + file.size, 0);
         const size = bytes >= 1024 ** 3 ? `${(bytes / 1024 ** 3).toFixed(2)} GB` : `${(bytes / 1024 ** 2).toFixed(1)} MB`;
         this.fileSummary.textContent = candidates.length ?
-            `${candidates.length.toLocaleString()} ảnh · ${size}` :
-            'Không tìm thấy ảnh được hỗ trợ';
+            `${candidates.length.toLocaleString()} images · ${size}` :
+            'No supported images found';
         this.startButton.disabled = candidates.length === 0;
-        this.setState('Sẵn sàng để upload', candidates.length < 20 ?
-            'Bộ ảnh nhỏ có thể tạo model kém ổn định; nên dùng từ 20 ảnh có độ chồng lấp tốt.' :
-            'Hệ thống sẽ upload, báo giá credit rồi tự bắt đầu khi đủ balance.', 0);
+        this.setState('Ready to upload', candidates.length < 20 ?
+            'A small image set may produce an unstable model; use at least 20 well-overlapping photos.' :
+            'It will upload, quote the credit cost, then start automatically once the balance is sufficient.', 0);
     }
 
     private async refreshCredits() {
@@ -325,7 +325,7 @@ class ReconstructionPanel extends Container {
         const min = Number(this.customCreditsInput.min || 100);
         const max = Number(this.customCreditsInput.max || 1_000_000);
         if (!Number.isInteger(customCredits) || customCredits < min || customCredits > max) {
-            this.purchaseStatus.textContent = `Nhập từ ${min.toLocaleString()} đến ${max.toLocaleString()} credits.`;
+            this.purchaseStatus.textContent = `Enter between ${min.toLocaleString()} and ${max.toLocaleString()} credits.`;
             return;
         }
         await this.purchaseCredits({ customCredits }, customCredits);
@@ -334,8 +334,8 @@ class ReconstructionPanel extends Container {
     private async purchaseCredits(body: { packCredits?: number; customCredits?: number }, expectedCredits: number) {
         const balanceBefore = await this.refreshCredits() ?? this.balance;
         const popup = window.open('about:blank', `genesis-polar-${Date.now()}`, 'popup,width=520,height=760');
-        if (popup) popup.document.body.textContent = 'Đang tạo Polar sandbox checkout…';
-        this.purchaseStatus.textContent = 'Đang tạo checkout…';
+        if (popup) popup.document.body.textContent = 'Creating Polar sandbox checkout…';
+        this.purchaseStatus.textContent = 'Creating checkout…';
         try {
             const response = await fetch('/api/reconstruction/checkout', {
                 method: 'POST',
@@ -346,7 +346,7 @@ class ReconstructionPanel extends Container {
             this.purchaseCheckoutLink.href = checkout.url;
             this.purchaseCheckoutLink.hidden = false;
             if (popup) popup.location.href = checkout.url;
-            this.purchaseStatus.textContent = `Đang chờ Polar cộng ${expectedCredits.toLocaleString()} credits…`;
+            this.purchaseStatus.textContent = `Waiting for Polar to add ${expectedCredits.toLocaleString()} credits…`;
             await this.waitForCheckout(checkout.id, balanceBefore, popup, expectedCredits);
         } catch (error) {
             popup?.close();
@@ -368,17 +368,17 @@ class ReconstructionPanel extends Container {
             if (checkout?.status === 'paid' || (balance != null && balance > balanceBefore)) {
                 if (popup && !popup.closed) popup.close();
                 const received = balance == null ? expectedCredits : Math.max(expectedCredits, balance - balanceBefore);
-                this.purchaseStatus.textContent = `Đã nhận ${received.toLocaleString()} credits.`;
+                this.purchaseStatus.textContent = `Received ${received.toLocaleString()} credits.`;
                 this.purchaseCheckoutLink.hidden = true;
                 return;
             }
             if (checkout?.status === 'expired' || checkout?.status === 'failed') {
-                throw new Error(`Polar checkout kết thúc với trạng thái “${checkout.status}”.`);
+                throw new Error(`Polar checkout ended with status “${checkout.status}”.`);
             }
             await delay(2000);
         }
         if (pollId === this.checkoutPollId) {
-            throw new Error('Checkout vẫn chưa hoàn tất. Bạn có thể mở lại checkout hoặc kiểm tra balance sau.');
+            throw new Error('Checkout is still not complete. You can reopen the checkout or check your balance later.');
         }
     }
 
@@ -396,22 +396,22 @@ class ReconstructionPanel extends Container {
 
     private updateStorageProgress(progress: UploadProgress) {
         if (progress.phase === 'presign') {
-            this.setState('Đang chuẩn bị object storage', 'Server đang tạo các URL upload bảo mật.', 36);
+            this.setState('Preparing object storage', 'The server is creating secure upload URLs.', 36);
             return;
         }
         if (progress.phase === 'upload') {
             const ratio = progress.total > 0 ? progress.loaded / progress.total : 0;
             const current = progress.file ? ` · ${progress.file}` : '';
-            this.setState('Đang upload lên object storage',
+            this.setState('Uploading to object storage',
                 `${Math.round(progress.loaded / 1024 / 1024)} / ${Math.round(progress.total / 1024 / 1024)} MB${current}`,
                 36 + ratio * 17);
             return;
         }
         if (progress.phase === 'finalize') {
-            this.setState('Đang xác nhận dataset', 'Object storage đã nhận đủ ảnh.', 54);
+            this.setState('Finalizing dataset', 'Object storage received all images.', 54);
             return;
         }
-        this.setState('Đang xử lý dataset', 'Server đang kiểm tra và lập chỉ mục ảnh.', 56);
+        this.setState('Processing dataset', 'The server is validating and indexing images.', 56);
     }
 
     private upload(): Promise<UploadResponse> {
@@ -421,7 +421,7 @@ class ReconstructionPanel extends Container {
             const form = new FormData();
             this.files.forEach(file => form.append('images', file, file.name));
             form.append('relativePaths', JSON.stringify(this.relativePaths));
-            form.append('label', `SuperSplat ${new Date().toLocaleString('vi-VN')}`);
+            form.append('label', `SuperSplat ${new Date().toLocaleString('en-US')}`);
             form.append('operationId', operationId);
 
             source.addEventListener('progress', (event) => {
@@ -430,7 +430,7 @@ class ReconstructionPanel extends Container {
             source.addEventListener('end', () => source.close());
             source.addEventListener('failed', (event) => {
                 const data = JSON.parse(event.data) as { message?: string };
-                this.statusDetail.textContent = data.message || 'Upload object storage thất bại.';
+                this.statusDetail.textContent = data.message || 'Object storage upload failed.';
                 source.close();
             });
 
@@ -440,14 +440,14 @@ class ReconstructionPanel extends Container {
             request.upload.onprogress = (event) => {
                 if (!event.lengthComputable) return;
                 const percent = Math.round((event.loaded / event.total) * 34);
-                this.setState('Đang gửi ảnh tới localhost',
+                this.setState('Sending images to localhost',
                     `${Math.round(event.loaded / 1024 / 1024)} / ${Math.round(event.total / 1024 / 1024)} MB`,
                     percent);
             };
             request.onerror = () => {
                 this.activeUpload = null;
                 source.close();
-                reject(new Error('Mất kết nối tới server localhost.'));
+                reject(new Error('Lost connection to the localhost server.'));
             };
             request.onabort = () => {
                 this.activeUpload = null;
@@ -464,7 +464,7 @@ class ReconstructionPanel extends Container {
                     // Status handling below supplies a useful fallback.
                 }
                 if (request.status < 200 || request.status >= 300) {
-                    reject(new Error(responseBody.error || `Upload thất bại (${request.status})`));
+                    reject(new Error(responseBody.error || `Upload failed (${request.status})`));
                 } else {
                     resolve(responseBody as UploadResponse);
                 }
@@ -485,18 +485,18 @@ class ReconstructionPanel extends Container {
         try {
             const prepared = await this.upload();
             this.creditValue.textContent = prepared.quote.balance.toLocaleString();
-            this.setState('Đã nhận báo giá',
-                `Cần ${prepared.quote.required.toLocaleString()} credits cho ${prepared.quote.billable_gpx.toFixed(2)} billable Gpx.`,
+            this.setState('Quote received',
+                `Needs ${prepared.quote.required.toLocaleString()} credits for ${prepared.quote.billable_gpx.toFixed(2)} billable Gpx.`,
                 58);
 
             if (prepared.state === 'checkout_required') {
                 const checkout = prepared.checkout;
-                if (!checkout) throw new Error('SDK không trả về Polar checkout URL.');
+                if (!checkout) throw new Error('The SDK did not return a Polar checkout URL.');
                 this.checkoutLink.href = checkout.url;
                 this.checkoutLink.hidden = false;
                 const popup = window.open(checkout.url, `genesis-polar-${Date.now()}`, 'popup,width=520,height=760');
-                this.setState('Đang chờ mua credit sandbox',
-                    `Thiếu ${prepared.creditsNeeded?.toLocaleString()} credits. Hoàn tất checkout ở cửa sổ Polar.`,
+                this.setState('Waiting for sandbox credit purchase',
+                    `Short ${prepared.creditsNeeded?.toLocaleString()} credits. Complete checkout in the Polar window.`,
                     59);
                 await this.waitForCheckout(checkout.id, prepared.quote.balance, popup, prepared.creditsNeeded || 0);
                 await this.waitForCredits(prepared.datasetId, prepared.quote.required);
@@ -507,7 +507,7 @@ class ReconstructionPanel extends Container {
         } catch (error) {
             if (this.cancelled) return;
             this.cancelButton.hidden = true;
-            this.setState('Không thể reconstruction', messageOf(error), 0);
+            this.setState('Reconstruction failed', messageOf(error), 0);
             this.setBusy(false);
         }
     }
@@ -520,7 +520,7 @@ class ReconstructionPanel extends Container {
             this.creditValue.textContent = Number(quote.balance).toLocaleString();
             if (quote.balance >= required) {
                 this.checkoutLink.hidden = true;
-                this.setState('Đã nhận credit', 'Đang gửi job Gaussian Splatting…', 60);
+                this.setState('Credits received', 'Submitting the Gaussian Splatting job…', 60);
                 return;
             }
             await delay(2000);
@@ -539,7 +539,7 @@ class ReconstructionPanel extends Container {
         });
         const data = await this.readJson(response);
         this.activeJobId = data.jobId;
-        this.setState('Job đang chạy', `Job ${this.activeJobId.slice(0, 8)} · đang chờ stage đầu tiên`, 62);
+        this.setState('Job running', `Job ${this.activeJobId.slice(0, 8)} · waiting for the first stage`, 62);
         this.followEvents(this.activeJobId);
         await this.waitForJob(this.activeJobId);
     }
@@ -566,12 +566,12 @@ class ReconstructionPanel extends Container {
             const stage = JSON.parse(event.data) as StageEvent;
             const ratio = stage.total > 0 ? (stage.index - (stage.phase === 'start' ? 1 : 0)) / stage.total : 0;
             this.stageProgress = 62 + Math.max(0, Math.min(1, ratio)) * 29;
-            const verb = stage.phase === 'start' ? 'Đang chạy' : 'Đã xong';
+            const verb = stage.phase === 'start' ? 'Running' : 'Done';
             this.setState(`${verb}: ${stage.step}`, `Stage ${stage.index} / ${stage.total}`, this.stageProgress);
         });
         source.addEventListener('artifact', (event) => {
             const artifact = JSON.parse(event.data) as { name?: string };
-            this.statusDetail.textContent = artifact.name ? `Artifact sẵn sàng: ${artifact.name}` : 'Artifact đã sẵn sàng.';
+            this.statusDetail.textContent = artifact.name ? `Artifact ready: ${artifact.name}` : 'Artifact ready.';
         });
         source.addEventListener('end', () => {
             source.close();
@@ -579,7 +579,7 @@ class ReconstructionPanel extends Container {
         });
         source.addEventListener('failed', (event) => {
             const data = JSON.parse(event.data) as { message?: string };
-            this.statusDetail.textContent = data.message || 'Mất kết nối tới job event stream.';
+            this.statusDetail.textContent = data.message || 'Lost connection to the job event stream.';
             source.close();
         });
         source.onerror = () => {
@@ -595,7 +595,7 @@ class ReconstructionPanel extends Container {
             const response = await fetch(`/api/reconstruction/jobs/${encodeURIComponent(jobId)}`, { cache: 'no-store' });
             if (response.status === 404 && transientNotFound < 30) {
                 transientNotFound++;
-                this.statusDetail.textContent = 'Đang đồng bộ trạng thái và artifact cuối cùng…';
+                this.statusDetail.textContent = 'Syncing final status and artifacts…';
                 await delay(2000);
                 continue;
             }
@@ -607,17 +607,17 @@ class ReconstructionPanel extends Container {
                 this.activeEvents = null;
                 this.cancelButton.hidden = true;
                 this.activeJobId = null;
-                if (job.status !== 'done') throw new Error(`Job kết thúc với trạng thái “${job.status}”.`);
+                if (job.status !== 'done') throw new Error(`Job ended with status “${job.status}”.`);
                 break;
             }
             if (this.stageProgress === 0) {
                 const progress = job.status === 'queued' ? 62 : job.status === 'viewer' ? 91 : 68;
-                this.setState(`Job: ${job.status}`, 'Pipeline đang chạy trên GPU; tiến độ chi tiết sẽ xuất hiện theo stage.', progress);
+                this.setState(`Job: ${job.status}`, 'The pipeline is running on the GPU; detailed progress appears per stage.', progress);
             }
             await delay(2500);
         }
 
-        this.setState('Đang tải model', 'Nhận PLY artifact và đưa vào SuperSplat…', 94);
+        this.setState('Downloading model', 'Fetching the PLY artifact and loading it into SuperSplat…', 94);
         const modelResponse = await fetch(`/api/reconstruction/jobs/${encodeURIComponent(jobId)}/model`);
         if (!modelResponse.ok) await this.readJson(modelResponse);
         const blob = await modelResponse.blob();
@@ -626,7 +626,7 @@ class ReconstructionPanel extends Container {
         const file = new File([blob], filename, { type: blob.type || 'application/ply' });
         await this.events.invoke('import', [{ filename, contents: file }]);
         await this.refreshCredits();
-        this.setState('Model đã mở trong SuperSplat', `${filename} · ${(blob.size / 1024 / 1024).toFixed(1)} MB`, 100);
+        this.setState('Model opened in SuperSplat', `${filename} · ${(blob.size / 1024 / 1024).toFixed(1)} MB`, 100);
         this.setBusy(false);
     }
 
@@ -645,7 +645,7 @@ class ReconstructionPanel extends Container {
         }
         this.activeJobId = null;
         this.cancelButton.hidden = true;
-        this.setState('Đã yêu cầu huỷ', 'Job sẽ dừng ở checkpoint an toàn tiếp theo.', 0);
+        this.setState('Cancellation requested', 'The job will stop at the next safe checkpoint.', 0);
         this.setBusy(false);
     }
 
@@ -656,7 +656,7 @@ class ReconstructionPanel extends Container {
         } catch {
             // Use status below.
         }
-        if (!response.ok) throw new Error(body.error || `Server trả về ${response.status}`);
+        if (!response.ok) throw new Error(body.error || `Server returned ${response.status}`);
         return body;
     }
 }
