@@ -128,6 +128,26 @@ app.get('/api/reconstruction/datasets/:datasetId/quote', asyncRoute(async (req, 
     res.json(await gp.quote(req.params.datasetId, 'splat'));
 }));
 
+app.get('/api/reconstruction/runs', asyncRoute(async (req, res) => {
+    const limit = Math.min(50, Math.max(1, Number(req.query.limit) || 12));
+    const envelope = await gp.listDatasets({ limit: 50 });
+    const datasets = envelope.datasets || envelope.rows || [];
+    const groups = await Promise.all(datasets.map(async dataset => ({
+        dataset,
+        runs: await gp.listRuns(dataset.dataset_id)
+    })));
+    const runs = groups.flatMap(({ dataset, runs: datasetRuns }) => datasetRuns.map(run => ({
+        ...run,
+        dataset_id: dataset.dataset_id,
+        dataset_label: dataset.label,
+        image_count: dataset.image_count
+    })))
+    .filter(run => run.status === 'done' && run.artifact_count > 0 && run.primary)
+    .sort((a, b) => b.created - a.created)
+    .slice(0, limit);
+    res.json({ runs });
+}));
+
 app.delete('/api/reconstruction/datasets/:datasetId', asyncRoute(async (req, res) => {
     await gp.deleteDataset(req.params.datasetId);
     res.status(204).end();
@@ -182,10 +202,9 @@ app.post('/api/reconstruction/upload', upload.array('images', 2000), asyncRoute(
         const quote = await gp.quote(datasetId, 'splat');
 
         if (quote.balance < quote.required) {
-            const creditsNeeded = Math.max(100, Math.ceil(quote.required - quote.balance));
-            const checkout = await gp.createCheckout({ customCredits: creditsNeeded, client: 'web' });
+            const creditsNeeded = Math.max(0, Math.ceil(quote.required - quote.balance));
             publishUploadEvent(operationId, 'end', { datasetId });
-            res.json({ state: 'checkout_required', datasetId, quote, creditsNeeded, checkout });
+            res.json({ state: 'checkout_required', datasetId, quote, creditsNeeded });
             return;
         }
 
@@ -263,6 +282,21 @@ app.get('/api/reconstruction/jobs/:jobId/model', asyncRoute(async (req, res) => 
     res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
     Readable.fromWeb(stream).pipe(res);
 }));
+
+app.get('/api/reconstruction/datasets/:datasetId/runs/:pipeline/:runName/model',
+    asyncRoute(async (req, res) => {
+        const { datasetId, pipeline, runName } = req.params;
+        const artifacts = await gp.listRunArtifacts(datasetId, pipeline, runName);
+        const artifact = artifacts.find(item => item.primary)
+            || artifacts.find(item => item.kind === 'splat_ply')
+            || artifacts.find(item => item.name.toLowerCase().endsWith('.ply'));
+        if (!artifact) {
+            res.status(404).json({ error: 'Run has no Gaussian Splat PLY artifact.' });
+            return;
+        }
+        const url = await gp.getRunArtifactUrl(datasetId, pipeline, runName, artifact.name);
+        res.json({ name: artifact.name, url });
+    }));
 
 app.use(express.static(path.join(rootDir, 'dist'), { etag: false, maxAge: 0 }));
 app.use((_req, res) => res.sendFile(path.join(rootDir, 'dist', 'index.html')));

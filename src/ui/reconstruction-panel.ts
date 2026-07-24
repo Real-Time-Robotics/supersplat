@@ -8,7 +8,6 @@ type UploadResponse = {
     datasetId: string;
     quote: { required: number; balance: number; billable_gpx: number };
     creditsNeeded?: number;
-    checkout?: { url: string; id: string };
 };
 
 type PricingPack = {
@@ -46,7 +45,22 @@ type StageEvent = {
     returncode: number | null;
 };
 
+type RecentRun = {
+    dataset_id: string;
+    dataset_label: string;
+    image_count: number;
+    pipeline: string;
+    run_name: string;
+    status: string;
+    created: number;
+    artifact_count: number;
+    bytes: number;
+    primary: string;
+};
+
 const IMAGE_EXTENSIONS = /\.(?:jpe?g|png|tiff?|bmp|webp)$/i;
+const PREPARED_DATASET_KEY = 'genesis.reconstruction.preparedDataset';
+const JOB_NOT_FOUND_GRACE = 3;
 const delay = (ms: number) => new Promise<void>((resolve) => {
     setTimeout(resolve, ms);
 });
@@ -58,6 +72,7 @@ class ReconstructionPanel extends Container {
     private events: Events;
     private files: File[] = [];
     private relativePaths: string[] = [];
+    private preparedDataset: Pick<UploadResponse, 'datasetId' | 'quote'> | null = null;
     private activeJobId: string | null = null;
     private activeUpload: XMLHttpRequest | null = null;
     private activeEvents: EventSource | null = null;
@@ -87,6 +102,8 @@ class ReconstructionPanel extends Container {
     private purchaseCheckoutLink: HTMLAnchorElement;
     private customCreditsInput: HTMLInputElement;
     private customPrice: HTMLElement;
+    private recentRuns: HTMLElement;
+    private refreshRunsButton: HTMLButtonElement;
 
     constructor(events: Events) {
         super({
@@ -171,7 +188,17 @@ class ReconstructionPanel extends Container {
                 <button class="recon-button recon-cancel" type="button" hidden>Cancel</button>
                 <button class="recon-button recon-primary recon-start" type="button" disabled>Create Gaussian Splat</button>
             </footer>
-            <p class="recon-note">Credits are only held once the job starts. The finished model opens automatically in SuperSplat.</p>`;
+            <p class="recon-note">Credits are only held once the job starts. The finished model opens automatically in SuperSplat.</p>
+            <section class="recon-recent">
+                <div class="recon-recent-heading">
+                    <div>
+                        <strong>Recent models</strong>
+                        <span>Reopen artifacts stored on R2</span>
+                    </div>
+                    <button class="recon-button recon-refresh-runs" type="button" aria-label="Refresh recent models">↻</button>
+                </div>
+                <div class="recon-recent-list"><span>Loading…</span></div>
+            </section>`;
         this.dom.appendChild(body);
 
         this.fileSummary = this.query('.recon-file-summary');
@@ -193,6 +220,8 @@ class ReconstructionPanel extends Container {
         this.purchaseCheckoutLink = this.query('.recon-purchase-checkout');
         this.customCreditsInput = this.query('.recon-custom-credits input');
         this.customPrice = this.query('.recon-custom-price');
+        this.recentRuns = this.query('.recon-recent-list');
+        this.refreshRunsButton = this.query('.recon-refresh-runs');
         this.folderInput.setAttribute('webkitdirectory', '');
 
         this.query('.recon-folder-button').addEventListener('click', () => this.folderInput.click());
@@ -204,6 +233,7 @@ class ReconstructionPanel extends Container {
         this.buyCreditsButton.addEventListener('click', () => this.togglePricing());
         this.query('.recon-custom-buy').addEventListener('click', () => this.purchaseCustomCredits());
         this.customCreditsInput.addEventListener('input', () => this.updateCustomPrice());
+        this.refreshRunsButton.addEventListener('click', () => this.refreshRecentRuns());
 
         ['pointerdown', 'pointerup', 'pointermove', 'wheel', 'dblclick'].forEach((eventName) => {
             this.dom.addEventListener(eventName, (event: Event) => event.stopPropagation());
@@ -229,7 +259,10 @@ class ReconstructionPanel extends Container {
             if (visible === this.hidden) {
                 this.hidden = !visible;
                 events.fire('reconstructionPanel.visible', visible);
-                if (visible) this.refreshCredits();
+                if (visible) {
+                    this.refreshCredits();
+                    this.refreshRecentRuns();
+                }
             }
         };
         events.function('reconstructionPanel.visible', () => !this.hidden);
@@ -242,15 +275,43 @@ class ReconstructionPanel extends Container {
             if (visible) setVisible(false);
         });
 
+        this.restorePreparedDataset();
         this.refreshCredits();
+        this.refreshRecentRuns();
     }
 
     private query<T extends HTMLElement = HTMLElement>(selector: string): T {
         return this.dom.querySelector(selector) as T;
     }
 
+    private restorePreparedDataset() {
+        try {
+            const value = JSON.parse(localStorage.getItem(PREPARED_DATASET_KEY) || 'null');
+            if (!value?.datasetId || !value?.quote) return;
+            this.preparedDataset = value;
+            this.fileSummary.textContent = `Dataset ${value.datasetId} is already uploaded · ready to reuse`;
+            this.startButton.disabled = false;
+        } catch {
+            localStorage.removeItem(PREPARED_DATASET_KEY);
+        }
+    }
+
+    private persistPreparedDataset() {
+        if (this.preparedDataset) {
+            localStorage.setItem(PREPARED_DATASET_KEY, JSON.stringify(this.preparedDataset));
+        } else {
+            localStorage.removeItem(PREPARED_DATASET_KEY);
+        }
+    }
+
+    private clearPreparedDataset() {
+        this.preparedDataset = null;
+        this.persistPreparedDataset();
+    }
+
     private selectFiles(list: FileList | null) {
         const candidates = Array.from(list ?? []).filter(file => IMAGE_EXTENSIONS.test(file.name));
+        this.clearPreparedDataset();
         this.files = candidates;
         this.relativePaths = candidates.map(file => (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name);
         const bytes = candidates.reduce((sum, file) => sum + file.size, 0);
@@ -274,6 +335,64 @@ class ReconstructionPanel extends Container {
         } catch {
             this.creditValue.textContent = 'offline';
             return null;
+        }
+    }
+
+    private async refreshRecentRuns() {
+        this.refreshRunsButton.disabled = true;
+        try {
+            const response = await fetch('/api/reconstruction/runs?limit=12', { cache: 'no-store' });
+            const data = await this.readJson(response) as { runs: RecentRun[] };
+            this.recentRuns.textContent = '';
+            if (!data.runs.length) {
+                const empty = document.createElement('span');
+                empty.textContent = 'No Gaussian Splat artifacts yet.';
+                this.recentRuns.appendChild(empty);
+                return;
+            }
+            for (const run of data.runs) {
+                const button = document.createElement('button');
+                button.type = 'button';
+                button.className = 'recon-button recon-run';
+                const name = document.createElement('strong');
+                name.textContent = run.dataset_label || run.dataset_id;
+                const created = new Date(run.created < 1e12 ? run.created * 1000 : run.created);
+                const detail = document.createElement('span');
+                detail.textContent = `${run.pipeline}/${run.run_name} · ${created.toLocaleString('en-US')} · ${(run.bytes / 1024 / 1024).toFixed(1)} MB`;
+                button.append(name, detail);
+                button.addEventListener('click', () => this.openRecentRun(run));
+                this.recentRuns.appendChild(button);
+            }
+        } catch (error) {
+            this.recentRuns.textContent = `Could not load runs: ${messageOf(error)}`;
+        } finally {
+            this.refreshRunsButton.disabled = false;
+        }
+    }
+
+    private async openRecentRun(run: RecentRun) {
+        this.setBusy(true);
+        this.setState('Opening saved model',
+            `${run.dataset_label || run.dataset_id} · ${run.pipeline}/${run.run_name}`,
+            94);
+        try {
+            const route = `/api/reconstruction/datasets/${encodeURIComponent(run.dataset_id)}` +
+                `/runs/${encodeURIComponent(run.pipeline)}/${encodeURIComponent(run.run_name)}/model`;
+            const metadata = await this.readJson(await fetch(route, { cache: 'no-store' })) as {
+                name: string;
+                url: string;
+            };
+            const response = await fetch(metadata.url);
+            if (!response.ok) throw new Error(`R2 returned ${response.status}`);
+            const blob = await response.blob();
+            const filename = metadata.name.split('/').pop() || run.primary.split('/').pop() || 'genesis-run.ply';
+            const file = new File([blob], filename, { type: blob.type || 'application/ply' });
+            await this.events.invoke('import', [{ filename, contents: file }]);
+            this.setState('Model opened from R2', `${filename} · ${(blob.size / 1024 / 1024).toFixed(1)} MB`, 100);
+        } catch (error) {
+            this.setState('Could not open saved model', messageOf(error), 0);
+        } finally {
+            this.setBusy(false);
         }
     }
 
@@ -347,15 +466,17 @@ class ReconstructionPanel extends Container {
             this.purchaseCheckoutLink.hidden = false;
             if (popup) popup.location.href = checkout.url;
             this.purchaseStatus.textContent = `Waiting for Polar to add ${expectedCredits.toLocaleString()} credits…`;
-            await this.waitForCheckout(checkout.id, balanceBefore, popup, expectedCredits);
+            await this.waitForCheckout(checkout.id, balanceBefore, popup);
+            await this.refreshPreparedQuote();
         } catch (error) {
             popup?.close();
             this.purchaseStatus.textContent = messageOf(error);
         }
     }
 
-    private async waitForCheckout(checkoutId: string, balanceBefore: number, popup: Window | null, expectedCredits: number) {
+    private async waitForCheckout(checkoutId: string, balanceBefore: number, popup: Window | null) {
         const pollId = ++this.checkoutPollId;
+        let paymentConfirmed = false;
         for (let attempt = 0; attempt < 150 && pollId === this.checkoutPollId; attempt++) {
             let checkout: CheckoutStatus | null = null;
             try {
@@ -365,12 +486,16 @@ class ReconstructionPanel extends Container {
                 // Balance remains a reliable fallback if Polar status is temporarily unavailable.
             }
             const balance = await this.refreshCredits();
-            if (checkout?.status === 'paid' || (balance != null && balance > balanceBefore)) {
+            paymentConfirmed ||= checkout?.status === 'paid';
+            if (balance != null && balance > balanceBefore) {
                 if (popup && !popup.closed) popup.close();
-                const received = balance == null ? expectedCredits : Math.max(expectedCredits, balance - balanceBefore);
+                const received = balance - balanceBefore;
                 this.purchaseStatus.textContent = `Received ${received.toLocaleString()} credits.`;
                 this.purchaseCheckoutLink.hidden = true;
                 return;
+            }
+            if (paymentConfirmed) {
+                this.purchaseStatus.textContent = 'Polar confirmed payment. Waiting for the credit balance to update…';
             }
             if (checkout?.status === 'expired' || checkout?.status === 'failed') {
                 throw new Error(`Polar checkout ended with status “${checkout.status}”.`);
@@ -382,6 +507,43 @@ class ReconstructionPanel extends Container {
         }
     }
 
+    private async refreshPreparedQuote(): Promise<UploadResponse | null> {
+        if (!this.preparedDataset) return null;
+        try {
+            const response = await fetch(
+                `/api/reconstruction/datasets/${encodeURIComponent(this.preparedDataset.datasetId)}/quote`,
+                { cache: 'no-store' }
+            );
+            if (response.status === 404) {
+                this.clearPreparedDataset();
+                throw new Error('The uploaded dataset is no longer on R2; the next Start will upload the images again.');
+            }
+            const quote = await this.readJson(response) as UploadResponse['quote'];
+            this.preparedDataset.quote = quote;
+            this.persistPreparedDataset();
+            this.balance = Number(quote.balance);
+            this.creditValue.textContent = this.balance.toLocaleString();
+            const creditsNeeded = Math.max(0, Math.ceil(quote.required - quote.balance));
+            if (creditsNeeded === 0) {
+                this.setState('Credits available',
+                    `The dataset is already uploaded. Press Create Gaussian Splat to start the ${quote.required.toLocaleString()}-credit job.`,
+                    60);
+            } else {
+                this.setState('Insufficient credits',
+                    `The dataset is already on R2; ${creditsNeeded.toLocaleString()} more credits are needed. Buy credits and press Start again; the images will not be uploaded twice.`,
+                    58);
+            }
+            return {
+                state: creditsNeeded === 0 ? 'ready' : 'checkout_required',
+                datasetId: this.preparedDataset.datasetId,
+                quote,
+                creditsNeeded
+            };
+        } catch (error) {
+            throw new Error(`Could not recheck the uploaded dataset: ${messageOf(error)}`);
+        }
+    }
+
     private setState(title: string, detail: string, progress: number) {
         this.status.textContent = title;
         this.statusDetail.textContent = detail;
@@ -389,7 +551,7 @@ class ReconstructionPanel extends Container {
     }
 
     private setBusy(busy: boolean) {
-        this.startButton.disabled = busy || this.files.length === 0;
+        this.startButton.disabled = busy || (this.files.length === 0 && !this.preparedDataset);
         this.imageInput.disabled = busy;
         this.folderInput.disabled = busy;
     }
@@ -474,7 +636,7 @@ class ReconstructionPanel extends Container {
     }
 
     private async reconstruct() {
-        if (!this.files.length) return;
+        if (!this.files.length && !this.preparedDataset) return;
         this.cancelled = false;
         this.checkoutLink.hidden = true;
         this.logs.hidden = true;
@@ -483,24 +645,40 @@ class ReconstructionPanel extends Container {
         this.setBusy(true);
         this.cancelButton.hidden = false;
         try {
-            const prepared = await this.upload();
+            let prepared = await this.refreshPreparedQuote();
+            if (!prepared) {
+                prepared = await this.upload();
+                this.preparedDataset = {
+                    datasetId: prepared.datasetId,
+                    quote: prepared.quote
+                };
+                this.persistPreparedDataset();
+            }
+            this.balance = Number(prepared.quote.balance);
             this.creditValue.textContent = prepared.quote.balance.toLocaleString();
             this.setState('Quote received',
                 `Needs ${prepared.quote.required.toLocaleString()} credits for ${prepared.quote.billable_gpx.toFixed(2)} billable Gpx.`,
                 58);
 
             if (prepared.state === 'checkout_required') {
-                const checkout = prepared.checkout;
-                if (!checkout) throw new Error('The SDK did not return a Polar checkout URL.');
-                this.checkoutLink.href = checkout.url;
-                this.checkoutLink.hidden = false;
-                const popup = window.open(checkout.url, `genesis-polar-${Date.now()}`, 'popup,width=520,height=760');
-                this.setState('Waiting for sandbox credit purchase',
-                    `Short ${prepared.creditsNeeded?.toLocaleString()} credits. Complete checkout in the Polar window.`,
-                    59);
-                await this.waitForCheckout(checkout.id, prepared.quote.balance, popup, prepared.creditsNeeded || 0);
-                await this.waitForCredits(prepared.datasetId, prepared.quote.required);
-                if (this.cancelled) return;
+                const creditsNeeded = prepared.creditsNeeded ?? Math.max(
+                    0,
+                    Math.ceil(prepared.quote.required - prepared.quote.balance)
+                );
+                this.pricingPanel.classList.add('open');
+                this.pricingPanel.setAttribute('aria-hidden', 'false');
+                this.buyCreditsButton.setAttribute('aria-expanded', 'true');
+                if (!this.pricingLoaded) await this.loadPricing();
+                const minCredits = Number(this.customCreditsInput.min || 100);
+                const maxCredits = Number(this.customCreditsInput.max || 1_000_000);
+                this.customCreditsInput.value = String(Math.min(maxCredits, Math.max(minCredits, creditsNeeded)));
+                this.updateCustomPrice();
+                this.cancelButton.hidden = true;
+                this.setState('Insufficient credits',
+                    `The dataset is already on R2 and needs ${prepared.quote.required.toLocaleString()} credits. The current balance is ${prepared.quote.balance.toLocaleString()}, so ${creditsNeeded.toLocaleString()} more are needed. Buy credits and press Start again; the images will not be uploaded twice.`,
+                    58);
+                this.setBusy(false);
+                return;
             }
 
             await this.startJob(prepared.datasetId);
@@ -509,21 +687,6 @@ class ReconstructionPanel extends Container {
             this.cancelButton.hidden = true;
             this.setState('Reconstruction failed', messageOf(error), 0);
             this.setBusy(false);
-        }
-    }
-
-    private async waitForCredits(datasetId: string, required: number) {
-        for (;;) {
-            if (this.cancelled) return;
-            const response = await fetch(`/api/reconstruction/datasets/${encodeURIComponent(datasetId)}/quote`, { cache: 'no-store' });
-            const quote = await this.readJson(response);
-            this.creditValue.textContent = Number(quote.balance).toLocaleString();
-            if (quote.balance >= required) {
-                this.checkoutLink.hidden = true;
-                this.setState('Credits received', 'Submitting the Gaussian Splatting job…', 60);
-                return;
-            }
-            await delay(2000);
         }
     }
 
@@ -593,7 +756,7 @@ class ReconstructionPanel extends Container {
         for (;;) {
             if (this.cancelled) return;
             const response = await fetch(`/api/reconstruction/jobs/${encodeURIComponent(jobId)}`, { cache: 'no-store' });
-            if (response.status === 404 && transientNotFound < 30) {
+            if (response.status === 404 && transientNotFound < JOB_NOT_FOUND_GRACE) {
                 transientNotFound++;
                 this.statusDetail.textContent = 'Syncing final status and artifacts…';
                 await delay(2000);
@@ -626,6 +789,7 @@ class ReconstructionPanel extends Container {
         const file = new File([blob], filename, { type: blob.type || 'application/ply' });
         await this.events.invoke('import', [{ filename, contents: file }]);
         await this.refreshCredits();
+        await this.refreshRecentRuns();
         this.setState('Model opened in SuperSplat', `${filename} · ${(blob.size / 1024 / 1024).toFixed(1)} MB`, 100);
         this.setBusy(false);
     }

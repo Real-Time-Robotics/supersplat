@@ -390,6 +390,75 @@
     border-top: 1px solid $bcg-lighter;
 }
 
+.recon-recent {
+    margin-top: 10px;
+    padding: 9px;
+    background-color: $bcg-darkest;
+    border-radius: 2px;
+}
+
+.recon-recent-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 7px;
+
+    > div {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+    }
+
+    strong {
+        color: $text-primary;
+    }
+
+    span {
+        color: $text-secondary;
+    }
+}
+
+.recon-refresh-runs {
+    min-width: 28px;
+    padding: 3px 7px;
+    color: $clr-icon-hilight;
+    font-size: 17px;
+}
+
+.recon-recent-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+
+    > span {
+        color: $text-secondary;
+    }
+}
+
+.recon-run {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    width: 100%;
+    padding: 7px 8px;
+    text-align: left;
+
+    strong {
+        max-width: 100%;
+        overflow: hidden;
+        color: $text-primary;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    span {
+        color: $text-secondary;
+        font-size: 11px;
+    }
+}
+
 @media (max-width: 640px) {
     #reconstruction-panel {
         top: 64px;
