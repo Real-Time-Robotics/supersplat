@@ -16,6 +16,7 @@ import logo from './playcanvas-logo.png';
 import { Popup, ShowOptions } from './popup';
 import { Progress } from './progress';
 import { PublishSettingsDialog } from './publish-settings-dialog';
+import { ReconstructionPanel } from './reconstruction-panel';
 import { RightToolbar } from './right-toolbar';
 import { ScenePanel } from './scene-panel';
 import { SettingsPanel } from './settings-panel';
@@ -100,6 +101,7 @@ class EditorUI {
         const modeToggle = new ModeToggle(events, tooltips);
         const menu = new Menu(events);
         const cameraInfoOverlay = new CameraInfoOverlay(events, tooltips);
+        const reconstructionPanel = new ReconstructionPanel(events);
 
         canvasContainer.dom.appendChild(canvas);
         canvasContainer.append(appLabel);
@@ -108,6 +110,7 @@ class EditorUI {
         canvasContainer.append(scenePanel);
         canvasContainer.append(settingsPanel);
         canvasContainer.append(colorPanel);
+        canvasContainer.append(reconstructionPanel);
         canvasContainer.append(bottomToolbar);
         canvasContainer.append(rightToolbar);
         canvasContainer.append(modeToggle);

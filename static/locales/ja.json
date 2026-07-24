@@ -63,6 +63,7 @@
     "panel.colors.transparency": "透明度",
     "panel.colors.reset": "リセット",
 
+    "panel.reconstruction": "Reconstruction",
     "panel.settings": "設定",
     "panel.settings.language": "言語",
     "panel.settings.language.auto": "自動",
@@ -309,6 +310,7 @@
     "tooltip.right-toolbar.fly-camera": "フライカメラ",
     "tooltip.right-toolbar.frame-selection": "選択をフレームイン",
     "tooltip.right-toolbar.reset-camera": "カメラをリセット",
+    "tooltip.right-toolbar.reconstruction": "Reconstruct from images",
     "tooltip.right-toolbar.colors": "色",
     "tooltip.right-toolbar.settings": "設定",
 

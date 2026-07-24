@@ -8,6 +8,7 @@ import cameraResetSvg from './svg/camera-reset.svg';
 import centersSvg from './svg/centers.svg';
 import colorPanelSvg from './svg/color-panel.svg';
 import flyCameraSvg from './svg/fly-camera.svg';
+import sceneImportSvg from './svg/import.svg';
 import orbitCameraSvg from './svg/orbit-camera.svg';
 import ringsSvg from './svg/rings.svg';
 import showHideSplatsSvg from './svg/show-hide-splats.svg';
@@ -66,6 +67,11 @@ class RightToolbar extends Container {
             class: 'right-toolbar-toggle'
         });
 
+        const reconstructionPanel = new Button({
+            id: 'right-toolbar-reconstruction-panel',
+            class: 'right-toolbar-toggle'
+        });
+
         const options = new Button({
             id: 'right-toolbar-options',
             class: 'right-toolbar-toggle',
@@ -83,6 +89,7 @@ class RightToolbar extends Container {
         flyMode.dom.appendChild(createSvg(flyCameraSvg));
         cameraFrameSelection.dom.appendChild(createSvg(cameraFrameSelectionSvg));
         cameraReset.dom.appendChild(createSvg(cameraResetSvg));
+        reconstructionPanel.dom.appendChild(createSvg(sceneImportSvg));
         colorPanel.dom.appendChild(createSvg(colorPanelSvg));
 
         this.append(ringsModeToggle);
@@ -94,6 +101,7 @@ class RightToolbar extends Container {
         this.append(cameraFrameSelection);
         this.append(cameraReset);
         this.append(new Element({ class: 'right-toolbar-separator' }));
+        this.append(reconstructionPanel);
         this.append(colorPanel);
         this.append(options);
 
@@ -116,8 +124,12 @@ class RightToolbar extends Container {
         tooltips.register(flyMode, tooltip('tooltip.right-toolbar.fly-camera', 'camera.toggleControlMode'), 'left');
         tooltips.register(cameraFrameSelection, tooltip('tooltip.right-toolbar.frame-selection', 'camera.focus'), 'left');
         tooltips.register(cameraReset, tooltip('tooltip.right-toolbar.reset-camera', 'camera.reset'), 'left');
+        tooltips.register(reconstructionPanel, tooltip('tooltip.right-toolbar.reconstruction'), 'left');
         tooltips.register(colorPanel, tooltip('tooltip.right-toolbar.colors'), 'left');
         tooltips.register(options, tooltip('tooltip.right-toolbar.settings'), 'left');
+        i18n.onChange(() => {
+            reconstructionPanel.dom.setAttribute('aria-label', i18n.t('tooltip.right-toolbar.reconstruction'));
+        }, reconstructionPanel);
 
         // add event handlers
 
@@ -130,6 +142,7 @@ class RightToolbar extends Container {
         flyMode.on('click', () => events.fire('camera.setControlMode', 'fly'));
         cameraFrameSelection.on('click', () => events.fire('camera.focus'));
         cameraReset.on('click', () => events.fire('camera.reset'));
+        reconstructionPanel.on('click', () => events.fire('reconstructionPanel.toggleVisible'));
         colorPanel.on('click', () => events.fire('colorPanel.toggleVisible'));
         options.on('click', () => events.fire('settingsPanel.toggleVisible'));
 
@@ -150,6 +163,11 @@ class RightToolbar extends Container {
 
         events.on('colorPanel.visible', (visible: boolean) => {
             colorPanel.class[visible ? 'add' : 'remove']('active');
+        });
+
+        events.on('reconstructionPanel.visible', (visible: boolean) => {
+            reconstructionPanel.class[visible ? 'add' : 'remove']('active');
+            reconstructionPanel.dom.setAttribute('aria-pressed', String(visible));
         });
 
         events.on('settingsPanel.visible', (visible: boolean) => {

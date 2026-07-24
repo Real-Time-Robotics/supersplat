@@ -1,0 +1,404 @@
+@use 'colors.scss' as *;
+
+#reconstruction-panel {
+    top: 50%;
+    right: 102px;
+    width: 380px;
+    height: min(640px, calc(100% - 224px));
+    max-height: min(640px, calc(100% - 224px));
+    box-sizing: border-box;
+    transform: translate(0, -50%);
+    flex-direction: column;
+
+    &:not(.pcui-hidden) {
+        display: flex;
+    }
+
+    > .panel-header {
+        flex: 0 0 auto;
+    }
+}
+
+.reconstruction-panel-close {
+    width: 26px;
+    height: 26px;
+    padding: 0 !important;
+    border: 0;
+    font-family: Arial, sans-serif !important;
+    font-size: 20px !important;
+    line-height: 1;
+    background: transparent;
+}
+
+.recon-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    box-sizing: border-box;
+    padding: 12px;
+    overflow: auto;
+    scrollbar-gutter: stable;
+    color: $text-primary;
+    background-color: $bcg-primary;
+
+    button,
+    input {
+        font-family: inherit;
+    }
+}
+
+.recon-intro,
+.recon-section-heading {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+
+    strong {
+        color: $text-primary;
+        font-weight: bold;
+    }
+
+    span {
+        color: $text-secondary;
+    }
+}
+
+.recon-intro {
+    margin-bottom: 10px;
+}
+
+.recon-button {
+    min-height: 28px;
+    padding: 4px 10px;
+    color: $text-primary;
+    background-color: $bcg-dark;
+    border: 0;
+    border-radius: 2px;
+    cursor: pointer;
+
+    &:hover {
+        color: $clr-active;
+        background-color: $bcg-darkest;
+    }
+
+    &:focus-visible {
+        outline: 1px solid $clr-hilight;
+        outline-offset: 1px;
+    }
+
+    &:disabled {
+        color: $clr-disabled;
+        background-color: $bcg-darker;
+        cursor: default;
+    }
+}
+
+.recon-primary {
+    color: $clr-active;
+    background-color: $clr-hilight;
+
+    &:hover {
+        background-color: #ff7d26;
+    }
+
+    &:disabled {
+        color: $clr-disabled;
+        background-color: $bcg-darker;
+    }
+}
+
+.recon-credit {
+    margin-bottom: 10px;
+    padding: 8px;
+    background-color: $bcg-dark;
+    border-radius: 2px;
+}
+
+.recon-credit-balance {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+
+    > span {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        color: $text-secondary;
+        font-weight: bold;
+    }
+
+    i {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background-color: #5ad48a;
+    }
+
+    strong {
+        color: $text-primary;
+        font-variant-numeric: tabular-nums;
+    }
+}
+
+.recon-buy-credits {
+    width: 100%;
+    margin-top: 7px;
+    color: $clr-icon-hilight;
+
+    &[aria-expanded='true'] {
+        color: $clr-active;
+        background-color: $bcg-darkest;
+    }
+}
+
+.recon-pricing {
+    display: none;
+    margin-bottom: 10px;
+    padding: 10px;
+    background-color: $bcg-darkest;
+    border-radius: 2px;
+
+    &.open {
+        display: block;
+    }
+}
+
+.recon-section-heading {
+    margin-bottom: 8px;
+}
+
+.recon-pricing-packs {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4px;
+
+    > span {
+        color: $text-secondary;
+    }
+}
+
+.recon-price-pack {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    min-width: 0;
+    padding: 7px 8px;
+    text-align: left;
+
+    strong {
+        color: $text-primary;
+    }
+
+    span {
+        color: $text-secondary;
+    }
+
+    &:hover {
+        box-shadow: inset 2px 0 0 $clr-hilight;
+    }
+}
+
+.recon-custom-credits {
+    margin-top: 9px;
+
+    label {
+        display: block;
+        margin-bottom: 4px;
+        color: $text-secondary;
+    }
+
+    > div {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto auto;
+        align-items: center;
+        gap: 5px;
+    }
+
+    input {
+        box-sizing: border-box;
+        min-width: 0;
+        height: 28px;
+        padding: 4px 7px;
+        color: $text-primary;
+        background-color: $bcg-dark;
+        border: 1px solid $bcg-lighter;
+        border-radius: 2px;
+        outline: none;
+        user-select: text;
+
+        &:focus {
+            border-color: $clr-hilight;
+        }
+    }
+}
+
+.recon-custom-price {
+    color: $text-secondary;
+    font-variant-numeric: tabular-nums;
+}
+
+.recon-pricing-note,
+.recon-purchase-status,
+.recon-note {
+    margin: 7px 0 0;
+    color: $text-secondary;
+    line-height: 1.35;
+}
+
+.recon-purchase-status {
+    color: $text-primary;
+}
+
+.recon-purchase-checkout {
+    display: block;
+    margin-top: 7px;
+    color: $clr-icon-hilight;
+    text-decoration: none;
+
+    &[hidden] {
+        display: none;
+    }
+}
+
+.recon-dropzone {
+    padding: 16px 12px;
+    text-align: center;
+    border: 1px dashed $bcg-light;
+    border-radius: 2px;
+    outline: none;
+    transition: border-color 120ms ease, background-color 120ms ease;
+
+    &:hover,
+    &:focus,
+    &.dragging {
+        border-color: $clr-hilight;
+        background-color: $bcg-dark;
+    }
+
+    > strong,
+    > span {
+        display: block;
+    }
+
+    > strong {
+        color: $text-primary;
+    }
+
+    > span {
+        margin-top: 3px;
+        color: $text-secondary;
+    }
+}
+
+.recon-drop-icon {
+    width: 28px;
+    height: 28px;
+    margin: 0 auto 7px;
+    color: $clr-hilight;
+    background-color: $bcg-dark;
+    border-radius: 50%;
+    font-size: 18px;
+    line-height: 28px;
+}
+
+.recon-file-actions {
+    display: flex;
+    justify-content: center;
+    gap: 5px;
+    margin-top: 10px;
+}
+
+.recon-file-summary {
+    margin: 8px 0;
+    color: $text-secondary;
+    font-variant-numeric: tabular-nums;
+}
+
+.recon-progress-track {
+    height: 3px;
+    overflow: hidden;
+    background-color: $bcg-dark;
+}
+
+.recon-progress-bar {
+    width: 0;
+    height: 100%;
+    background-color: $clr-hilight;
+    transition: width 180ms ease;
+}
+
+.recon-state {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    padding: 9px 0;
+
+    strong {
+        color: $text-primary;
+    }
+
+    span {
+        color: $text-secondary;
+        line-height: 1.4;
+    }
+}
+
+.recon-checkout {
+    display: block;
+    margin-bottom: 8px;
+    padding: 7px 9px;
+    color: $clr-active;
+    background-color: $clr-hilight;
+    border-radius: 2px;
+    text-align: center;
+    text-decoration: none;
+
+    &[hidden] {
+        display: none;
+    }
+}
+
+.recon-logs {
+    max-height: 100px;
+    margin: 0 0 8px;
+    padding: 7px;
+    overflow: auto;
+    user-select: text;
+    color: $text-secondary;
+    background-color: $bcg-darkest;
+    border: 0;
+    border-radius: 2px;
+    font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Roboto Mono', 'Consolas', monospace;
+    font-size: 10px;
+    line-height: 1.4;
+    white-space: pre-wrap;
+
+    &[hidden] {
+        display: none;
+    }
+}
+
+.recon-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 5px;
+}
+
+.recon-note {
+    padding-top: 7px;
+    border-top: 1px solid $bcg-lighter;
+}
+
+@media (max-width: 640px) {
+    #reconstruction-panel {
+        top: 64px;
+        bottom: 64px;
+        right: 8px;
+        left: 8px;
+        width: auto;
+        height: auto;
+        max-height: none;
+        transform: none;
+    }
+}

@@ -1,22 +1,30 @@
 <!DOCTYPE html>
 <html>
     <head>
-        <title>SuperSplat</title>
+        <title>Genesis Point × SuperSplat</title>
         <meta charset="utf-8" />
         <base href="__BASE_HREF__">
         <link rel="manifest" href="./manifest.json">
         <link rel="stylesheet" href="./index.css">
         <link rel="shortcut icon" href="#">
-        <meta name="description" content="SuperSplat is an advanced browser-based editor for manipulating and optimizing 3D Gaussian Splats. It is open source and engine agnostic." />
+        <meta name="description" content="Upload a photo set, reconstruct a Gaussian Splat with Genesis Point, and inspect it in SuperSplat." />
         <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0" />
 
         <!-- Service worker -->
         <script>
             const sw = navigator.serviceWorker;
             if (sw) {
-                sw.register('./sw.js')
-                    .then(reg => console.log('service worker registered', reg))
-                    .catch(err => console.log('failed to register service worker', err));
+                if (['localhost', '127.0.0.1'].includes(window.location.hostname)) {
+                    // Local development must never be shadowed by an older SuperSplat cache.
+                    sw.getRegistrations().then(registrations => registrations.forEach(reg => reg.unregister()));
+                    caches?.keys().then(keys => keys
+                        .filter(key => key.startsWith('superSplat-'))
+                        .forEach(key => caches.delete(key)));
+                } else {
+                    sw.register('./sw.js')
+                        .then(reg => console.log('service worker registered', reg))
+                        .catch(err => console.log('failed to register service worker', err));
+                }
             }
         </script>
     </head>

@@ -63,6 +63,7 @@
     "panel.colors.transparency": "Transparence",
     "panel.colors.reset": "Réinitialiser",
 
+    "panel.reconstruction": "Reconstruction",
     "panel.settings": "Paramètres",
     "panel.settings.language": "Langue",
     "panel.settings.language.auto": "Automatique",
@@ -309,6 +310,7 @@
     "tooltip.right-toolbar.fly-camera": "Caméra de vol",
     "tooltip.right-toolbar.frame-selection": "Cadrer la sélection",
     "tooltip.right-toolbar.reset-camera": "Réinitialiser la caméra",
+    "tooltip.right-toolbar.reconstruction": "Reconstruct from images",
     "tooltip.right-toolbar.colors": "Couleurs",
     "tooltip.right-toolbar.settings": "Paramètres",
 

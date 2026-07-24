@@ -1,91 +1,53 @@
-# SuperSplat Editor
+# SuperSplat × Genesis Point
 
-[![Github Release](https://img.shields.io/github/v/release/playcanvas/supersplat)](https://github.com/playcanvas/supersplat/releases)
-[![License](https://img.shields.io/github/license/playcanvas/supersplat)](https://github.com/playcanvas/supersplat/blob/main/LICENSE)
-[![Discord](https://img.shields.io/badge/Discord-5865F2?style=flat&logo=discord&logoColor=white&color=black)](https://discord.gg/RSaMRzg)
-[![Reddit](https://img.shields.io/badge/Reddit-FF4500?style=flat&logo=reddit&logoColor=white&color=black)](https://www.reddit.com/r/PlayCanvas)
-[![X](https://img.shields.io/badge/X-000000?style=flat&logo=x&logoColor=white&color=black)](https://x.com/intent/follow?screen_name=playcanvas)
+This is the [Real-Time-Robotics fork of SuperSplat](https://github.com/Real-Time-Robotics/supersplat).
+It adds a Reconstruction panel that turns a folder or a selection of photos into a
+Gaussian Splat through the Genesis Point TypeScript SDK, then opens the resulting PLY
+model directly in SuperSplat.
 
-| [SuperSplat Editor](https://superspl.at/editor) | [User Guide](https://developer.playcanvas.com/user-manual/gaussian-splatting/editing/supersplat/) | [Blog](https://blog.playcanvas.com) | [Forum](https://forum.playcanvas.com) |
+The original editor and its Gaussian Splat inspection and editing tools come from
+[playcanvas/supersplat](https://github.com/playcanvas/supersplat).
 
-The SuperSplat Editor is a free and open source tool for inspecting, editing, optimizing and publishing 3D Gaussian Splats. It is built on web technologies and runs in the browser, so there's nothing to download or install.
+## Local setup
 
-A live version of this tool is available at: https://superspl.at/editor
+The `reconstruction` and `supersplat` repositories must be cloned next to each other.
+Node.js 20.19 or newer is required.
 
-![image](https://github.com/user-attachments/assets/b6cbb5cc-d3cc-4385-8c71-ab2807fd4fba)
+```powershell
+git clone https://github.com/Real-Time-Robotics/reconstruction.git
+git clone https://github.com/Real-Time-Robotics/supersplat.git
 
-To learn more about using SuperSplat, please refer to the [User Guide](https://developer.playcanvas.com/user-manual/gaussian-splatting/editing/supersplat/).
+cd reconstruction\sdk\typescript
+npm install
 
-## Local Development
+cd ..\..\..\supersplat
+npm install
+Copy-Item .env.example .env.local
+```
 
-To initialize a local development environment for SuperSplat, ensure you have [Node.js](https://nodejs.org/) 18 or later installed. Follow these steps:
+Set your Genesis Point access key in `.env.local`:
 
-1. Clone the repository:
+```dotenv
+GENESIS_API_KEY=gp_live_replace_me
+```
 
-   ```sh
-   git clone https://github.com/playcanvas/supersplat.git
-   cd supersplat
-   ```
+Build and run the local app:
 
-2. Install dependencies:
+```powershell
+npm run build
+npm run serve
+```
 
-   ```sh
-   npm install
-   ```
+Open [http://localhost:3000](http://localhost:3000). For development with automatic
+browser-bundle rebuilds, run `npm run sdk:build` once and then `npm run develop`.
 
-3. Build SuperSplat and start a local web server:
+## Usage
 
-   ```sh
-   npm run develop
-   ```
+1. Select the orange Reconstruction icon in the right toolbar.
+2. Choose an image folder, select multiple images, or drop the images into the panel.
+3. Add Polar sandbox credits from the panel if the quoted balance is insufficient.
+4. Select **Tạo Gaussian Splat** and follow the upload and reconstruction progress.
+5. When processing finishes, the primary PLY artifact opens automatically in SuperSplat.
 
-4. Open a web browser tab and make sure network caching is disabled on the network tab and the other application caches are clear:
-
-   - On Safari you can use `Cmd+Option+e` or Develop->Empty Caches.
-   - On Chrome ensure the options "Update on reload" and "Bypass for network" are enabled in the Application->Service workers tab:
-
-   <img width="846" alt="Screenshot 2025-04-25 at 16 53 37" src="https://github.com/user-attachments/assets/888bac6c-25c1-4813-b5b6-4beecf437ac9" />
-
-5. Navigate to `http://localhost:3000`
-
-When changes to the source are detected, SuperSplat is rebuilt automatically. Simply refresh your browser to see your changes.
-
-## Localizing the SuperSplat Editor
-
-The currently supported languages are available here:
-
-https://github.com/playcanvas/supersplat/tree/main/static/locales
-
-### Adding a New Language
-
-1. Add a new `<locale>.json` file in the `static/locales` directory.
-
-2. Add the locale to the list here:
-
-   https://github.com/playcanvas/supersplat/blob/main/src/ui/localization.ts
-
-### Testing Translations
-
-To test your translations:
-
-1. Run the development server:
-
-   ```sh
-   npm run develop
-   ```
-
-2. Open your browser and navigate to:
-
-   ```
-   http://localhost:3000/?lng=<locale>
-   ```
-
-   Replace `<locale>` with your language code (e.g., `fr`, `de`, `es`).
-
-## Contributors
-
-SuperSplat is made possible by our amazing open source community:
-
-<a href="https://github.com/playcanvas/supersplat/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=playcanvas/supersplat" />
-</a>
+Checkout in this fork uses Polar sandbox. Local credentials belong in `.env.local`, which
+is ignored by Git.

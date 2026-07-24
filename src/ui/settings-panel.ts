@@ -497,6 +497,12 @@ class SettingsPanel extends Container {
             }
         });
 
+        events.on('reconstructionPanel.visible', (visible: boolean) => {
+            if (visible) {
+                setVisible(false);
+            }
+        });
+
         // sh bands
 
         events.on('view.bands', (bands: number) => {

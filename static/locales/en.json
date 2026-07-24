@@ -63,6 +63,7 @@
     "panel.colors.transparency": "Transparency",
     "panel.colors.reset": "Reset",
 
+    "panel.reconstruction": "Reconstruction",
     "panel.settings": "Settings",
     "panel.settings.language": "Language",
     "panel.settings.language.auto": "Automatic",
@@ -309,6 +310,7 @@
     "tooltip.right-toolbar.fly-camera": "Fly Camera",
     "tooltip.right-toolbar.frame-selection": "Frame Selection",
     "tooltip.right-toolbar.reset-camera": "Reset Camera",
+    "tooltip.right-toolbar.reconstruction": "Reconstruct from images",
     "tooltip.right-toolbar.colors": "Colors",
     "tooltip.right-toolbar.settings": "Settings",
 

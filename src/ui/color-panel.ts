@@ -434,6 +434,12 @@ class ColorPanel extends Container {
                 setVisible(false);
             }
         });
+
+        events.on('reconstructionPanel.visible', (visible: boolean) => {
+            if (visible) {
+                setVisible(false);
+            }
+        });
     }
 }
 
