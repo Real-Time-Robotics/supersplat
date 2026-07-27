@@ -81,7 +81,7 @@ class SplatOverlay extends Element {
         });
 
         scene.events.on('selection.changed', (selection: Splat) => {
-            if (selection) {
+            if (selection instanceof Splat) {
                 this.attach(selection);
             } else {
                 this.detach();

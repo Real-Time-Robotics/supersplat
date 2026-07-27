@@ -394,8 +394,8 @@ class ColorPanel extends Container {
         });
 
         events.on('selection.changed', (splat) => {
-            selected = splat;
-            updateUIFromState(splat);
+            selected = splat instanceof Splat ? splat : null;
+            updateUIFromState(selected);
         });
 
         events.on('splat.tintClr', updateUIFromState);

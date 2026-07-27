@@ -1,5 +1,6 @@
 import { CommandQueue } from './command-queue';
 import { EditOp, MultiOp } from './edit-ops';
+import { Element } from './element';
 import { Events } from './events';
 import { Splat } from './splat';
 
@@ -10,7 +11,14 @@ const opReferencesSplat = (op: EditOp, splat: Splat): boolean => {
         return op.ops.some(nestedOp => opReferencesSplat(nestedOp, splat));
     }
     // Check for splat property on the operation
-    return (op as any).splat === splat;
+    return (op as any).splat === splat || (op as any).element === splat;
+};
+
+const opReferencesElement = (op: EditOp, element: Element): boolean => {
+    if (op instanceof MultiOp) {
+        return op.ops.some(nestedOp => opReferencesElement(nestedOp, element));
+    }
+    return (op as any).element === element || (op as any).splat === element;
 };
 
 class EditHistory {
@@ -161,6 +169,25 @@ class EditHistory {
                 }
             }
 
+            this.history = newHistory;
+            this.cursor = newCursor;
+            this.fireEvents();
+        });
+    }
+
+    removeForElement(element: Element) {
+        return this.queue(() => {
+            let newCursor = 0;
+            const newHistory: EditOp[] = [];
+            for (let i = 0; i < this.history.length; i++) {
+                const op = this.history[i];
+                if (!opReferencesElement(op, element)) {
+                    newHistory.push(op);
+                    if (i < this.cursor) {
+                        newCursor++;
+                    }
+                }
+            }
             this.history = newHistory;
             this.cursor = newCursor;
             this.fireEvents();

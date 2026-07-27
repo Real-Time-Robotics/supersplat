@@ -19,6 +19,7 @@
         "build": "rollup -c",
         "watch": "rollup -c -w",
         "serve": "node server.mjs",
+        "test:model-import": "node scripts/run-model-import-smoke.mjs",
         "develop": "cross-env BUILD_TYPE=debug concurrently --kill-others \"npm run watch\" \"npm run serve\"",
         "develop:auto-launch": "concurrently --kill-others \"xdg-open 'http://localhost:3000/'\" \"npm run watch\" \"npm run serve\"",
         "lint": "eslint src",
@@ -64,6 +65,7 @@
     "dependencies": {
         "express": "^5.2.1",
         "genesis-recon": "file:../reconstruction/sdk/typescript",
+        "meshoptimizer": "1.2.0",
         "multer": "^2.2.0"
     }
 }

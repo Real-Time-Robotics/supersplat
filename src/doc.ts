@@ -19,6 +19,21 @@ const SuperFileType: FilePickerAcceptType[] = [{
     }
 }];
 
+const OpenFileTypes: FilePickerAcceptType[] = [
+    ...SuperFileType,
+    {
+        description: '3D scene files',
+        accept: {
+            'model/gltf-binary': ['.glb'],
+            'model/gltf+json': ['.gltf'],
+            'application/ply': ['.ply'],
+            'application/x-gaussian-splat': ['.splat', '.ksplat', '.spz']
+        }
+    }
+];
+
+const isDocumentFile = (filename: string) => filename.toLowerCase().endsWith('.ssproj');
+
 type FileSelectorCallback = (fileList: File) => void;
 
 // helper class to show a file selector dialog.
@@ -30,7 +45,7 @@ class FileSelector {
         const fileSelector = document.createElement('input');
         fileSelector.setAttribute('id', 'document-file-selector');
         fileSelector.setAttribute('type', 'file');
-        fileSelector.setAttribute('accept', '.ssproj');
+        fileSelector.setAttribute('accept', '.ssproj,.glb,.gltf,.ply,.splat,.ksplat,.spz');
         fileSelector.setAttribute('multiple', 'false');
 
         document.body.append(fileSelector);
@@ -156,6 +171,29 @@ const registerDocEvents = (scene: Scene, events: Events) => {
         }
     };
 
+    // File > Open is a dispatcher: SuperSplat documents use the ZIP document
+    // loader, while standalone scene assets use the same import path as
+    // File > Import. Keeping the routing here prevents GLB files from being
+    // mistaken for .ssproj ZIP archives.
+    const openFile = async (file: File, handle?: FileSystemFileHandle) => {
+        if (isDocumentFile(file.name)) {
+            await loadDocument(file);
+            documentFileHandle = handle ?? null;
+            events.fire('doc.setName', file.name);
+        } else {
+            resetScene();
+            await events.invoke('import', [{
+                filename: file.name,
+                contents: file,
+                handle
+            }]);
+        }
+
+        if (handle) {
+            recentFiles.add(handle);
+        }
+    };
+
     const saveDocument = async (options: { stream?: FileSystemWritableFileStream, filename?: string }) => {
         events.fire('startSpinner');
 
@@ -247,7 +285,7 @@ const registerDocEvents = (scene: Scene, events: Events) => {
         if (fileSelector) {
             fileSelector.show(async (file?: File) => {
                 if (file) {
-                    await loadDocument(file);
+                    await openFile(file);
                 }
             });
         } else {
@@ -255,19 +293,13 @@ const registerDocEvents = (scene: Scene, events: Events) => {
                 const fileHandles = await window.showOpenFilePicker({
                     id: 'SuperSplatDocumentOpen',
                     multiple: false,
-                    types: SuperFileType
+                    types: OpenFileTypes
                 });
 
                 if (fileHandles?.length === 1) {
                     const fileHandle = fileHandles[0];
 
-                    // null file handle incase loadDocument fails
-                    await loadDocument(await fileHandle.getFile());
-
-                    // store file handle for subsequent saves
-                    documentFileHandle = fileHandle;
-                    events.fire('doc.setName', fileHandle.name);
-                    recentFiles.add(fileHandle);
+                    await openFile(await fileHandle.getFile(), fileHandle);
                 }
             } catch (error) {
                 if (error.name !== 'AbortError') {
@@ -289,12 +321,7 @@ const registerDocEvents = (scene: Scene, events: Events) => {
                 }
             }
 
-            await loadDocument(await fileHandle.getFile());
-
-            // store file handle for subsequent saves
-            documentFileHandle = fileHandle;
-            events.fire('doc.setName', fileHandle.name);
-            recentFiles.add(fileHandle);
+            await openFile(await fileHandle.getFile(), fileHandle);
         } catch (error) {
             if (error.name !== 'AbortError') {
                 console.error(error);
@@ -325,6 +352,10 @@ const registerDocEvents = (scene: Scene, events: Events) => {
     });
 
     events.function('doc.saveAs', async () => {
+        if (!events.invoke('scene.hasSplatContent')) {
+            return false;
+        }
+
         if (window.showSaveFilePicker) {
             try {
                 const handle = await window.showSaveFilePicker({

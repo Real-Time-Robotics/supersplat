@@ -2,7 +2,7 @@ import { Container, Element, Label } from '@playcanvas/pcui';
 
 import { Events } from '../events';
 import { i18n } from './localization';
-import { SplatList } from './splat-list';
+import { SceneList } from './scene-list';
 import sceneImportSvg from './svg/import.svg';
 import sceneNewSvg from './svg/new.svg';
 import soloSvg from './svg/solo.svg';
@@ -88,12 +88,12 @@ class ScenePanel extends Container {
         tooltips.register(sceneImport, () => i18n.t('tooltip.scene.import'), 'top');
         tooltips.register(sceneNew, () => i18n.t('tooltip.scene.new'), 'top');
 
-        const splatList = new SplatList(events);
+        const sceneList = new SceneList(events);
 
         const splatListContainer = new Container({
             class: 'splat-list-container'
         });
-        splatListContainer.append(splatList);
+        splatListContainer.append(sceneList);
 
         const transformHeader = new Container({
             class: 'panel-header'

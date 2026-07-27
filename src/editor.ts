@@ -7,6 +7,7 @@ import { Element, ElementType } from './element';
 import { Events } from './events';
 import type { GridPlane } from './infinite-grid';
 import { MappedReadFileSystem } from './io';
+import { ModelElement } from './model/model-element';
 import { Scene } from './scene';
 import { Splat } from './splat';
 import { writeSplatFile } from './splat-serialize';
@@ -30,7 +31,7 @@ const registerEditorEvents = (events: Events, editHistory: EditHistory, scene: S
     // get the list of selected splats (currently limited to just a single one)
     const selectedSplats = () => {
         const selected = events.invoke('selection') as Splat;
-        return selected?.visible ? [selected] : [];
+        return selected instanceof Splat && selected.visible ? [selected] : [];
     };
 
     let lastExportCursor = 0;
@@ -57,10 +58,10 @@ const registerEditorEvents = (events: Events, editHistory: EditHistory, scene: S
         lastExportCursor = 0;
     });
 
-    // When a splat is removed from the scene, remove all edit operations that reference it
+    // Remove edit operations that reference content which has left the scene.
     events.on('scene.elementRemoved', (element: Element) => {
-        if (element.type === ElementType.splat) {
-            editHistory.removeForSplat(element as Splat);
+        if (element.type === ElementType.splat || element.type === ElementType.model) {
+            editHistory.removeForElement(element);
         }
     });
 
@@ -292,6 +293,16 @@ const registerEditorEvents = (events: Events, editHistory: EditHistory, scene: S
             return;
         }
 
+        const selection = events.invoke('selection');
+        if (selection instanceof ModelElement) {
+            scene.camera.focus({
+                focalPoint: selection.worldBound.center,
+                radius: Math.max(selection.worldBound.halfExtents.length(), 0.001),
+                speed: 1
+            });
+            return;
+        }
+
         const splat = selectedSplats()[0];
         if (splat) {
             // use current bounds (caller should have awaited the operation that changed data)
@@ -307,6 +318,12 @@ const registerEditorEvents = (events: Events, editHistory: EditHistory, scene: S
             scene.camera.focus({
                 focalPoint: vec,
                 radius: bound.halfExtents.length() * vec2.x,
+                speed: 1
+            });
+        } else {
+            scene.camera.focus({
+                focalPoint: scene.bound.center,
+                radius: Math.max(scene.bound.halfExtents.length(), 0.001),
                 speed: 1
             });
         }
@@ -368,7 +385,7 @@ const registerEditorEvents = (events: Events, editHistory: EditHistory, scene: S
     // returns true if the selected splat has selected gaussians
     events.function('selection.splats', () => {
         const splat = events.invoke('selection') as Splat;
-        return splat?.numSelected > 0;
+        return splat instanceof Splat && splat.numSelected > 0;
     });
 
     events.on('select.all', () => {

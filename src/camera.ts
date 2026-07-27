@@ -661,6 +661,8 @@ class Camera extends Element {
     }
 
     focus(options?: { focalPoint: Vec3, radius: number, speed: number }) {
+        const sceneBound = this.scene.bound;
+
         const getSplatFocalPoint = () => {
             for (const element of this.scene.elements) {
                 if (element.type === ElementType.splat) {
@@ -672,8 +674,8 @@ class Camera extends Element {
             }
         };
 
-        const focalPoint = options ? options.focalPoint : (getSplatFocalPoint() ?? this.scene.bound.center);
-        const focalRadius = options ? options.radius : this.scene.bound.halfExtents.length();
+        const focalPoint = options ? options.focalPoint : (getSplatFocalPoint() ?? sceneBound.center);
+        const focalRadius = options ? options.radius : sceneBound.halfExtents.length();
 
         const fdist = focalRadius / this.sceneRadius;
 

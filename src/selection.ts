@@ -1,21 +1,22 @@
 import { Element, ElementType } from './element';
 import { Events } from './events';
+import { TransformableElement } from './model/transformable-element';
 import { Scene } from './scene';
 import { Splat } from './splat';
 
 const registerSelectionEvents = (events: Events, scene: Scene) => {
-    let selection: Splat = null;
+    let selection: TransformableElement = null;
 
-    const setSelection = (splat: Splat) => {
-        if (splat !== selection && (!splat || splat.visible)) {
+    const setSelection = (element: TransformableElement) => {
+        if (element !== selection && (!element || element.visible)) {
             const prev = selection;
-            selection = splat;
+            selection = element;
             events.fire('selection.changed', selection, prev);
         }
     };
 
-    events.on('selection', (splat: Splat) => {
-        setSelection(splat);
+    events.on('selection', (element: TransformableElement) => {
+        setSelection(element);
     });
 
     events.function('selection', () => {
@@ -23,28 +24,39 @@ const registerSelectionEvents = (events: Events, scene: Scene) => {
     });
 
     events.on('selection.next', () => {
-        const splats = scene.getElementsByType(ElementType.splat) as Splat[];
-        if (splats.length > 1) {
-            const idx = splats.indexOf(selection);
-            setSelection(splats[(idx + 1) % splats.length]);
+        const elements = scene.elements.filter(element => (
+            element.type === ElementType.splat || element.type === ElementType.model
+        )) as TransformableElement[];
+        if (elements.length > 1) {
+            const idx = elements.indexOf(selection);
+            setSelection(elements[(idx + 1) % elements.length]);
         }
     });
 
     events.on('scene.elementAdded', (element: Element) => {
-        if (element.type === ElementType.splat) {
-            setSelection(element as Splat);
+        if (element.type === ElementType.splat || element.type === ElementType.model) {
+            setSelection(element as TransformableElement);
         }
     });
 
     events.on('scene.elementRemoved', (element: Element) => {
         if (element === selection) {
-            const splats = scene.getElementsByType(ElementType.splat) as Splat[];
-            setSelection(splats.length === 1 ? null : splats.find(v => v !== element));
+            const elements = scene.elements.filter(candidate => (
+                candidate !== element &&
+                (candidate.type === ElementType.splat || candidate.type === ElementType.model)
+            )) as TransformableElement[];
+            setSelection(elements[0] ?? null);
         }
     });
 
     events.on('splat.visibility', (splat: Splat) => {
         if (splat === selection && !splat.visible) {
+            setSelection(null);
+        }
+    });
+
+    events.on('model.visibility', (model: TransformableElement) => {
+        if (model === selection && !model.visible) {
             setSelection(null);
         }
     });

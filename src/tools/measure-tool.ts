@@ -165,7 +165,7 @@ class MeasureTool {
         });
 
         events.on('selection.changed', (selection: Splat) => {
-            splat = selection;
+            splat = selection instanceof Splat ? selection : null;
             if (active) {
                 // for now we always deactivate the tool so the current transform handler remains in place
                 events.fire('tool.deactivate');
@@ -248,7 +248,7 @@ class MeasureTool {
 
         const endScale = () => {
             const top = new EntityTransformOp({
-                splat: splat,
+                element: splat,
                 oldt: new Transform(origP, origR, origS),
                 newt: new Transform(splat.entity.getLocalPosition(), splat.entity.getLocalRotation(), splat.entity.getLocalScale())
             });

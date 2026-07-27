@@ -254,11 +254,10 @@ class Scene {
     }
 
     clear() {
-        const splats = this.getElementsByType(ElementType.splat);
-        splats.forEach((splat) => {
-            this.remove(splat);
-            (splat as Splat).destroy();
-        });
+        const content = this.elements.filter(element => (
+            element.type === ElementType.splat || element.type === ElementType.model
+        ));
+        content.forEach(element => element.destroy());
     }
 
     // add a scene element
@@ -268,6 +267,7 @@ class Scene {
             element.scene = this;
             await element.add();
             this.elements.push(element);
+            this.boundDirty = true;
 
             // notify all elements of scene addition
             this.forEachElement(e => e !== element && e.onAdded(element));
@@ -287,6 +287,7 @@ class Scene {
             if (index !== -1) {
                 this.elements.splice(index, 1);
             }
+            this.boundDirty = true;
 
             // notify listeners
             this.events.fire('scene.elementRemoved', element);
@@ -314,6 +315,10 @@ class Scene {
                     }
                 }
             });
+            if (!valid) {
+                this.boundStorage.center.set(0, 0, 0);
+                this.boundStorage.halfExtents.set(0, 0, 0);
+            }
 
             this.boundDirty = false;
             this.events.fire('scene.boundChanged', this.boundStorage);

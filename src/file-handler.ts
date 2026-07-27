@@ -1,10 +1,13 @@
 import { path, Quat, Vec3 } from 'playcanvas';
 
+import { fitCameraToBound } from './camera-fit';
 import { CreateDropHandler } from './drop-handler';
-import { ElementType } from './element';
+import { Element, ElementType } from './element';
 import { Events } from './events';
 import { BrowserFileSystem, MappedReadFileSystem } from './io';
+import { ModelLoader } from './model/model-loader';
 import { Scene } from './scene';
+import { getContentConflict, SceneContentKind } from './scene-content-policy';
 import { Splat } from './splat';
 import { SerializeSettings, serializeSog, serializeSpz, serializeViewer, SogSettings, SpzSettings, ViewerExportSettings, WebGPUUnavailableError, writeSplatFile } from './splat-serialize';
 import { i18n } from './ui/localization';
@@ -84,6 +87,13 @@ const filePickerTypes: { [key: string]: FilePickerAcceptType } = {
             'text/plain': ['.txt']
         }
     },
+    'model': {
+        description: 'Photogrammetry Model',
+        accept: {
+            'model/gltf-binary': ['.glb'],
+            'model/gltf+json': ['.gltf']
+        }
+    },
     'htmlViewer': {
         description: 'Viewer HTML',
         accept: {
@@ -105,6 +115,8 @@ const allImportTypes = {
         'application/x-gaussian-splat': ['.json', '.sog', '.splat', '.ksplat', '.spz'],
         'image/webp': ['.webp'],
         'application/x-lcc': ['.lcc', '.lcc2', '.bin'],
+        'model/gltf-binary': ['.glb'],
+        'model/gltf+json': ['.gltf'],
         'text/plain': ['.txt']
     }
 };
@@ -256,6 +268,7 @@ const loadImagesTxt = async (file: ImportFile, events: Events) => {
 
 // initialize file handler events
 const initFileHandler = (scene: Scene, events: Events, dropTarget: HTMLElement) => {
+    const modelLoader = new ModelLoader(scene, events);
 
     const showLoadError = async (message: string, filename: string) => {
         await events.invoke('showPopup', {
@@ -263,6 +276,29 @@ const initFileHandler = (scene: Scene, events: Events, dropTarget: HTMLElement) 
             header: i18n.t('popup.error-loading'),
             message: `${message} while loading '${filename}'`
         });
+    };
+
+    const validateContentImport = async (kind: SceneContentKind, filename: string) => {
+        const conflict = getContentConflict({
+            photogrammetry: scene.getElementsByType(ElementType.model).length,
+            gaussianSplats: scene.getElementsByType(ElementType.splat).length
+        }, kind);
+
+        if (conflict) {
+            await showLoadError(conflict, filename);
+            return false;
+        }
+
+        return true;
+    };
+
+    const importPhotogrammetryModel = async (file: ImportFile) => {
+        try {
+            return await modelLoader.load(file);
+        } catch (error) {
+            await showLoadError(error.message ?? error, file.filename);
+            return null;
+        }
     };
 
     // import splat model(s) - handles single files, SOG, and LCC formats
@@ -306,6 +342,9 @@ const initFileHandler = (scene: Scene, events: Events, dropTarget: HTMLElement) 
                 return null;
             }
             await scene.add(model);
+            fitCameraToBound(scene.camera, model.worldBound);
+            scene.camera.setAzimElev(0, 0, 0);
+            scene.camera.ortho = true;
             return model;
         } catch (error) {
             const displayName = files[0]?.filename ?? 'unknown';
@@ -317,7 +356,33 @@ const initFileHandler = (scene: Scene, events: Events, dropTarget: HTMLElement) 
     const importFiles = async (files: ImportFile[], animationFrame = false) => {
         const filenames = files.map(f => f.filename.toLowerCase());
 
-        const result: Splat[] = [];
+        const result: Element[] = [];
+        const hasPhotogrammetry = filenames.some(filename => (
+            filename.endsWith('.glb') || filename.endsWith('.gltf')
+        ));
+        const hasGaussianSplats = isPlySequence(filenames) ||
+            isSog(filenames) ||
+            isLcc(filenames) ||
+            filenames.some(filename => (
+                ['.ssproj', '.ply', '.splat', '.sog', '.ksplat', '.spz', '.lcc', '.lcc2']
+                .some(extension => filename.endsWith(extension))
+            ));
+
+        if (hasPhotogrammetry && hasGaussianSplats) {
+            await showLoadError(
+                'Photogrammetry and Gaussian Splat files cannot be imported together. Open one model type at a time.',
+                files[0]?.filename ?? 'unknown'
+            );
+            return result;
+        }
+
+        if (hasPhotogrammetry && !await validateContentImport('photogrammetry', files[0]?.filename ?? 'unknown')) {
+            return result;
+        }
+
+        if (hasGaussianSplats && !await validateContentImport('gaussian-splat', files[0]?.filename ?? 'unknown')) {
+            return result;
+        }
 
         if (isPlySequence(filenames)) {
             // handle ply sequence
@@ -330,7 +395,7 @@ const initFileHandler = (scene: Scene, events: Events, dropTarget: HTMLElement) 
             // check for unrecognized file types
             for (let i = 0; i < filenames.length; i++) {
                 const filename = filenames[i].toLowerCase();
-                if (['.ssproj', '.ply', '.splat', '.sog', '.webp', 'images.txt', '.json', '.ksplat', '.spz'].every(ext => !filename.endsWith(ext))) {
+                if (['.ssproj', '.ply', '.splat', '.sog', '.webp', 'images.txt', '.json', '.ksplat', '.spz', '.glb', '.gltf', '.bin'].every(ext => !filename.endsWith(ext))) {
                     await showLoadError('Unrecognized file type', filename);
                     return;
                 }
@@ -347,6 +412,11 @@ const initFileHandler = (scene: Scene, events: Events, dropTarget: HTMLElement) 
                     // load gaussian splat model
                     const model = await importSplatModel([files[i]], animationFrame);
                     if (model) result.push(model);
+                } else if (filename.endsWith('.glb') || filename.endsWith('.gltf')) {
+                    const model = await importPhotogrammetryModel(files[i]);
+                    if (model) result.push(model);
+                } else if (filename.endsWith('.bin')) {
+                    await showLoadError('A .bin file needs its .gltf manifest and cannot be opened by itself', files[i].filename);
                 } else if (filename.endsWith('images.txt')) {
                     // load colmap frames
                     await loadImagesTxt(files[i], events);
@@ -370,7 +440,7 @@ const initFileHandler = (scene: Scene, events: Events, dropTarget: HTMLElement) 
         fileSelector = document.createElement('input');
         fileSelector.setAttribute('id', 'file-selector');
         fileSelector.setAttribute('type', 'file');
-        fileSelector.setAttribute('accept', '.ply,.splat,meta.json,.json,.webp,.ssproj,.sog,.lcc,.lcc2,.bin,.txt,.ksplat,.spz');
+        fileSelector.setAttribute('accept', '.ply,.splat,meta.json,.json,.webp,.ssproj,.sog,.lcc,.lcc2,.bin,.txt,.ksplat,.spz,.glb,.gltf');
         fileSelector.setAttribute('multiple', 'true');
 
         fileSelector.onchange = () => {
@@ -410,12 +480,17 @@ const initFileHandler = (scene: Scene, events: Events, dropTarget: HTMLElement) 
         return (scene.getElementsByType(ElementType.splat) as Splat[]);
     });
 
+    events.function('scene.hasSplatContent', () => {
+        return scene.getElementsByType(ElementType.splat).length > 0;
+    });
+
     events.function('scene.splats', () => {
         return getSplats();
     });
 
     events.function('scene.empty', () => {
-        return getSplats().length === 0;
+        return getSplats().length === 0 &&
+            scene.getElementsByType(ElementType.model).length === 0;
     });
 
     events.function('scene.import', async () => {
@@ -436,6 +511,7 @@ const initFileHandler = (scene: Scene, events: Events, dropTarget: HTMLElement) 
                         filePickerTypes.lcc,
                         filePickerTypes.ksplat,
                         filePickerTypes.spz,
+                        filePickerTypes.model,
                         filePickerTypes.indexTxt
                     ]
                 });
@@ -487,6 +563,10 @@ const initFileHandler = (scene: Scene, events: Events, dropTarget: HTMLElement) 
     });
 
     events.function('scene.export', async (exportType: ExportType) => {
+        if (!events.invoke('scene.hasSplatContent')) {
+            return false;
+        }
+
         const splats = getSplats();
 
         const hasFilePicker = !!window.showSaveFilePicker;

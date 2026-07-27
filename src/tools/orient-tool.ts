@@ -231,7 +231,7 @@ class OrientTool {
                 // current transform handler remains in place)
                 events.fire('tool.deactivate');
             }
-            splat = selection;
+            splat = selection instanceof Splat ? selection : null;
         });
 
         events.on('pivot.moved', () => {
@@ -318,7 +318,7 @@ class OrientTool {
                 return;
             }
 
-            const top = new EntityTransformOp({ splat, oldt, newt });
+            const top = new EntityTransformOp({ element: splat, oldt, newt });
 
             // place the pivot at the local frame under the new transform
             const pivot = events.invoke('pivot') as Pivot;

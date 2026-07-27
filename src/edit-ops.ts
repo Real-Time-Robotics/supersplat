@@ -3,6 +3,7 @@ import { Color, Mat4, Quat, Vec3 } from 'playcanvas';
 import { AnimTrack } from './anim-track';
 import { BoxShape } from './box-shape';
 import { IndexRanges, sortedPredicate } from './index-ranges';
+import { TransformableElement } from './model/transformable-element';
 import { Pivot } from './pivot';
 import { Scene } from './scene';
 import { SphereShape } from './sphere-shape';
@@ -185,26 +186,26 @@ class ResetOp extends StateOp {
 // op for modifying a splat transform
 class EntityTransformOp {
     name = 'entityTransform';
-    splat: Splat;
+    element: TransformableElement;
     oldt: Transform;
     newt: Transform;
 
-    constructor(options: { splat: Splat, oldt: Transform, newt: Transform }) {
-        this.splat = options.splat;
+    constructor(options: { element: TransformableElement, oldt: Transform, newt: Transform }) {
+        this.element = options.element;
         this.oldt = options.oldt;
         this.newt = options.newt;
     }
 
     do() {
-        this.splat.move(this.newt.position, this.newt.rotation, this.newt.scale);
+        this.element.move(this.newt.position, this.newt.rotation, this.newt.scale);
     }
 
     undo() {
-        this.splat.move(this.oldt.position, this.oldt.rotation, this.oldt.scale);
+        this.element.move(this.oldt.position, this.oldt.rotation, this.oldt.scale);
     }
 
     destroy() {
-        this.splat = null;
+        this.element = null;
         this.oldt = null;
         this.newt = null;
     }

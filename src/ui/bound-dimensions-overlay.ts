@@ -1,10 +1,10 @@
 import { Container } from '@playcanvas/pcui';
 import { Vec3 } from 'playcanvas';
 
-import { DimensionLabels } from './dimension-labels';
 import { Events } from '../events';
+import { TransformableElement } from '../model/transformable-element';
 import { Scene } from '../scene';
-import { Splat } from '../splat';
+import { DimensionLabels } from './dimension-labels';
 
 const corners = Array.from({ length: 8 }, () => new Vec3());
 const screenCorners = Array.from({ length: 8 }, () => new Vec3());
@@ -50,7 +50,7 @@ class BoundDimensionsOverlay {
         });
 
         events.on('prerender', () => {
-            const selection = events.invoke('selection') as Splat;
+            const selection = events.invoke('selection') as TransformableElement;
 
             if (!selection ||
                 !selection.visible ||

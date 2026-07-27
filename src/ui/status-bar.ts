@@ -17,6 +17,7 @@ class StatusBar extends Container {
 
         // Track the currently active panel
         let activePanel = '';
+        let splat: Splat;
 
         // Toggle buttons for panels
         const timelineButton = new Button({
@@ -28,6 +29,7 @@ class StatusBar extends Container {
             class: 'status-bar-toggle'
         });
         i18n.bindText(splatDataButton, () => i18n.t('status-bar.splat-data').toUpperCase());
+        splatDataButton.enabled = false;
 
         // Panel toggle logic
         const setActivePanel = (panel: string) => {
@@ -42,6 +44,9 @@ class StatusBar extends Container {
         });
 
         splatDataButton.on('click', () => {
+            if (!splat) {
+                return;
+            }
             setActivePanel(activePanel === 'splatData' ? '' : 'splatData');
         });
 
@@ -95,6 +100,9 @@ class StatusBar extends Container {
 
         // Handle keyboard shortcuts for panel toggles
         events.on('dataPanel.toggle', () => {
+            if (!splat) {
+                return;
+            }
             setActivePanel(activePanel === 'splatData' ? '' : 'splatData');
         });
 
@@ -103,8 +111,6 @@ class StatusBar extends Container {
         });
 
         // Update stats from splat state
-        let splat: Splat;
-
         const updateStats = () => {
             if (!splat) return;
             const state = splat.splatData.getProp('state') as Uint8Array;
@@ -124,7 +130,18 @@ class StatusBar extends Container {
         events.on('selection.changed', (selection: Element) => {
             if (selection instanceof Splat) {
                 splat = selection;
+                splatDataButton.enabled = true;
                 updateStats();
+            } else {
+                splat = null;
+                splatDataButton.enabled = false;
+                if (activePanel === 'splatData') {
+                    setActivePanel('');
+                }
+                splatsValue.text = '0';
+                selectedValue.text = '0';
+                lockedValue.text = '0';
+                deletedValue.text = '0';
             }
         });
     }

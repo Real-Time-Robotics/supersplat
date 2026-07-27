@@ -613,6 +613,8 @@ class DataPanel extends Container {
                 inputs.mode = propModeFor(selectedDataProp) ?? 0;
                 populateDataSelector(splat);
                 tick();
+            } else {
+                splat = null;
             }
         });
 
