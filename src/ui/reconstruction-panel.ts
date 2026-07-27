@@ -58,7 +58,21 @@ type RecentRun = {
     primary: string;
 };
 
+type Artifact = {
+    name: string;
+    kind: string;
+    format: string;
+    size: number;
+    primary: boolean;
+    local?: boolean;
+};
+
+type ArtifactSource =
+    | { type: 'job'; jobId: string; label: string }
+    | { type: 'run'; run: RecentRun; label: string };
+
 const IMAGE_EXTENSIONS = /\.(?:jpe?g|png|tiff?|bmp|webp)$/i;
+const OPENABLE_ARTIFACT_EXTENSIONS = /\.(?:ply|splat|sog|ksplat|spz)$/i;
 const PREPARED_DATASET_KEY = 'genesis.reconstruction.preparedDataset';
 const JOB_NOT_FOUND_GRACE = 3;
 const delay = (ms: number) => new Promise<void>((resolve) => {
@@ -67,6 +81,22 @@ const delay = (ms: number) => new Promise<void>((resolve) => {
 const messageOf = (error: unknown) => (
     error instanceof Error ? error.message : String(error)
 );
+const formatBytes = (bytes: number) => {
+    if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const unit = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)));
+    const value = bytes / (1024 ** unit);
+    return `${value.toFixed(unit === 0 ? 0 : value >= 100 ? 0 : value >= 10 ? 1 : 2)} ${units[unit]}`;
+};
+const formatDuration = (seconds: number) => {
+    if (!Number.isFinite(seconds) || seconds < 0) return 'estimating…';
+    if (seconds < 60) return `${Math.max(1, Math.ceil(seconds))}s remaining`;
+    const minutes = Math.floor(seconds / 60);
+    const remainder = Math.ceil(seconds % 60);
+    if (minutes < 60) return `${minutes}m ${remainder}s remaining`;
+    const hours = Math.floor(minutes / 60);
+    return `${hours}h ${minutes % 60}m remaining`;
+};
 
 class ReconstructionPanel extends Container {
     private events: Events;
@@ -76,6 +106,7 @@ class ReconstructionPanel extends Container {
     private activeJobId: string | null = null;
     private activeUpload: XMLHttpRequest | null = null;
     private activeEvents: EventSource | null = null;
+    private activeDownload: AbortController | null = null;
     private cancelled = false;
     private logLines: string[] = [];
     private balance = 0;
@@ -104,6 +135,16 @@ class ReconstructionPanel extends Container {
     private customPrice: HTMLElement;
     private recentRuns: HTMLElement;
     private refreshRunsButton: HTMLButtonElement;
+    private artifactPanel: HTMLElement;
+    private artifactTitle: HTMLElement;
+    private artifactList: HTMLElement;
+    private artifactLocations = new Map<string, HTMLElement>();
+    private createTabButton: HTMLButtonElement;
+    private recentTabButton: HTMLButtonElement;
+    private createTabPanel: HTMLElement;
+    private recentTabPanel: HTMLElement;
+    private transferKey = '';
+    private transferSamples: { time: number; loaded: number }[] = [];
 
     constructor(events: Events) {
         super({
@@ -138,19 +179,17 @@ class ReconstructionPanel extends Container {
         body.innerHTML = `
             <div class="recon-intro">
                 <strong>Images to Gaussian Splat</strong>
-                <span>Genesis Point · Polar sandbox</span>
             </div>
             <section class="recon-credit">
                 <div class="recon-credit-balance">
-                    <span><i></i> CREDIT BALANCE</span>
-                    <strong><span class="recon-credit-value">—</span> credits</strong>
+                    <i></i>
+                    <strong>Credit: <span class="recon-credit-value">—</span></strong>
                 </div>
-                <button class="recon-button recon-buy-credits" type="button" aria-expanded="false">＋ Buy credits</button>
+                <button class="recon-button recon-buy-credits" type="button" aria-expanded="false">Buy Credit</button>
             </section>
             <section class="recon-pricing" aria-hidden="true">
                 <div class="recon-section-heading">
                     <strong>Buy PAYG credits</strong>
-                    <span>Polar sandbox · no real charges</span>
                 </div>
                 <div class="recon-pricing-packs"><span>Loading pricing…</span></div>
                 <div class="recon-custom-credits">
@@ -163,41 +202,60 @@ class ReconstructionPanel extends Container {
                 </div>
                 <p class="recon-pricing-note"></p>
                 <p class="recon-purchase-status" role="status"></p>
-                <a class="recon-purchase-checkout" target="genesis-polar-checkout" rel="noopener" hidden>Reopen Polar checkout ↗</a>
+                <a class="recon-purchase-checkout" target="reconstruction-checkout" rel="noopener" hidden>Reopen checkout ↗</a>
             </section>
-            <div class="recon-dropzone" tabindex="0">
-                <div class="recon-drop-icon">＋</div>
-                <strong>Drop an image folder here</strong>
-                <span>JPG, PNG, TIFF, BMP or WebP</span>
-                <div class="recon-file-actions">
-                    <button class="recon-button recon-folder-button" type="button">Choose folder</button>
-                    <button class="recon-button recon-images-button" type="button">Choose images</button>
+            <div class="recon-tabs" role="tablist" aria-label="Reconstruction">
+                <button class="recon-tab active" type="button" role="tab" aria-selected="true" aria-controls="recon-create-tab">Create model</button>
+                <button class="recon-tab" type="button" role="tab" aria-selected="false" aria-controls="recon-recent-tab">Recent models</button>
+            </div>
+            <section class="recon-shared-progress">
+                <div class="recon-progress-track" role="progressbar" aria-label="Transfer progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div class="recon-progress-bar"></div></div>
+                <div class="recon-state">
+                    <strong class="recon-status">Ready</strong>
+                    <span class="recon-status-detail">Choose a set of photos captured around an object or space.</span>
                 </div>
-            </div>
-            <input class="recon-folder-input" type="file" accept="image/*,.tif,.tiff" multiple hidden>
-            <input class="recon-image-input" type="file" accept="image/*,.tif,.tiff" multiple hidden>
-            <div class="recon-file-summary">No images selected</div>
-            <div class="recon-progress-track"><div class="recon-progress-bar"></div></div>
-            <div class="recon-state">
-                <strong class="recon-status">Ready</strong>
-                <span class="recon-status-detail">Choose a set of photos captured around an object or space.</span>
-            </div>
-            <a class="recon-checkout" target="genesis-polar-checkout" rel="noopener" hidden>Open Polar sandbox checkout ↗</a>
-            <pre class="recon-logs" hidden></pre>
-            <footer class="recon-footer">
-                <button class="recon-button recon-cancel" type="button" hidden>Cancel</button>
-                <button class="recon-button recon-primary recon-start" type="button" disabled>Create Gaussian Splat</button>
-            </footer>
-            <p class="recon-note">Credits are only held once the job starts. The finished model opens automatically in SuperSplat.</p>
-            <section class="recon-recent">
-                <div class="recon-recent-heading">
-                    <div>
-                        <strong>Recent models</strong>
-                        <span>Reopen artifacts stored on R2</span>
+                <a class="recon-checkout" target="reconstruction-checkout" rel="noopener" hidden>Open checkout ↗</a>
+                <pre class="recon-logs" hidden></pre>
+                <div class="recon-shared-actions">
+                    <button class="recon-button recon-cancel" type="button" hidden>Cancel</button>
+                </div>
+            </section>
+            <section id="recon-create-tab" class="recon-tab-panel" role="tabpanel">
+                <div class="recon-dropzone" tabindex="0">
+                    <div class="recon-drop-icon">＋</div>
+                    <strong>Drop an image folder here</strong>
+                    <span>JPG, PNG, TIFF, BMP or WebP</span>
+                    <div class="recon-file-actions">
+                        <button class="recon-button recon-folder-button" type="button">Choose folder</button>
+                        <button class="recon-button recon-images-button" type="button">Choose images</button>
                     </div>
-                    <button class="recon-button recon-refresh-runs" type="button" aria-label="Refresh recent models">↻</button>
                 </div>
-                <div class="recon-recent-list"><span>Loading…</span></div>
+                <input class="recon-folder-input" type="file" accept="image/*,.tif,.tiff" multiple hidden>
+                <input class="recon-image-input" type="file" accept="image/*,.tif,.tiff" multiple hidden>
+                <div class="recon-file-summary">No images selected</div>
+                <footer class="recon-footer">
+                    <button class="recon-button recon-primary recon-start" type="button" disabled>Create Gaussian Splat</button>
+                </footer>
+                <p class="recon-note">Credits are only held once the job starts. Completed artifacts remain available in Recent models.</p>
+            </section>
+            <section id="recon-recent-tab" class="recon-tab-panel" role="tabpanel" hidden>
+                <section class="recon-recent">
+                    <div class="recon-recent-heading">
+                        <div>
+                            <strong>Recent models</strong>
+                            <span>Open previous reconstruction results</span>
+                        </div>
+                        <button class="recon-button recon-refresh-runs" type="button" aria-label="Refresh recent models">↻</button>
+                    </div>
+                    <div class="recon-recent-list"><span>Loading…</span></div>
+                </section>
+                <section class="recon-artifacts" hidden>
+                    <div class="recon-artifact-heading">
+                        <strong>Available artifacts</strong>
+                        <span class="recon-artifact-title"></span>
+                    </div>
+                    <div class="recon-artifact-list"></div>
+                </section>
             </section>`;
         this.dom.appendChild(body);
 
@@ -222,6 +280,14 @@ class ReconstructionPanel extends Container {
         this.customPrice = this.query('.recon-custom-price');
         this.recentRuns = this.query('.recon-recent-list');
         this.refreshRunsButton = this.query('.recon-refresh-runs');
+        this.artifactPanel = this.query('.recon-artifacts');
+        this.artifactTitle = this.query('.recon-artifact-title');
+        this.artifactList = this.query('.recon-artifact-list');
+        const tabs = this.dom.querySelectorAll<HTMLButtonElement>('.recon-tab');
+        this.createTabButton = tabs[0];
+        this.recentTabButton = tabs[1];
+        this.createTabPanel = this.query('#recon-create-tab');
+        this.recentTabPanel = this.query('#recon-recent-tab');
         this.folderInput.setAttribute('webkitdirectory', '');
 
         this.query('.recon-folder-button').addEventListener('click', () => this.folderInput.click());
@@ -234,6 +300,8 @@ class ReconstructionPanel extends Container {
         this.query('.recon-custom-buy').addEventListener('click', () => this.purchaseCustomCredits());
         this.customCreditsInput.addEventListener('input', () => this.updateCustomPrice());
         this.refreshRunsButton.addEventListener('click', () => this.refreshRecentRuns());
+        this.createTabButton.addEventListener('click', () => this.setTab('create'));
+        this.recentTabButton.addEventListener('click', () => this.setTab('recent'));
 
         ['pointerdown', 'pointerup', 'pointermove', 'wheel', 'dblclick'].forEach((eventName) => {
             this.dom.addEventListener(eventName, (event: Event) => event.stopPropagation());
@@ -284,6 +352,16 @@ class ReconstructionPanel extends Container {
         return this.dom.querySelector(selector) as T;
     }
 
+    private setTab(tab: 'create' | 'recent') {
+        const create = tab === 'create';
+        this.createTabButton.classList.toggle('active', create);
+        this.recentTabButton.classList.toggle('active', !create);
+        this.createTabButton.setAttribute('aria-selected', String(create));
+        this.recentTabButton.setAttribute('aria-selected', String(!create));
+        this.createTabPanel.hidden = !create;
+        this.recentTabPanel.hidden = create;
+    }
+
     private restorePreparedDataset() {
         try {
             const value = JSON.parse(localStorage.getItem(PREPARED_DATASET_KEY) || 'null');
@@ -311,6 +389,7 @@ class ReconstructionPanel extends Container {
 
     private selectFiles(list: FileList | null) {
         const candidates = Array.from(list ?? []).filter(file => IMAGE_EXTENSIONS.test(file.name));
+        this.setTab('create');
         this.clearPreparedDataset();
         this.files = candidates;
         this.relativePaths = candidates.map(file => (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name);
@@ -358,9 +437,10 @@ class ReconstructionPanel extends Container {
                 name.textContent = run.dataset_label || run.dataset_id;
                 const created = new Date(run.created < 1e12 ? run.created * 1000 : run.created);
                 const detail = document.createElement('span');
-                detail.textContent = `${run.pipeline}/${run.run_name} · ${created.toLocaleString('en-US')} · ${(run.bytes / 1024 / 1024).toFixed(1)} MB`;
+                const artifactLabel = `${run.artifact_count} artifact${run.artifact_count === 1 ? '' : 's'}`;
+                detail.textContent = `${run.pipeline}/${run.run_name} · ${created.toLocaleString('en-US')} · ${artifactLabel} · ${formatBytes(run.bytes)}`;
                 button.append(name, detail);
-                button.addEventListener('click', () => this.openRecentRun(run));
+                button.addEventListener('click', () => this.loadRecentRunArtifacts(run));
                 this.recentRuns.appendChild(button);
             }
         } catch (error) {
@@ -370,30 +450,195 @@ class ReconstructionPanel extends Container {
         }
     }
 
-    private async openRecentRun(run: RecentRun) {
+    private async loadRecentRunArtifacts(run: RecentRun) {
         this.setBusy(true);
-        this.setState('Opening saved model',
-            `${run.dataset_label || run.dataset_id} · ${run.pipeline}/${run.run_name}`,
-            94);
+        const label = `${run.dataset_label || run.dataset_id} · ${run.pipeline}/${run.run_name}`;
+        this.setState('Loading artifact list', label, 0);
         try {
             const route = `/api/reconstruction/datasets/${encodeURIComponent(run.dataset_id)}` +
-                `/runs/${encodeURIComponent(run.pipeline)}/${encodeURIComponent(run.run_name)}/model`;
-            const metadata = await this.readJson(await fetch(route, { cache: 'no-store' })) as {
-                name: string;
-                url: string;
-            };
-            const response = await fetch(metadata.url);
-            if (!response.ok) throw new Error(`R2 returned ${response.status}`);
-            const blob = await response.blob();
-            const filename = metadata.name.split('/').pop() || run.primary.split('/').pop() || 'genesis-run.ply';
-            const file = new File([blob], filename, { type: blob.type || 'application/ply' });
-            await this.events.invoke('import', [{ filename, contents: file }]);
-            this.setState('Model opened from R2', `${filename} · ${(blob.size / 1024 / 1024).toFixed(1)} MB`, 100);
+                `/runs/${encodeURIComponent(run.pipeline)}/${encodeURIComponent(run.run_name)}/artifacts` +
+                `?created=${encodeURIComponent(run.created)}`;
+            const data = await this.readJson(await fetch(route, { cache: 'no-store' })) as { artifacts: Artifact[] };
+            const artifacts = Array.isArray(data.artifacts) ? data.artifacts : [];
+            if (!artifacts.length) throw new Error('This run does not contain any downloadable artifacts.');
+            const source: ArtifactSource = { type: 'run', run, label };
+            this.showArtifacts(artifacts, source);
+            if (artifacts.length === 1) {
+                await this.openArtifact(artifacts[0], source);
+            } else {
+                const primary = artifacts.find(artifact => artifact.primary);
+                this.setState('Choose an artifact',
+                    `${artifacts.length} artifacts are available${primary ? ` · ${primary.name} is recommended` : ''}.`,
+                    0);
+                this.setBusy(false);
+            }
         } catch (error) {
-            this.setState('Could not open saved model', messageOf(error), 0);
-        } finally {
+            this.setState('Could not load saved artifacts', messageOf(error), 0);
             this.setBusy(false);
         }
+    }
+
+    private showArtifacts(artifacts: Artifact[], source: ArtifactSource) {
+        this.setTab('recent');
+        this.artifactPanel.hidden = false;
+        this.artifactTitle.textContent = source.label;
+        this.artifactList.textContent = '';
+        this.artifactLocations.clear();
+        for (const artifact of artifacts) {
+            const row = document.createElement('div');
+            row.className = `recon-artifact${artifact.primary ? ' primary' : ''}`;
+            const info = document.createElement('div');
+            const name = document.createElement('strong');
+            name.textContent = artifact.name;
+            name.title = artifact.name;
+            const detail = document.createElement('span');
+            const descriptors = [artifact.kind, artifact.format, formatBytes(artifact.size)].filter(Boolean);
+            detail.textContent = descriptors.join(' · ');
+            info.appendChild(name);
+            if (artifact.primary) {
+                const badge = document.createElement('em');
+                badge.textContent = 'Primary';
+                info.appendChild(badge);
+            }
+            info.appendChild(detail);
+            const action = document.createElement('button');
+            const openable = OPENABLE_ARTIFACT_EXTENSIONS.test(artifact.name);
+            action.type = 'button';
+            action.className = 'recon-button';
+            action.textContent = openable ? 'Open' : 'Download';
+            action.title = openable ? 'Download and open in SuperSplat' : 'Download this artifact';
+            action.addEventListener('click', () => this.openArtifact(artifact, source));
+            const location = document.createElement('span');
+            location.className = 'recon-artifact-location';
+            location.setAttribute('role', 'img');
+            this.artifactLocations.set(artifact.name, location);
+            this.updateArtifactLocation(artifact);
+            row.append(info, action, location);
+            this.artifactList.appendChild(row);
+        }
+    }
+
+    private updateArtifactLocation(artifact: Artifact) {
+        const location = this.artifactLocations.get(artifact.name);
+        if (!location) return;
+        location.classList.toggle('local', Boolean(artifact.local));
+        location.classList.toggle('remote', !artifact.local);
+        location.textContent = artifact.local ? '✓' : '☁';
+        const label = artifact.local ? 'Available in local cache' : 'Stored remotely; download required';
+        location.title = label;
+        location.setAttribute('aria-label', label);
+    }
+
+    private async openArtifact(artifact: Artifact, source: ArtifactSource) {
+        this.activeDownload?.abort();
+        const controller = new AbortController();
+        this.activeDownload = controller;
+        this.cancelled = false;
+        this.setBusy(true);
+        this.cancelButton.hidden = false;
+        const filename = artifact.name.split('/').pop() || 'genesis-artifact';
+        try {
+            let response: Response;
+            if (source.type === 'job') {
+                const route = `/api/reconstruction/jobs/${encodeURIComponent(source.jobId)}/model` +
+                    `?name=${encodeURIComponent(artifact.name)}`;
+                response = await fetch(route, { signal: controller.signal, cache: 'no-store' });
+            } else {
+                const { run } = source;
+                const route = `/api/reconstruction/datasets/${encodeURIComponent(run.dataset_id)}` +
+                    `/runs/${encodeURIComponent(run.pipeline)}/${encodeURIComponent(run.run_name)}/model` +
+                    `?name=${encodeURIComponent(artifact.name)}&created=${encodeURIComponent(run.created)}`;
+                response = await fetch(route, { signal: controller.signal, cache: 'no-store' });
+            }
+            if (!response.ok) {
+                await this.readJson(response);
+            }
+            artifact.local = response.headers.get('X-Artifact-Local') === 'true';
+            this.updateArtifactLocation(artifact);
+            const blob = await this.readDownload(response, artifact, controller.signal);
+            artifact.local = true;
+            this.updateArtifactLocation(artifact);
+            if (OPENABLE_ARTIFACT_EXTENSIONS.test(filename)) {
+                this.setState('Opening artifact', `${filename} · ${formatBytes(blob.size)}`, 100);
+                const file = new File([blob], filename, {
+                    type: blob.type || 'application/octet-stream'
+                });
+                await this.events.invoke('import', [{ filename, contents: file }]);
+                this.setState('Artifact opened in SuperSplat', `${filename} · ${formatBytes(blob.size)}`, 100);
+            } else {
+                const url = URL.createObjectURL(blob);
+                const anchor = document.createElement('a');
+                anchor.href = url;
+                anchor.download = filename;
+                anchor.click();
+                setTimeout(() => URL.revokeObjectURL(url), 0);
+                this.setState('Artifact downloaded', `${filename} · ${formatBytes(blob.size)}`, 100);
+            }
+        } catch (error) {
+            if (this.activeDownload === controller) {
+                if ((error as DOMException)?.name === 'AbortError') {
+                    this.setState('Download cancelled', filename, 0);
+                } else {
+                    this.setState('Could not download artifact', messageOf(error), 0);
+                }
+            }
+        } finally {
+            if (this.activeDownload === controller) {
+                this.activeDownload = null;
+                this.cancelButton.hidden = true;
+                this.setBusy(false);
+            }
+        }
+    }
+
+    private async readDownload(response: Response, artifact: Artifact, signal: AbortSignal): Promise<Blob> {
+        const headerSize = Number(response.headers.get('Content-Length') || 0);
+        const total = headerSize > 0 ? headerSize : Math.max(0, Number(artifact.size) || 0);
+        const contentType = response.headers.get('Content-Type') || 'application/octet-stream';
+        if (!response.body) return response.blob();
+
+        const reader = response.body.getReader();
+        const chunks: Uint8Array<ArrayBuffer>[] = [];
+        const started = performance.now();
+        const samples: { time: number; loaded: number }[] = [{ time: started, loaded: 0 }];
+        let loaded = 0;
+        let lastRendered = 0;
+        const operation = artifact.local ? 'Loading local copy' : 'Downloading';
+        this.setState(`${operation}: ${artifact.name}`, total > 0 ? `0 B / ${formatBytes(total)} · estimating…` : 'Starting download…', 0);
+
+        try {
+            for (;;) {
+                if (signal.aborted) throw new DOMException('Download cancelled', 'AbortError');
+                const { done, value } = await reader.read();
+                if (done) break;
+                chunks.push(new Uint8Array(value));
+                loaded += value.byteLength;
+                const now = performance.now();
+                samples.push({ time: now, loaded });
+                while (samples.length > 2 && now - samples[0].time > 8000) samples.shift();
+                if (now - lastRendered < 125) continue;
+                lastRendered = now;
+                const first = samples[0];
+                const elapsed = (now - first.time) / 1000;
+                const speed = elapsed >= 0.4 ? (loaded - first.loaded) / elapsed : 0;
+                const eta = total > loaded && speed > 0 ? (total - loaded) / speed : 0;
+                const transferred = total > 0 ?
+                    `${formatBytes(loaded)} / ${formatBytes(total)}` :
+                    formatBytes(loaded);
+                const speedAndEta = speed > 0 ?
+                    ` · ${formatBytes(speed)}/s${total > 0 ? ` · ${formatDuration(eta)}` : ''}` :
+                    ' · estimating…';
+                this.setState(`${operation}: ${artifact.name}`, transferred + speedAndEta,
+                    total > 0 ? (loaded / total) * 100 : 0);
+            }
+        } catch (error) {
+            await reader.cancel().catch((): void => {});
+            throw error;
+        }
+        this.setState(`${operation}: ${artifact.name}`,
+            `${formatBytes(loaded)} / ${formatBytes(total || loaded)} · complete`,
+            100);
+        return new Blob(chunks, { type: contentType });
     }
 
     private async togglePricing() {
@@ -452,8 +697,8 @@ class ReconstructionPanel extends Container {
 
     private async purchaseCredits(body: { packCredits?: number; customCredits?: number }, expectedCredits: number) {
         const balanceBefore = await this.refreshCredits() ?? this.balance;
-        const popup = window.open('about:blank', `genesis-polar-${Date.now()}`, 'popup,width=520,height=760');
-        if (popup) popup.document.body.textContent = 'Creating Polar sandbox checkout…';
+        const popup = window.open('about:blank', `reconstruction-checkout-${Date.now()}`, 'popup,width=520,height=760');
+        if (popup) popup.document.body.textContent = 'Creating checkout…';
         this.purchaseStatus.textContent = 'Creating checkout…';
         try {
             const response = await fetch('/api/reconstruction/checkout', {
@@ -465,7 +710,7 @@ class ReconstructionPanel extends Container {
             this.purchaseCheckoutLink.href = checkout.url;
             this.purchaseCheckoutLink.hidden = false;
             if (popup) popup.location.href = checkout.url;
-            this.purchaseStatus.textContent = `Waiting for Polar to add ${expectedCredits.toLocaleString()} credits…`;
+            this.purchaseStatus.textContent = `Waiting for ${expectedCredits.toLocaleString()} credits…`;
             await this.waitForCheckout(checkout.id, balanceBefore, popup);
             await this.refreshPreparedQuote();
         } catch (error) {
@@ -483,7 +728,7 @@ class ReconstructionPanel extends Container {
                 const response = await fetch(`/api/reconstruction/checkouts/${encodeURIComponent(checkoutId)}`, { cache: 'no-store' });
                 checkout = await this.readJson(response) as CheckoutStatus;
             } catch {
-                // Balance remains a reliable fallback if Polar status is temporarily unavailable.
+                // Balance remains a reliable fallback if checkout status is temporarily unavailable.
             }
             const balance = await this.refreshCredits();
             paymentConfirmed ||= checkout?.status === 'paid';
@@ -495,10 +740,10 @@ class ReconstructionPanel extends Container {
                 return;
             }
             if (paymentConfirmed) {
-                this.purchaseStatus.textContent = 'Polar confirmed payment. Waiting for the credit balance to update…';
+                this.purchaseStatus.textContent = 'Payment confirmed. Waiting for the credit balance to update…';
             }
             if (checkout?.status === 'expired' || checkout?.status === 'failed') {
-                throw new Error(`Polar checkout ended with status “${checkout.status}”.`);
+                throw new Error(`Checkout ended with status “${checkout.status}”.`);
             }
             await delay(2000);
         }
@@ -545,15 +790,41 @@ class ReconstructionPanel extends Container {
     }
 
     private setState(title: string, detail: string, progress: number) {
+        const value = Math.max(0, Math.min(100, progress));
         this.status.textContent = title;
         this.statusDetail.textContent = detail;
-        this.progressBar.style.width = `${Math.max(0, Math.min(100, progress))}%`;
+        this.progressBar.style.width = `${value}%`;
+        this.progressBar.parentElement?.setAttribute('aria-valuenow', String(Math.round(value)));
     }
 
     private setBusy(busy: boolean) {
         this.startButton.disabled = busy || (this.files.length === 0 && !this.preparedDataset);
         this.imageInput.disabled = busy;
         this.folderInput.disabled = busy;
+    }
+
+    private transferDetail(key: string, loaded: number, total: number, suffix = '') {
+        const now = performance.now();
+        if (this.transferKey !== key) {
+            this.transferKey = key;
+            this.transferSamples = [{ time: now, loaded }];
+        } else {
+            this.transferSamples.push({ time: now, loaded });
+        }
+        while (this.transferSamples.length > 2 && now - this.transferSamples[0].time > 8000) {
+            this.transferSamples.shift();
+        }
+        const first = this.transferSamples[0];
+        const elapsed = (now - first.time) / 1000;
+        const speed = elapsed >= 0.4 ? (loaded - first.loaded) / elapsed : 0;
+        const eta = total > loaded && speed > 0 ? (total - loaded) / speed : 0;
+        const transferred = total > 0 ?
+            `${formatBytes(loaded)} / ${formatBytes(total)}` :
+            formatBytes(loaded);
+        const estimate = speed > 0 ?
+            ` · ${formatBytes(speed)}/s${total > 0 ? ` · ${formatDuration(eta)}` : ''}` :
+            ' · estimating…';
+        return transferred + estimate + suffix;
     }
 
     private updateStorageProgress(progress: UploadProgress) {
@@ -565,7 +836,7 @@ class ReconstructionPanel extends Container {
             const ratio = progress.total > 0 ? progress.loaded / progress.total : 0;
             const current = progress.file ? ` · ${progress.file}` : '';
             this.setState('Uploading to object storage',
-                `${Math.round(progress.loaded / 1024 / 1024)} / ${Math.round(progress.total / 1024 / 1024)} MB${current}`,
+                this.transferDetail('object-storage-upload', progress.loaded, progress.total, current),
                 36 + ratio * 17);
             return;
         }
@@ -603,7 +874,7 @@ class ReconstructionPanel extends Container {
                 if (!event.lengthComputable) return;
                 const percent = Math.round((event.loaded / event.total) * 34);
                 this.setState('Sending images to localhost',
-                    `${Math.round(event.loaded / 1024 / 1024)} / ${Math.round(event.total / 1024 / 1024)} MB`,
+                    this.transferDetail('browser-upload', event.loaded, event.total),
                     percent);
             };
             request.onerror = () => {
@@ -753,6 +1024,7 @@ class ReconstructionPanel extends Container {
 
     private async waitForJob(jobId: string) {
         let transientNotFound = 0;
+        let artifacts: Artifact[] = [];
         for (;;) {
             if (this.cancelled) return;
             const response = await fetch(`/api/reconstruction/jobs/${encodeURIComponent(jobId)}`, { cache: 'no-store' });
@@ -766,6 +1038,7 @@ class ReconstructionPanel extends Container {
             transientNotFound = 0;
             const job = data.job;
             if (job.terminal) {
+                artifacts = Array.isArray(data.artifacts) ? data.artifacts as Artifact[] : [];
                 this.activeEvents?.close();
                 this.activeEvents = null;
                 this.cancelButton.hidden = true;
@@ -780,18 +1053,24 @@ class ReconstructionPanel extends Container {
             await delay(2500);
         }
 
-        this.setState('Downloading model', 'Fetching the PLY artifact and loading it into SuperSplat…', 94);
-        const modelResponse = await fetch(`/api/reconstruction/jobs/${encodeURIComponent(jobId)}/model`);
-        if (!modelResponse.ok) await this.readJson(modelResponse);
-        const blob = await modelResponse.blob();
-        const disposition = modelResponse.headers.get('Content-Disposition') || '';
-        const filename = disposition.match(/filename="([^"]+)"/)?.[1] || `genesis-${jobId.slice(0, 8)}.ply`;
-        const file = new File([blob], filename, { type: blob.type || 'application/ply' });
-        await this.events.invoke('import', [{ filename, contents: file }]);
         await this.refreshCredits();
         await this.refreshRecentRuns();
-        this.setState('Model opened in SuperSplat', `${filename} · ${(blob.size / 1024 / 1024).toFixed(1)} MB`, 100);
-        this.setBusy(false);
+        if (!artifacts.length) throw new Error('The job finished without any downloadable artifacts.');
+        const source: ArtifactSource = {
+            type: 'job',
+            jobId,
+            label: `Job ${jobId.slice(0, 8)}`
+        };
+        this.showArtifacts(artifacts, source);
+        if (artifacts.length === 1) {
+            await this.openArtifact(artifacts[0], source);
+        } else {
+            const primary = artifacts.find(artifact => artifact.primary);
+            this.setState('Reconstruction complete · choose an artifact',
+                `${artifacts.length} artifacts are available${primary ? ` · ${primary.name} is recommended` : ''}.`,
+                100);
+            this.setBusy(false);
+        }
     }
 
     private async cancelJob() {
@@ -800,6 +1079,8 @@ class ReconstructionPanel extends Container {
         this.checkoutLink.hidden = true;
         this.activeUpload?.abort();
         this.activeUpload = null;
+        this.activeDownload?.abort();
+        this.activeDownload = null;
         this.activeEvents?.close();
         this.activeEvents = null;
         if (this.activeJobId) {
@@ -818,7 +1099,11 @@ class ReconstructionPanel extends Container {
         try {
             body = await response.json();
         } catch {
-            // Use status below.
+            if (response.ok) {
+                throw new Error(
+                    'The local server returned an invalid API response. Restart SuperSplat so the frontend and server use the same version.'
+                );
+            }
         }
         if (!response.ok) throw new Error(body.error || `Server returned ${response.status}`);
         return body;

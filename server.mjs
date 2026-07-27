@@ -1,6 +1,6 @@
-import { randomUUID } from 'node:crypto';
-import { openAsBlob } from 'node:fs';
-import { mkdir, readFile, rm } from 'node:fs/promises';
+import { createHash, randomUUID } from 'node:crypto';
+import { createReadStream, openAsBlob } from 'node:fs';
+import { mkdir, open as openFile, readFile, rename, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
@@ -11,6 +11,7 @@ import { ApiError, Client } from 'genesis-recon';
 
 const rootDir = path.dirname(fileURLToPath(import.meta.url));
 const uploadDir = path.join(rootDir, '.server-uploads');
+const artifactCacheDir = path.join(rootDir, '.artifact-cache');
 const envPath = path.join(rootDir, '.env.local');
 
 const parseEnv = (text) => Object.fromEntries(
@@ -39,10 +40,14 @@ if (!apiKey) {
     process.exit(1);
 }
 
-await mkdir(uploadDir, { recursive: true });
+await Promise.all([
+    mkdir(uploadDir, { recursive: true }),
+    mkdir(artifactCacheDir, { recursive: true })
+]);
 
 const gp = new Client(baseUrl, apiKey);
 const app = express();
+const jobContexts = new Map();
 const uploadChannels = new Map();
 const upload = multer({
     dest: uploadDir,
@@ -67,6 +72,172 @@ const normalizeName = (name, index) => {
     .join('__')
     .replace(/[^a-zA-Z0-9._-]/g, '_');
     return cleaned || `image-${index}.jpg`;
+};
+
+const runCacheScope = (datasetId, pipeline, runName, created) =>
+    ['run', datasetId, pipeline, runName, String(created)];
+
+const artifactCachePath = (scope, artifactName) => {
+    const digest = createHash('sha256')
+    .update(JSON.stringify([...scope, artifactName]))
+    .digest('hex')
+    .slice(0, 24);
+    const basename = path.basename(artifactName)
+    .replace(/[^a-zA-Z0-9._-]/g, '_')
+    .slice(-120) || 'artifact';
+    return path.join(artifactCacheDir, `${digest}-${basename}`);
+};
+
+const cachedArtifact = async (scope, artifact) => {
+    const cachePath = artifactCachePath(scope, artifact.name);
+    try {
+        const entry = await stat(cachePath);
+        if (!entry.isFile() || (artifact.size > 0 && entry.size !== artifact.size)) {
+            await rm(cachePath, { force: true });
+            return null;
+        }
+        return { path: cachePath, size: entry.size };
+    } catch {
+        return null;
+    }
+};
+
+const artifactsWithCacheStatus = async (scope, artifacts) => Promise.all(
+    artifacts.map(async artifact => ({
+        ...artifact,
+        local: Boolean(await cachedArtifact(scope, artifact))
+    }))
+);
+
+const resolveJobCacheScope = async (jobId, job) => {
+    const context = jobContexts.get(jobId);
+    if (!context) return ['job', jobId];
+    if ((job?.terminal || job == null) && context.created == null) {
+        const runs = await gp.listRuns(context.datasetId).catch(() => []);
+        const run = runs
+        .filter(item => {
+            const created = item.created < 1e12 ? item.created : item.created / 1000;
+            return item.pipeline === context.pipeline &&
+                item.run_name === context.runName &&
+                created >= context.submittedAt - 60;
+        })
+        .sort((a, b) => b.created - a.created)[0];
+        if (run) context.created = run.created;
+    }
+    return context.created == null
+        ? ['job', jobId]
+        : runCacheScope(context.datasetId, context.pipeline, context.runName, context.created);
+};
+
+const writeResponseChunk = (res, chunk) => new Promise((resolve, reject) => {
+    if (res.destroyed) {
+        reject(new Error('Client disconnected'));
+        return;
+    }
+    if (res.write(chunk)) {
+        resolve();
+        return;
+    }
+    const cleanup = () => {
+        res.off('drain', onDrain);
+        res.off('close', onClose);
+        res.off('error', onError);
+    };
+    const onDrain = () => {
+        cleanup();
+        resolve();
+    };
+    const onClose = () => {
+        cleanup();
+        reject(new Error('Client disconnected'));
+    };
+    const onError = (error) => {
+        cleanup();
+        reject(error);
+    };
+    res.once('drain', onDrain);
+    res.once('close', onClose);
+    res.once('error', onError);
+});
+
+const contentTypeFor = (filename) => {
+    const extension = path.extname(filename).toLowerCase();
+    const contentTypes = {
+        '.json': 'application/json',
+        '.ksplat': 'application/x-gaussian-splat',
+        '.ply': 'application/ply',
+        '.spz': 'application/x-gaussian-splat',
+        '.splat': 'application/x-gaussian-splat',
+        '.sog': 'application/x-gaussian-splat',
+        '.zip': 'application/zip'
+    };
+    return contentTypes[extension] || 'application/octet-stream';
+};
+
+const sendArtifact = async (res, scope, artifact, getRemoteStream) => {
+    const filename = path.basename(artifact.name).replace(/[^a-zA-Z0-9._-]/g, '_');
+    const cached = await cachedArtifact(scope, artifact);
+    res.setHeader('Content-Type', contentTypeFor(filename));
+    res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+    const contentLength = cached?.size ?? Number(artifact.size);
+    if (Number.isFinite(contentLength) && contentLength >= 0) {
+        res.setHeader('Content-Length', String(contentLength));
+    }
+    res.setHeader('X-Artifact-Local', String(Boolean(cached)));
+    res.setHeader('Cache-Control', 'no-store');
+    if (cached) {
+        await new Promise((resolve, reject) => {
+            const source = createReadStream(cached.path);
+            const cleanup = () => {
+                source.off('error', onError);
+                res.off('error', onError);
+                res.off('finish', onFinish);
+                res.off('close', onClose);
+            };
+            const onError = (error) => {
+                cleanup();
+                reject(error);
+            };
+            const onFinish = () => {
+                cleanup();
+                resolve();
+            };
+            const onClose = () => {
+                cleanup();
+                source.destroy();
+                resolve();
+            };
+            source.on('error', onError);
+            res.on('error', onError);
+            res.on('finish', onFinish);
+            res.on('close', onClose);
+            source.pipe(res);
+        });
+        return;
+    }
+
+    const finalPath = artifactCachePath(scope, artifact.name);
+    const partialPath = `${finalPath}.${randomUUID()}.part`;
+    const file = await openFile(partialPath, 'wx');
+    let complete = false;
+    try {
+        const stream = Readable.fromWeb(await getRemoteStream());
+        for await (const chunk of stream) {
+            await file.write(chunk);
+            await writeResponseChunk(res, chunk);
+        }
+        await file.close();
+        await rename(partialPath, finalPath);
+        complete = true;
+        res.end();
+    } catch (error) {
+        if (!res.destroyed) throw error;
+    } finally {
+        if (!complete) {
+            await file.close().catch(() => undefined);
+            await rm(partialPath, { force: true }).catch(() => undefined);
+        }
+    }
 };
 
 const channelFor = (id) => {
@@ -230,14 +401,33 @@ app.post('/api/reconstruction/jobs', asyncRoute(async (req, res) => {
     const config = { ...await gp.getPreset('splat', preset), data_dir: datasetId };
     const idempotencyKey = String(req.body.idempotencyKey || randomUUID());
     const jobId = await gp.submitJob('splat', config, { idempotencyKey });
+    jobContexts.set(jobId, {
+        datasetId,
+        pipeline: 'splat',
+        runName: preset,
+        submittedAt: Date.now() / 1000,
+        created: null
+    });
     res.status(202).json({ jobId, idempotencyKey });
 }));
 
 app.get('/api/reconstruction/jobs/:jobId', asyncRoute(async (req, res) => {
     const job = await gp.getJob(req.params.jobId);
     const artifacts = job.terminal ? await gp.listArtifacts(req.params.jobId).catch(() => []) : [];
-    res.json({ job, artifacts });
+    const scope = await resolveJobCacheScope(req.params.jobId, job);
+    res.json({
+        job,
+        artifacts: await artifactsWithCacheStatus(scope, artifacts)
+    });
 }));
+
+app.get('/api/reconstruction/datasets/:datasetId/runs/:pipeline/:runName/artifacts',
+    asyncRoute(async (req, res) => {
+        const { datasetId, pipeline, runName } = req.params;
+        const artifacts = await gp.listRunArtifacts(datasetId, pipeline, runName);
+        const scope = runCacheScope(datasetId, pipeline, runName, req.query.created || 'unknown');
+        res.json({ artifacts: await artifactsWithCacheStatus(scope, artifacts) });
+    }));
 
 app.post('/api/reconstruction/jobs/:jobId/cancel', asyncRoute(async (req, res) => {
     await gp.cancelJob(req.params.jobId);
@@ -268,34 +458,56 @@ app.get('/api/reconstruction/jobs/:jobId/events', async (req, res) => {
 
 app.get('/api/reconstruction/jobs/:jobId/model', asyncRoute(async (req, res) => {
     const artifacts = await gp.listArtifacts(req.params.jobId);
-    const artifact = artifacts.find(item => item.primary)
-        || artifacts.find(item => item.kind === 'splat_ply')
-        || artifacts.find(item => item.name.toLowerCase().endsWith('.ply'));
+    const requestedName = String(req.query.name || '');
+    const artifact = requestedName
+        ? artifacts.find(item => item.name === requestedName)
+        : artifacts.find(item => item.primary)
+            || artifacts.find(item => item.kind === 'splat_ply')
+            || artifacts.find(item => item.name.toLowerCase().endsWith('.ply'));
     if (!artifact) {
-        res.status(404).json({ error: 'Job đã hoàn tất nhưng không có Gaussian Splat PLY artifact.' });
+        res.status(404).json({
+            error: requestedName
+                ? `Artifact "${requestedName}" does not exist for this job.`
+                : 'Job đã hoàn tất nhưng không có Gaussian Splat PLY artifact.'
+        });
         return;
     }
 
-    const stream = await gp.downloadArtifactStream(req.params.jobId, artifact.name);
-    const filename = path.basename(artifact.name).replace(/[^a-zA-Z0-9._-]/g, '_');
-    res.setHeader('Content-Type', 'application/ply');
-    res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
-    Readable.fromWeb(stream).pipe(res);
+    const scope = await resolveJobCacheScope(req.params.jobId);
+    await sendArtifact(
+        res,
+        scope,
+        artifact,
+        () => gp.downloadArtifactStream(req.params.jobId, artifact.name)
+    );
 }));
 
 app.get('/api/reconstruction/datasets/:datasetId/runs/:pipeline/:runName/model',
     asyncRoute(async (req, res) => {
         const { datasetId, pipeline, runName } = req.params;
         const artifacts = await gp.listRunArtifacts(datasetId, pipeline, runName);
-        const artifact = artifacts.find(item => item.primary)
-            || artifacts.find(item => item.kind === 'splat_ply')
-            || artifacts.find(item => item.name.toLowerCase().endsWith('.ply'));
+        const requestedName = String(req.query.name || '');
+        const artifact = requestedName
+            ? artifacts.find(item => item.name === requestedName)
+            : artifacts.find(item => item.primary)
+                || artifacts.find(item => item.kind === 'splat_ply')
+                || artifacts.find(item => item.name.toLowerCase().endsWith('.ply'));
         if (!artifact) {
-            res.status(404).json({ error: 'Run has no Gaussian Splat PLY artifact.' });
+            res.status(404).json({
+                error: requestedName
+                    ? `Artifact "${requestedName}" does not exist for this run.`
+                : 'Run has no Gaussian Splat PLY artifact.'
+            });
             return;
         }
-        const url = await gp.getRunArtifactUrl(datasetId, pipeline, runName, artifact.name);
-        res.json({ name: artifact.name, url });
+        const scope = runCacheScope(datasetId, pipeline, runName, req.query.created || 'unknown');
+        await sendArtifact(res, scope, artifact, async () => {
+            const url = await gp.getRunArtifactUrl(datasetId, pipeline, runName, artifact.name);
+            const response = await fetch(url);
+            if (!response.ok) throw new Error(`Artifact storage returned ${response.status}`);
+            if (!response.body) throw new Error(`Artifact storage returned no body for "${artifact.name}".`);
+            return response.body;
+        });
     }));
 
 app.use(express.static(path.join(rootDir, 'dist'), { etag: false, maxAge: 0 }));

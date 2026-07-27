@@ -31,12 +31,13 @@
 }
 
 .recon-body {
+    display: flex;
+    flex-direction: column;
     flex: 1 1 auto;
     min-height: 0;
     box-sizing: border-box;
     padding: 12px;
-    overflow: auto;
-    scrollbar-gutter: stable;
+    overflow: hidden;
     color: $text-primary;
     background-color: $bcg-primary;
 
@@ -107,8 +108,12 @@
 }
 
 .recon-credit {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
     margin-bottom: 10px;
-    padding: 8px;
+    padding: 6px 8px;
     background-color: $bcg-dark;
     border-radius: 2px;
 }
@@ -116,16 +121,7 @@
 .recon-credit-balance {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-
-    > span {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        color: $text-secondary;
-        font-weight: bold;
-    }
+    gap: 6px;
 
     i {
         width: 6px;
@@ -136,14 +132,16 @@
 
     strong {
         color: $text-primary;
+        font-weight: normal;
         font-variant-numeric: tabular-nums;
     }
 }
 
 .recon-buy-credits {
-    width: 100%;
-    margin-top: 7px;
+    min-height: 24px;
+    padding: 2px 7px;
     color: $clr-icon-hilight;
+    white-space: nowrap;
 
     &[aria-expanded='true'] {
         color: $clr-active;
@@ -153,13 +151,66 @@
 
 .recon-pricing {
     display: none;
+    flex: 0 1 auto;
+    max-height: 250px;
     margin-bottom: 10px;
     padding: 10px;
+    overflow: auto;
     background-color: $bcg-darkest;
     border-radius: 2px;
 
     &.open {
         display: block;
+    }
+}
+
+.recon-tabs {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    flex: 0 0 auto;
+    margin-bottom: 9px;
+    border-bottom: 1px solid $bcg-lighter;
+}
+
+.recon-tab {
+    min-height: 30px;
+    padding: 4px 8px;
+    color: $text-secondary;
+    background: transparent;
+    border: 0;
+    border-bottom: 2px solid transparent;
+    cursor: pointer;
+
+    &:hover {
+        color: $text-primary;
+        background-color: $bcg-dark;
+    }
+
+    &:focus-visible {
+        outline: 1px solid $clr-hilight;
+        outline-offset: -2px;
+    }
+
+    &.active {
+        color: $text-primary;
+        border-bottom-color: $clr-hilight;
+    }
+}
+
+.recon-shared-progress {
+    flex: 0 0 auto;
+    margin-bottom: 8px;
+}
+
+.recon-tab-panel {
+    flex: 1 1 auto;
+    min-height: 0;
+    padding-right: 2px;
+    overflow: auto;
+    scrollbar-gutter: stable;
+
+    &[hidden] {
+        display: none;
     }
 }
 
@@ -332,7 +383,7 @@
     display: flex;
     flex-direction: column;
     gap: 3px;
-    padding: 9px 0;
+    padding: 7px 0;
 
     strong {
         color: $text-primary;
@@ -341,6 +392,110 @@
     span {
         color: $text-secondary;
         line-height: 1.4;
+    }
+}
+
+.recon-artifacts {
+    margin: 8px 0 0;
+    padding: 9px;
+    background-color: $bcg-darkest;
+    border-radius: 2px;
+
+    &[hidden] {
+        display: none;
+    }
+}
+
+.recon-artifact-heading {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin-bottom: 7px;
+
+    strong {
+        color: $text-primary;
+    }
+
+    span {
+        overflow: hidden;
+        color: $text-secondary;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+}
+
+.recon-artifact-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.recon-artifact {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto 20px;
+    align-items: center;
+    gap: 7px;
+    padding: 7px 8px;
+    background-color: $bcg-dark;
+    border-left: 2px solid transparent;
+
+    &.primary {
+        border-left-color: $clr-hilight;
+    }
+
+    > div {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 2px 6px;
+        min-width: 0;
+    }
+
+    > div > strong {
+        overflow: hidden;
+        color: $text-primary;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    > div > span {
+        grid-column: 1 / -1;
+        color: $text-secondary;
+        font-size: 11px;
+    }
+
+    > div > em {
+        padding: 1px 4px;
+        color: $clr-active;
+        background-color: $clr-hilight;
+        border-radius: 2px;
+        font-size: 9px;
+        font-style: normal;
+        text-transform: uppercase;
+    }
+}
+
+.recon-artifact-location {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    box-sizing: border-box;
+    border-radius: 50%;
+    font-family: Arial, sans-serif;
+    font-size: 12px;
+    font-weight: bold;
+
+    &.local {
+        color: $clr-active;
+        background-color: #27643d;
+    }
+
+    &.remote {
+        color: $text-secondary;
+        background-color: $bcg-darkest;
+        font-size: 13px;
     }
 }
 
@@ -379,6 +534,11 @@
     }
 }
 
+.recon-shared-actions {
+    display: flex;
+    justify-content: flex-end;
+}
+
 .recon-footer {
     display: flex;
     justify-content: flex-end;
@@ -391,7 +551,6 @@
 }
 
 .recon-recent {
-    margin-top: 10px;
     padding: 9px;
     background-color: $bcg-darkest;
     border-radius: 2px;
