@@ -10,6 +10,24 @@
     transform: translate(0, -50%);
     flex-direction: column;
 
+    strong,
+    span,
+    p,
+    label,
+    .recon-file-summary {
+        cursor: text;
+        user-select: text;
+    }
+
+    button {
+        user-select: none;
+    }
+
+    button * {
+        cursor: inherit;
+        user-select: none;
+    }
+
     &:not(.pcui-hidden) {
         display: flex;
     }
@@ -366,17 +384,105 @@
     font-variant-numeric: tabular-nums;
 }
 
-.recon-progress-track {
-    height: 3px;
-    overflow: hidden;
-    background-color: $bcg-dark;
+.recon-progress-card {
+    display: grid;
+    grid-template-columns: 72px minmax(0, 1fr);
+    align-items: center;
+    gap: 11px;
+    min-height: 82px;
+    padding: 8px 9px;
+    background-color: $bcg-darkest;
+    border-radius: 2px;
 }
 
-.recon-progress-bar {
-    width: 0;
-    height: 100%;
-    background-color: $clr-hilight;
-    transition: width 180ms ease;
+.recon-progress-ring {
+    position: relative;
+    width: 66px;
+    height: 66px;
+    color: $text-primary;
+    font-variant-numeric: tabular-nums;
+
+    svg {
+        display: block;
+        width: 100%;
+        height: 100%;
+        overflow: visible;
+        transform: rotate(-90deg);
+    }
+
+    circle {
+        fill: none;
+        stroke-width: 4;
+    }
+}
+
+.recon-progress-track {
+    stroke: $bcg-light;
+}
+
+.recon-progress-value {
+    stroke: $clr-hilight;
+    stroke-dasharray: 100;
+    stroke-dashoffset: 100;
+    stroke-linecap: round;
+    transition: stroke-dashoffset 180ms ease, stroke 160ms ease;
+}
+
+.recon-progress-activity {
+    opacity: 0;
+    stroke: $clr-icon-hilight;
+    stroke-dasharray: 18 82;
+    stroke-linecap: round;
+    transform-origin: center;
+}
+
+.recon-progress-center {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: $text-primary;
+    font-size: 12px;
+    line-height: 1;
+}
+
+.recon-progress-card[data-mode='indeterminate'],
+.recon-progress-card[data-mode='stage'],
+.recon-progress-card[data-mode='reconnecting'] {
+    .recon-progress-activity {
+        opacity: 1;
+        animation: recon-progress-spin 1.15s linear infinite;
+    }
+}
+
+.recon-progress-card[data-mode='reconnecting'] {
+    .recon-progress-activity {
+        animation-duration: 1.8s;
+    }
+}
+
+.recon-progress-card[data-mode='failed'] {
+    .recon-progress-value {
+        stroke: $error;
+        stroke-dashoffset: 0 !important;
+    }
+
+    .recon-progress-center {
+        color: $error;
+    }
+}
+
+.recon-progress-card[data-mode='done'] {
+    .recon-progress-center {
+        color: $clr-active;
+    }
+}
+
+@keyframes recon-progress-spin {
+    to {
+        transform: rotate(360deg);
+    }
 }
 
 .recon-state {
@@ -384,6 +490,7 @@
     flex-direction: column;
     gap: 3px;
     padding: 7px 0;
+    min-width: 0;
 
     strong {
         color: $text-primary;
@@ -392,6 +499,7 @@
     span {
         color: $text-secondary;
         line-height: 1.4;
+        overflow-wrap: anywhere;
     }
 }
 
@@ -514,26 +622,6 @@
     }
 }
 
-.recon-logs {
-    max-height: 100px;
-    margin: 0 0 8px;
-    padding: 7px;
-    overflow: auto;
-    user-select: text;
-    color: $text-secondary;
-    background-color: $bcg-darkest;
-    border: 0;
-    border-radius: 2px;
-    font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Roboto Mono', 'Consolas', monospace;
-    font-size: 10px;
-    line-height: 1.4;
-    white-space: pre-wrap;
-
-    &[hidden] {
-        display: none;
-    }
-}
-
 .recon-shared-actions {
     display: flex;
     justify-content: flex-end;
@@ -595,6 +683,51 @@
     }
 }
 
+.recon-dataset {
+    padding: 6px;
+    background-color: $bcg-dark;
+    border-radius: 2px;
+}
+
+.recon-dataset-heading {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 5px;
+
+    > div {
+        display: flex;
+        min-width: 0;
+        flex-direction: column;
+        gap: 2px;
+    }
+
+    strong {
+        overflow: hidden;
+        color: $text-primary;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    span {
+        color: $text-secondary;
+        font-size: 10px;
+    }
+}
+
+.recon-dataset-models {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+
+    > span {
+        padding: 5px 7px;
+        color: $text-secondary;
+        font-size: 11px;
+    }
+}
+
 .recon-run {
     display: flex;
     flex-direction: column;
@@ -615,6 +748,18 @@
     span {
         color: $text-secondary;
         font-size: 11px;
+    }
+}
+
+.recon-delete-dataset {
+    align-self: stretch;
+    padding: 5px 7px;
+    color: $text-secondary;
+    font-size: 10px;
+
+    &:hover,
+    &:focus-visible {
+        color: $error;
     }
 }
 

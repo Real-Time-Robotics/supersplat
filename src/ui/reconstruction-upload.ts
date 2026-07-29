@@ -31,7 +31,11 @@ class ReconstructionUpload {
             source.addEventListener('end', () => source.close());
             source.addEventListener('failed', (event) => {
                 const data = JSON.parse(event.data) as { message?: string };
-                this.view.statusDetail.textContent = data.message || 'Object storage upload failed.';
+                this.view.setState(
+                    'Object storage upload failed',
+                    data.message || 'The upload could not be completed.',
+                    { mode: 'failed' }
+                );
                 source.close();
             });
 
@@ -40,10 +44,12 @@ class ReconstructionUpload {
             request.open('POST', '/api/reconstruction/upload');
             request.upload.onprogress = (event) => {
                 if (!event.lengthComputable) return;
-                const percent = Math.round((event.loaded / event.total) * 34);
                 this.view.setState('Sending images to localhost',
                     this.transferDetail('browser-upload', event.loaded, event.total),
-                    percent);
+                    {
+                        mode: 'determinate',
+                        value: (event.loaded / event.total) * 100
+                    });
             };
             request.onerror = () => {
                 this.activeUpload = null;
@@ -100,7 +106,11 @@ class ReconstructionUpload {
 
     private updateStorageProgress(progress: UploadProgress) {
         if (progress.phase === 'presign') {
-            this.view.setState('Preparing object storage', 'The server is creating secure upload URLs.', 36);
+            this.view.setState(
+                'Preparing object storage',
+                'The server is creating secure upload URLs.',
+                { mode: 'indeterminate' }
+            );
             return;
         }
         if (progress.phase === 'upload') {
@@ -108,14 +118,22 @@ class ReconstructionUpload {
             const current = progress.file ? ` · ${progress.file}` : '';
             this.view.setState('Uploading to object storage',
                 this.transferDetail('object-storage-upload', progress.loaded, progress.total, current),
-                36 + ratio * 17);
+                { mode: 'determinate', value: ratio * 100 });
             return;
         }
         if (progress.phase === 'finalize') {
-            this.view.setState('Finalizing dataset', 'Object storage received all images.', 54);
+            this.view.setState(
+                'Finalizing dataset',
+                'Object storage received all images.',
+                { mode: 'indeterminate' }
+            );
             return;
         }
-        this.view.setState('Processing dataset', 'The server is validating and indexing images.', 56);
+        this.view.setState(
+            'Processing dataset',
+            'The server is validating and indexing images.',
+            { mode: 'indeterminate' }
+        );
     }
 }
 

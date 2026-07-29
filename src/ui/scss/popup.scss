@@ -42,6 +42,18 @@
             }
         }
 
+        &.text-selectable {
+            #popup-header,
+            #popup-header *,
+            #popup-text,
+            #popup-text *,
+            #popup-warning-text,
+            #popup-warning-text * {
+                cursor: text;
+                user-select: text;
+            }
+        }
+
         #popup-header {
             height: 32px;
             line-height: 32px;

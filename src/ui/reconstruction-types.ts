@@ -40,6 +40,15 @@ type StageEvent = {
     returncode: number | null;
 };
 
+type RecentDataset = {
+    dataset_id: string;
+    label: string;
+    image_count: number;
+    bytes: number;
+    created: number;
+    models: RecentRun[];
+};
+
 type RecentRun = {
     dataset_id: string;
     dataset_label: string;
@@ -72,6 +81,7 @@ export {
     CheckoutStatus,
     PricingCatalog,
     PricingPack,
+    RecentDataset,
     RecentRun,
     StageEvent,
     UploadProgress,

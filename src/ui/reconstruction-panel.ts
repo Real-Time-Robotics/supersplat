@@ -39,7 +39,12 @@ class ReconstructionPanel extends Container {
         const billing = new ReconstructionBilling(view, async () => {
             await runtime.workflow?.refreshPreparedQuote();
         });
-        const artifacts = new ReconstructionArtifacts(events, view, () => runtime.workflow?.canStart ?? false);
+        const artifacts = new ReconstructionArtifacts(
+            events,
+            view,
+            () => runtime.workflow?.canStart ?? false,
+            datasetId => runtime.workflow?.handleDatasetDeleted(datasetId)
+        );
         const workflow = new ReconstructionWorkflow(view, billing, artifacts);
         runtime.workflow = workflow;
 

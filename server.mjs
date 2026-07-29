@@ -109,6 +109,34 @@ const artifactsWithCacheStatus = async (scope, artifacts) => Promise.all(
     }))
 );
 
+const datasetArtifactCachePaths = async (datasetId) => {
+    const cachePaths = new Set();
+    const runs = await gp.listRuns(datasetId).catch(() => []);
+    await Promise.all(runs.map(async (run) => {
+        const artifacts = await gp.listRunArtifacts(datasetId, run.pipeline, run.run_name).catch(() => []);
+        const scope = runCacheScope(datasetId, run.pipeline, run.run_name, run.created);
+        artifacts.forEach(artifact => cachePaths.add(artifactCachePath(scope, artifact.name)));
+    }));
+    await Promise.all([...jobContexts.entries()]
+    .filter(([, context]) => context.datasetId === datasetId)
+    .map(async ([jobId, context]) => {
+        const artifacts = await gp.listArtifacts(jobId).catch(() => []);
+        const scopes = [['job', jobId]];
+        if (context.created != null) {
+            scopes.push(runCacheScope(
+                datasetId,
+                context.pipeline,
+                context.runName,
+                context.created
+            ));
+        }
+        artifacts.forEach(artifact => {
+            scopes.forEach(scope => cachePaths.add(artifactCachePath(scope, artifact.name)));
+        });
+    }));
+    return [...cachePaths];
+};
+
 const resolveJobCacheScope = async (jobId, job) => {
     const context = jobContexts.get(jobId);
     if (!context) return ['job', jobId];
@@ -301,26 +329,46 @@ app.get('/api/reconstruction/datasets/:datasetId/quote', asyncRoute(async (req, 
 
 app.get('/api/reconstruction/runs', asyncRoute(async (req, res) => {
     const limit = Math.min(50, Math.max(1, Number(req.query.limit) || 12));
-    const envelope = await gp.listDatasets({ limit: 50 });
+    const envelope = await gp.listDatasets({ limit });
     const datasets = envelope.datasets || envelope.rows || [];
     const groups = await Promise.all(datasets.map(async dataset => ({
         dataset,
         runs: await gp.listRuns(dataset.dataset_id)
     })));
-    const runs = groups.flatMap(({ dataset, runs: datasetRuns }) => datasetRuns.map(run => ({
-        ...run,
-        dataset_id: dataset.dataset_id,
-        dataset_label: dataset.label,
-        image_count: dataset.image_count
-    })))
-    .filter(run => run.status === 'done' && run.artifact_count > 0 && run.primary)
-    .sort((a, b) => b.created - a.created)
-    .slice(0, limit);
-    res.json({ runs });
+    res.json({
+        datasets: groups.map(({ dataset, runs }) => ({
+            dataset_id: dataset.dataset_id,
+            label: dataset.label,
+            image_count: dataset.image_count,
+            bytes: dataset.bytes,
+            created: dataset.created,
+            models: runs
+            .filter(run => run.status === 'done' && run.artifact_count > 0 && run.primary)
+            .sort((a, b) => b.created - a.created)
+            .map(run => ({
+                ...run,
+                dataset_id: dataset.dataset_id,
+                dataset_label: dataset.label,
+                image_count: dataset.image_count
+            }))
+        }))
+    });
 }));
 
 app.delete('/api/reconstruction/datasets/:datasetId', asyncRoute(async (req, res) => {
-    await gp.deleteDataset(req.params.datasetId);
+    const { datasetId } = req.params;
+    const cachePaths = await datasetArtifactCachePaths(datasetId);
+    await gp.deleteDataset(datasetId);
+    const cacheCleanup = await Promise.allSettled(
+        cachePaths.map(cachePath => rm(cachePath, { force: true }))
+    );
+    const cleanupFailures = cacheCleanup.filter(result => result.status === 'rejected').length;
+    if (cleanupFailures > 0) {
+        console.warn(`[reconstruction] deleted dataset ${datasetId}, but could not remove ${cleanupFailures} cached artifact(s)`);
+    }
+    for (const [jobId, context] of jobContexts) {
+        if (context.datasetId === datasetId) jobContexts.delete(jobId);
+    }
     res.status(204).end();
 }));
 
@@ -439,18 +487,31 @@ app.get('/api/reconstruction/jobs/:jobId/events', async (req, res) => {
     res.setHeader('Cache-Control', 'no-cache, no-transform');
     res.setHeader('Connection', 'keep-alive');
     res.flushHeaders();
+    const abortController = new AbortController();
+    const lastEventId = typeof req.headers['last-event-id'] === 'string'
+        ? req.headers['last-event-id']
+        : '0';
+    req.on('close', () => abortController.abort());
     try {
-        for await (const event of gp.streamEvents(req.params.jobId)) {
+        for await (const event of gp.streamEvents(req.params.jobId, {
+            lastEventId,
+            signal: abortController.signal
+        })) {
+            // Logs remain available in the backend for diagnostics. The reconstruction UI
+            // consumes structured stage/artifact/end frames only.
+            if (event.type === 'log') continue;
+            if (event.id) res.write(`id: ${event.id}\n`);
             if (event.type === 'end') {
                 res.write('event: end\ndata: {}\n\n');
                 break;
             }
-            const data = event.type === 'log' ? event.line :
-                event.type === 'stage' ? event.stage : event.artifact;
+            const data = event.type === 'stage' ? event.stage : event.artifact;
             res.write(`event: ${event.type}\ndata: ${JSON.stringify(data)}\n\n`);
         }
     } catch (error) {
-        res.write(`event: failed\ndata: ${JSON.stringify({ message: error?.message || String(error) })}\n\n`);
+        if (!abortController.signal.aborted) {
+            res.write(`event: failed\ndata: ${JSON.stringify({ message: error?.message || String(error) })}\n\n`);
+        }
     } finally {
         res.end();
     }

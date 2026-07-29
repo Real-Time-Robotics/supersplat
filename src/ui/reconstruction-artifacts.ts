@@ -1,5 +1,6 @@
 import { Events } from '../events';
-import { Artifact, ArtifactSource, RecentRun } from './reconstruction-types';
+import { ReconstructionDatasets } from './reconstruction-datasets';
+import { Artifact, ArtifactSource, RecentDataset, RecentRun } from './reconstruction-types';
 import {
     OPENABLE_ARTIFACT_EXTENSIONS,
     formatBytes,
@@ -11,13 +12,31 @@ import { ReconstructionView } from './reconstruction-view';
 
 class ReconstructionArtifacts {
     private activeDownload: AbortController | null = null;
+    private activeDatasetId: string | null = null;
     private readonly artifactLocations = new Map<string, HTMLElement>();
+    private readonly datasets: ReconstructionDatasets;
 
     constructor(
         private readonly events: Events,
         private readonly view: ReconstructionView,
-        private readonly canStart: () => boolean
+        private readonly canStart: () => boolean,
+        onDatasetDeleted: (datasetId: string) => Promise<void> | void
     ) {
+        this.datasets = new ReconstructionDatasets(
+            events,
+            view,
+            canStart,
+            async (datasetId) => {
+                if (this.activeDatasetId === datasetId) {
+                    this.activeDatasetId = null;
+                    this.view.artifactPanel.hidden = true;
+                    this.view.artifactList.textContent = '';
+                    this.artifactLocations.clear();
+                }
+                await onDatasetDeleted(datasetId);
+                await this.refreshRecentRuns();
+            }
+        );
         view.refreshRunsButton.addEventListener('click', () => this.refreshRecentRuns());
     }
 
@@ -30,30 +49,70 @@ class ReconstructionArtifacts {
         this.view.refreshRunsButton.disabled = true;
         try {
             const response = await fetch('/api/reconstruction/runs?limit=12', { cache: 'no-store' });
-            const data = await readJson<{ runs: RecentRun[] }>(response);
+            const data = await readJson<{ datasets: RecentDataset[] }>(response);
             this.view.recentRuns.textContent = '';
-            if (!data.runs.length) {
+            if (!data.datasets.length) {
                 const empty = document.createElement('span');
-                empty.textContent = 'No Gaussian Splat artifacts yet.';
+                empty.textContent = 'No reconstruction datasets yet.';
                 this.view.recentRuns.appendChild(empty);
                 return;
             }
-            for (const run of data.runs) {
-                const button = document.createElement('button');
-                button.type = 'button';
-                button.className = 'recon-button recon-run';
+            for (const dataset of data.datasets) {
+                const card = document.createElement('section');
+                card.className = 'recon-dataset';
+                const heading = document.createElement('div');
+                heading.className = 'recon-dataset-heading';
+                const info = document.createElement('div');
                 const name = document.createElement('strong');
-                name.textContent = run.dataset_label || run.dataset_id;
-                const created = new Date(run.created < 1e12 ? run.created * 1000 : run.created);
-                const detail = document.createElement('span');
-                const artifactLabel = `${run.artifact_count} artifact${run.artifact_count === 1 ? '' : 's'}`;
-                detail.textContent = `${run.pipeline}/${run.run_name} · ${created.toLocaleString('en-US')} · ${artifactLabel} · ${formatBytes(run.bytes)}`;
-                button.append(name, detail);
-                button.addEventListener('click', () => this.loadRecentRunArtifacts(run));
-                this.view.recentRuns.appendChild(button);
+                name.textContent = dataset.label || dataset.dataset_id;
+                name.title = dataset.label || dataset.dataset_id;
+                const datasetDetail = document.createElement('span');
+                const created = new Date(dataset.created < 1e12 ? dataset.created * 1000 : dataset.created);
+                datasetDetail.textContent =
+                    `${dataset.image_count.toLocaleString()} source images · ${formatBytes(dataset.bytes)} · ${created.toLocaleString('en-US')}`;
+                info.append(name, datasetDetail);
+                const deleteButton = document.createElement('button');
+                deleteButton.type = 'button';
+                deleteButton.className = 'recon-button recon-delete-dataset';
+                deleteButton.textContent = 'Delete dataset';
+                deleteButton.title = `Delete dataset ${dataset.label || dataset.dataset_id}`;
+                deleteButton.setAttribute(
+                    'aria-label',
+                    `Delete dataset ${dataset.label || dataset.dataset_id} and all of its data`
+                );
+                deleteButton.addEventListener(
+                    'click',
+                    () => this.datasets.requestDelete(dataset, deleteButton)
+                );
+                heading.append(info, deleteButton);
+                const models = document.createElement('div');
+                models.className = 'recon-dataset-models';
+                if (!dataset.models.length) {
+                    const empty = document.createElement('span');
+                    empty.textContent = 'No completed models yet.';
+                    models.appendChild(empty);
+                }
+                for (const run of dataset.models) {
+                    const button = document.createElement('button');
+                    button.type = 'button';
+                    button.className = 'recon-button recon-run';
+                    const runName = document.createElement('strong');
+                    runName.textContent = `${run.pipeline}/${run.run_name}`;
+                    const runCreated = new Date(run.created < 1e12 ? run.created * 1000 : run.created);
+                    const detail = document.createElement('span');
+                    const artifactLabel =
+                        `${run.artifact_count} artifact${run.artifact_count === 1 ? '' : 's'}`;
+                    detail.textContent =
+                        `${runCreated.toLocaleString('en-US')} · ${artifactLabel} · ${formatBytes(run.bytes)}`;
+                    button.append(runName, detail);
+                    button.addEventListener('click', () => this.loadRecentRunArtifacts(run));
+                    models.appendChild(button);
+                }
+                card.append(heading, models);
+                this.view.recentRuns.appendChild(card);
             }
         } catch (error) {
-            this.view.recentRuns.textContent = `Could not load runs: ${messageOf(error)}`;
+            this.view.recentRuns.textContent = `Could not load datasets: ${messageOf(error)}`;
         } finally {
             this.view.refreshRunsButton.disabled = false;
         }
@@ -61,6 +120,7 @@ class ReconstructionArtifacts {
 
     showArtifacts(artifacts: Artifact[], source: ArtifactSource) {
         this.view.setTab('recent');
+        this.activeDatasetId = source.type === 'run' ? source.run.dataset_id : null;
         this.view.artifactPanel.hidden = false;
         this.view.artifactTitle.textContent = source.label;
         this.view.artifactList.textContent = '';
@@ -126,12 +186,20 @@ class ReconstructionArtifacts {
             artifact.local = true;
             this.updateArtifactLocation(artifact);
             if (OPENABLE_ARTIFACT_EXTENSIONS.test(filename)) {
-                this.view.setState('Opening artifact', `${filename} · ${formatBytes(blob.size)}`, 100);
+                this.view.setState(
+                    'Opening artifact',
+                    `${filename} · ${formatBytes(blob.size)}`,
+                    { mode: 'indeterminate', center: 'Open' }
+                );
                 const file = new File([blob], filename, {
                     type: blob.type || 'application/octet-stream'
                 });
                 await this.events.invoke('import', [{ filename, contents: file }]);
-                this.view.setState('Artifact opened in SuperSplat', `${filename} · ${formatBytes(blob.size)}`, 100);
+                this.view.setState(
+                    'Artifact opened in SuperSplat',
+                    `${filename} · ${formatBytes(blob.size)}`,
+                    { mode: 'done' }
+                );
             } else {
                 const url = URL.createObjectURL(blob);
                 const anchor = document.createElement('a');
@@ -139,14 +207,18 @@ class ReconstructionArtifacts {
                 anchor.download = filename;
                 anchor.click();
                 setTimeout(() => URL.revokeObjectURL(url), 0);
-                this.view.setState('Artifact downloaded', `${filename} · ${formatBytes(blob.size)}`, 100);
+                this.view.setState(
+                    'Artifact downloaded',
+                    `${filename} · ${formatBytes(blob.size)}`,
+                    { mode: 'done' }
+                );
             }
         } catch (error) {
             if (this.activeDownload === controller) {
                 if ((error as DOMException)?.name === 'AbortError') {
-                    this.view.setState('Download cancelled', filename, 0);
+                    this.view.setState('Download cancelled', filename, { mode: 'idle' });
                 } else {
-                    this.view.setState('Could not download artifact', messageOf(error), 0);
+                    this.view.setState('Could not download artifact', messageOf(error), { mode: 'failed' });
                 }
             }
         } finally {
@@ -161,7 +233,7 @@ class ReconstructionArtifacts {
     private async loadRecentRunArtifacts(run: RecentRun) {
         this.view.setBusy(true, this.canStart());
         const label = `${run.dataset_label || run.dataset_id} · ${run.pipeline}/${run.run_name}`;
-        this.view.setState('Loading artifact list', label, 0);
+        this.view.setState('Loading artifact list', label, { mode: 'indeterminate' });
         try {
             const route = `/api/reconstruction/datasets/${encodeURIComponent(run.dataset_id)}` +
                 `/runs/${encodeURIComponent(run.pipeline)}/${encodeURIComponent(run.run_name)}/artifacts` +
@@ -179,11 +251,11 @@ class ReconstructionArtifacts {
                 const primary = artifacts.find(artifact => artifact.primary);
                 this.view.setState('Choose an artifact',
                     `${artifacts.length} artifacts are available${primary ? ` · ${primary.name} is recommended` : ''}.`,
-                    0);
+                    { mode: 'idle' });
                 this.view.setBusy(false, this.canStart());
             }
         } catch (error) {
-            this.view.setState('Could not load saved artifacts', messageOf(error), 0);
+            this.view.setState('Could not load saved artifacts', messageOf(error), { mode: 'failed' });
             this.view.setBusy(false, this.canStart());
         }
     }
@@ -214,7 +286,7 @@ class ReconstructionArtifacts {
         const operation = artifact.local ? 'Loading local copy' : 'Downloading';
         this.view.setState(`${operation}: ${artifact.name}`,
             total > 0 ? `0 B / ${formatBytes(total)} · estimating…` : 'Starting download…',
-            0);
+            total > 0 ? { mode: 'determinate', value: 0 } : { mode: 'indeterminate' });
 
         try {
             for (;;) {
@@ -239,7 +311,9 @@ class ReconstructionArtifacts {
                     ` · ${formatBytes(speed)}/s${total > 0 ? ` · ${formatDuration(eta)}` : ''}` :
                     ' · estimating…';
                 this.view.setState(`${operation}: ${artifact.name}`, transferred + speedAndEta,
-                    total > 0 ? (loaded / total) * 100 : 0);
+                    total > 0 ?
+                        { mode: 'determinate', value: (loaded / total) * 100 } :
+                        { mode: 'indeterminate' });
             }
         } catch (error) {
             await reader.cancel().catch((): void => {});
@@ -247,7 +321,7 @@ class ReconstructionArtifacts {
         }
         this.view.setState(`${operation}: ${artifact.name}`,
             `${formatBytes(loaded)} / ${formatBytes(total || loaded)} · complete`,
-            100);
+            { mode: 'done' });
         return new Blob(chunks, { type: contentType });
     }
 }

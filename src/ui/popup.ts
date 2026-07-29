@@ -9,6 +9,7 @@ interface ShowOptions {
     header?: string;
     link?: string;
     icon?: boolean;     // show the type icon before the message (default true)
+    selectable?: boolean; // allow copying message text (editor chrome defaults to user-select: none)
     select?: {
         options: { v: string, t: string }[];
         value: string;
@@ -164,6 +165,7 @@ class Popup extends Container {
             ['error', 'info', 'yesno', 'okcancel'].forEach((t) => {
                 text.class[t === type && options.icon !== false ? 'add' : 'remove'](t);
             });
+            dialog.class[options.selectable ? 'add' : 'remove']('text-selectable');
 
             // configure based on message type
             okButton.hidden = type === 'yesno';

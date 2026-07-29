@@ -1,7 +1,8 @@
+import { ProgressVisual, ReconstructionProgress } from './reconstruction-progress';
+import { StageEvent } from './reconstruction-types';
+
 class ReconstructionView {
     readonly fileSummary: HTMLElement;
-    readonly status: HTMLElement;
-    readonly statusDetail: HTMLElement;
     readonly creditValue: HTMLElement;
     readonly startButton: HTMLButtonElement;
     readonly cancelButton: HTMLButtonElement;
@@ -26,8 +27,7 @@ class ReconstructionView {
     readonly createTabPanel: HTMLElement;
     readonly recentTabPanel: HTMLElement;
     readonly dropzone: HTMLDivElement;
-
-    private readonly progressBar: HTMLElement;
+    readonly progress: ReconstructionProgress;
 
     constructor(readonly root: HTMLElement) {
         const body = document.createElement('div');
@@ -65,13 +65,21 @@ class ReconstructionView {
                 <button class="recon-tab" type="button" role="tab" aria-selected="false" aria-controls="recon-recent-tab">Recent models</button>
             </div>
             <section class="recon-shared-progress">
-                <div class="recon-progress-track" role="progressbar" aria-label="Transfer progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div class="recon-progress-bar"></div></div>
-                <div class="recon-state">
-                    <strong class="recon-status">Ready</strong>
-                    <span class="recon-status-detail">Choose a set of photos captured around an object or space.</span>
+                <div class="recon-progress-card" data-mode="idle">
+                    <div class="recon-progress-ring" role="progressbar" aria-label="Ready">
+                        <svg viewBox="0 0 44 44" aria-hidden="true">
+                            <circle class="recon-progress-track" cx="22" cy="22" r="18" pathLength="100"></circle>
+                            <circle class="recon-progress-value" cx="22" cy="22" r="18" pathLength="100"></circle>
+                            <circle class="recon-progress-activity" cx="22" cy="22" r="18" pathLength="100"></circle>
+                        </svg>
+                        <strong class="recon-progress-center">—</strong>
+                    </div>
+                    <div class="recon-state">
+                        <strong class="recon-status">Ready</strong>
+                        <span class="recon-status-detail">Choose a set of photos captured around an object or space.</span>
+                    </div>
                 </div>
                 <a class="recon-checkout" target="reconstruction-checkout" rel="noopener" hidden>Open checkout ↗</a>
-                <pre class="recon-logs" hidden></pre>
                 <div class="recon-shared-actions">
                     <button class="recon-button recon-cancel" type="button" hidden>Cancel</button>
                 </div>
@@ -98,8 +106,8 @@ class ReconstructionView {
                 <section class="recon-recent">
                     <div class="recon-recent-heading">
                         <div>
-                            <strong>Recent models</strong>
-                            <span>Open previous reconstruction results</span>
+                            <strong>Recent datasets</strong>
+                            <span>Open completed models or permanently delete a dataset</span>
                         </div>
                         <button class="recon-button recon-refresh-runs" type="button" aria-label="Refresh recent models">↻</button>
                     </div>
@@ -116,10 +124,8 @@ class ReconstructionView {
         root.appendChild(body);
 
         this.fileSummary = this.query('.recon-file-summary');
-        this.status = this.query('.recon-status');
-        this.statusDetail = this.query('.recon-status-detail');
         this.creditValue = this.query('.recon-credit-value');
-        this.progressBar = this.query('.recon-progress-bar');
+        this.progress = new ReconstructionProgress(root);
         this.startButton = this.query('.recon-start');
         this.cancelButton = this.query('.recon-cancel');
         this.checkoutLink = this.query('.recon-checkout');
@@ -170,18 +176,22 @@ class ReconstructionView {
         this.recentTabPanel.hidden = create;
     }
 
-    setState(title: string, detail: string, progress: number) {
-        const value = Math.max(0, Math.min(100, progress));
-        this.status.textContent = title;
-        this.statusDetail.textContent = detail;
-        this.progressBar.style.width = `${value}%`;
-        this.progressBar.parentElement?.setAttribute('aria-valuenow', String(Math.round(value)));
+    setState(title: string, detail: string, visual: ProgressVisual = { mode: 'idle' }) {
+        this.progress.set(title, detail, visual);
+    }
+
+    setStage(stage: StageEvent) {
+        this.progress.setStage(stage);
     }
 
     setBusy(busy: boolean, canStart: boolean) {
         this.startButton.disabled = busy || !canStart;
         this.imageInput.disabled = busy;
         this.folderInput.disabled = busy;
+        this.root.querySelectorAll<HTMLButtonElement>('.recon-run, .recon-delete-dataset')
+        .forEach((button) => {
+            button.disabled = busy;
+        });
     }
 }
 

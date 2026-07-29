@@ -55,6 +55,15 @@ class ReconstructionWorkflow {
         return this.files.length > 0 || Boolean(this.preparedDataset);
     }
 
+    handleDatasetDeleted(datasetId: string) {
+        if (this.preparedDataset?.datasetId !== datasetId) return;
+        this.clearPreparedDataset();
+        if (this.files.length === 0) {
+            this.view.fileSummary.textContent = 'No images selected';
+            this.view.startButton.disabled = true;
+        }
+    }
+
     async refreshPreparedQuote(): Promise<UploadResponse | null> {
         if (!this.preparedDataset) return null;
         try {
@@ -74,11 +83,11 @@ class ReconstructionWorkflow {
             if (creditsNeeded === 0) {
                 this.view.setState('Credits available',
                     `The dataset is already uploaded. Press Create Gaussian Splat to start the ${quote.required.toLocaleString()}-credit job.`,
-                    60);
+                    { mode: 'done', center: 'Ready' });
             } else {
                 this.view.setState('Insufficient credits',
                     `The dataset is already on R2; ${creditsNeeded.toLocaleString()} more credits are needed. Buy credits and press Start again; the images will not be uploaded twice.`,
-                    58);
+                    { mode: 'idle', center: 'Credit' });
             }
             return {
                 state: creditsNeeded === 0 ? 'ready' : 'checkout_required',
@@ -98,7 +107,11 @@ class ReconstructionWorkflow {
         this.upload.cancel();
         await this.job.cancel();
         this.view.cancelButton.hidden = true;
-        this.view.setState('Cancellation requested', 'The job will stop at the next safe checkpoint.', 0);
+        this.view.setState(
+            'Cancellation requested',
+            'The job will stop at the next safe checkpoint.',
+            { mode: 'indeterminate', center: 'Stop' }
+        );
         this.setBusy(false);
     }
 
@@ -143,9 +156,12 @@ class ReconstructionWorkflow {
             `${candidates.length.toLocaleString()} images · ${size}` :
             'No supported images found';
         this.view.startButton.disabled = candidates.length === 0;
-        this.view.setState('Ready to upload', candidates.length < 20 ?
-            'A small image set may produce an unstable model; use at least 20 well-overlapping photos.' :
-            'It will upload, quote the credit cost, then start automatically once the balance is sufficient.', 0);
+        this.view.setState(
+            'Ready to upload',
+            candidates.length < 20 ?
+                'A small image set may produce an unstable model; use at least 20 well-overlapping photos.' :
+                'It will upload, quote the credit cost, then start automatically once the balance is sufficient.',
+            { mode: 'idle' });
     }
 
     private setBusy(busy: boolean) {
@@ -156,7 +172,6 @@ class ReconstructionWorkflow {
         if (!this.canStart) return;
         this.cancelled = false;
         this.view.checkoutLink.hidden = true;
-        this.view.query<HTMLPreElement>('.recon-logs').hidden = true;
         this.setBusy(true);
         this.view.cancelButton.hidden = false;
         try {
@@ -172,7 +187,7 @@ class ReconstructionWorkflow {
             this.billing.setBalance(prepared.quote.balance);
             this.view.setState('Quote received',
                 `Needs ${prepared.quote.required.toLocaleString()} credits for ${prepared.quote.billable_gpx.toFixed(2)} billable Gpx.`,
-                58);
+                { mode: 'done', center: 'Ready' });
 
             if (prepared.state === 'checkout_required') {
                 const creditsNeeded = prepared.creditsNeeded ?? Math.max(
@@ -183,7 +198,7 @@ class ReconstructionWorkflow {
                 this.view.cancelButton.hidden = true;
                 this.view.setState('Insufficient credits',
                     `The dataset is already on R2 and needs ${prepared.quote.required.toLocaleString()} credits. The current balance is ${prepared.quote.balance.toLocaleString()}, so ${creditsNeeded.toLocaleString()} more are needed. Buy credits and press Start again; the images will not be uploaded twice.`,
-                    58);
+                    { mode: 'idle', center: 'Credit' });
                 this.setBusy(false);
                 return;
             }
@@ -192,7 +207,7 @@ class ReconstructionWorkflow {
         } catch (error) {
             if (this.cancelled || this.job.wasCancelled) return;
             this.view.cancelButton.hidden = true;
-            this.view.setState('Reconstruction failed', messageOf(error), 0);
+            this.view.setState('Reconstruction failed', messageOf(error), { mode: 'failed' });
             this.setBusy(false);
         }
     }

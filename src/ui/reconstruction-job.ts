@@ -8,9 +8,8 @@ class ReconstructionJob {
     private activeJobId: string | null = null;
     private activeEvents: EventSource | null = null;
     private cancelled = false;
-    private logLines: string[] = [];
-    private stageProgress = 0;
-    private readonly logs: HTMLPreElement;
+    private lastStage: StageEvent | null = null;
+    private eventStreamUnavailable = false;
 
     constructor(
         private readonly view: ReconstructionView,
@@ -18,7 +17,6 @@ class ReconstructionJob {
         private readonly artifacts: ReconstructionArtifacts,
         private readonly canStart: () => boolean
     ) {
-        this.logs = view.query('.recon-logs');
     }
 
     get wasCancelled() {
@@ -27,9 +25,8 @@ class ReconstructionJob {
 
     async run(datasetId: string) {
         this.cancelled = false;
-        this.logs.hidden = true;
-        this.logLines = [];
-        this.stageProgress = 0;
+        this.lastStage = null;
+        this.eventStreamUnavailable = false;
 
         const response = await fetch('/api/reconstruction/jobs', {
             method: 'POST',
@@ -42,7 +39,11 @@ class ReconstructionJob {
         });
         const data = await readJson<{ jobId: string }>(response);
         this.activeJobId = data.jobId;
-        this.view.setState('Job running', `Job ${this.activeJobId.slice(0, 8)} · waiting for the first stage`, 62);
+        this.view.setState(
+            'Job submitted',
+            `Job ${this.activeJobId.slice(0, 8)} · waiting for the first stage`,
+            { mode: 'indeterminate' }
+        );
         this.followEvents(this.activeJobId);
         await this.waitForJob(this.activeJobId);
     }
@@ -63,32 +64,22 @@ class ReconstructionJob {
         this.activeEvents?.close();
         const source = new EventSource(`/api/reconstruction/jobs/${encodeURIComponent(jobId)}/events`);
         this.activeEvents = source;
-        this.logs.hidden = false;
-
-        source.addEventListener('log', (event) => {
-            let line: unknown = event.data;
-            try {
-                line = JSON.parse(event.data);
-            } catch {
-                // Already plain text.
+        source.onopen = () => {
+            this.eventStreamUnavailable = false;
+            if (this.lastStage?.phase === 'start') {
+                this.view.setStage(this.lastStage);
             }
-            this.logLines.push(String(line));
-            this.logLines = this.logLines.slice(-40);
-            this.logs.textContent = this.logLines.join('\n');
-            this.logs.scrollTop = this.logs.scrollHeight;
-        });
+        };
         source.addEventListener('stage', (event) => {
             const stage = JSON.parse(event.data) as StageEvent;
-            const ratio = stage.total > 0 ?
-                (stage.index - (stage.phase === 'start' ? 1 : 0)) / stage.total :
-                0;
-            this.stageProgress = 62 + Math.max(0, Math.min(1, ratio)) * 29;
-            const verb = stage.phase === 'start' ? 'Running' : 'Done';
-            this.view.setState(`${verb}: ${stage.step}`, `Stage ${stage.index} / ${stage.total}`, this.stageProgress);
+            this.lastStage = stage;
+            this.view.setStage(stage);
         });
         source.addEventListener('artifact', (event) => {
             const artifact = JSON.parse(event.data) as { name?: string };
-            this.view.statusDetail.textContent = artifact.name ? `Artifact ready: ${artifact.name}` : 'Artifact ready.';
+            this.view.progress.showNotice(
+                artifact.name ? `Artifact ready: ${artifact.name}` : 'Artifact ready.'
+            );
         });
         source.addEventListener('end', () => {
             source.close();
@@ -96,12 +87,21 @@ class ReconstructionJob {
         });
         source.addEventListener('failed', (event) => {
             const data = JSON.parse(event.data) as { message?: string };
-            this.view.statusDetail.textContent = data.message || 'Lost connection to the job event stream.';
-            source.close();
+            this.eventStreamUnavailable = true;
+            this.view.setState(
+                'Reconnecting progress stream',
+                data.message || 'The job continues while final status is checked separately.',
+                { mode: 'reconnecting' }
+            );
         });
         source.onerror = () => {
-            source.close();
-            if (this.activeEvents === source) this.activeEvents = null;
+            if (this.activeEvents !== source) return;
+            this.eventStreamUnavailable = true;
+            this.view.setState(
+                'Reconnecting progress stream',
+                'The job continues while final status is checked separately.',
+                { mode: 'reconnecting' }
+            );
         };
     }
 
@@ -113,7 +113,7 @@ class ReconstructionJob {
             const response = await fetch(`/api/reconstruction/jobs/${encodeURIComponent(jobId)}`, { cache: 'no-store' });
             if (response.status === 404 && transientNotFound < JOB_NOT_FOUND_GRACE) {
                 transientNotFound++;
-                this.view.statusDetail.textContent = 'Syncing final status and artifacts…';
+                this.view.progress.showNotice('Syncing final status and artifacts…');
                 await delay(2000);
                 continue;
             }
@@ -132,11 +132,18 @@ class ReconstructionJob {
                 if (job.status !== 'done') throw new Error(`Job ended with status “${job.status}”.`);
                 break;
             }
-            if (this.stageProgress === 0) {
-                const progress = job.status === 'queued' ? 62 : job.status === 'viewer' ? 91 : 68;
-                this.view.setState(`Job: ${job.status}`,
-                    'The pipeline is running on the GPU; detailed progress appears per stage.',
-                    progress);
+            if (this.eventStreamUnavailable) {
+                this.view.setState(
+                    'Reconnecting progress stream',
+                    `Job status is still “${job.status}”; final status is checked separately.`,
+                    { mode: 'reconnecting' }
+                );
+            } else if (!this.lastStage || this.lastStage.phase === 'end') {
+                const title = job.status === 'queued' ? 'Waiting for GPU' : `Job: ${job.status}`;
+                const detail = job.status === 'queued' ?
+                    'The job is queued and will start automatically.' :
+                    'The pipeline is active; waiting for the next stage event.';
+                this.view.setState(title, detail, { mode: 'indeterminate' });
             }
             await delay(2500);
         }
@@ -156,7 +163,7 @@ class ReconstructionJob {
             const primary = artifacts.find(artifact => artifact.primary);
             this.view.setState('Reconstruction complete · choose an artifact',
                 `${artifacts.length} artifacts are available${primary ? ` · ${primary.name} is recommended` : ''}.`,
-                100);
+                { mode: 'done' });
             this.view.setBusy(false, this.canStart());
         }
     }
