@@ -498,14 +498,17 @@ app.get('/api/reconstruction/jobs/:jobId/events', async (req, res) => {
             signal: abortController.signal
         })) {
             // Logs remain available in the backend for diagnostics. The reconstruction UI
-            // consumes structured stage/artifact/end frames only.
+            // consumes the structured progress, liveness, artifact, and terminal frames.
             if (event.type === 'log') continue;
             if (event.id) res.write(`id: ${event.id}\n`);
             if (event.type === 'end') {
                 res.write('event: end\ndata: {}\n\n');
                 break;
             }
-            const data = event.type === 'stage' ? event.stage : event.artifact;
+            const data = event.type === 'stage' ? event.stage :
+                event.type === 'progress' ? event.progress :
+                    event.type === 'heartbeat' ? event.heartbeat :
+                        event.artifact;
             res.write(`event: ${event.type}\ndata: ${JSON.stringify(data)}\n\n`);
         }
     } catch (error) {

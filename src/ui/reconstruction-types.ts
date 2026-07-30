@@ -38,6 +38,42 @@ type StageEvent = {
     index: number;
     total: number;
     returncode: number | null;
+    seconds?: number | null;
+};
+
+type JobProgressEvent = {
+    stage: string;
+    phase?: string | null;
+    mode: 'determinate' | 'indeterminate';
+    current: number | null;
+    total: number | null;
+    unit: string | null;
+    message?: string | null;
+    rate?: number | null;
+    eta_seconds?: number | null;
+    observed_at: string;
+};
+
+type JobHeartbeatEvent = {
+    worker_alive: boolean;
+    heartbeat_at: string | null;
+};
+
+type JobFailure = {
+    code: string;
+    message: string;
+    stage?: string | null;
+    retryable: boolean;
+};
+
+type JobStatus = {
+    terminal: boolean;
+    status: string;
+    worker_alive?: boolean | null;
+    heartbeat_at?: string | null;
+    current_stage?: StageEvent | null;
+    progress?: JobProgressEvent | null;
+    failure?: JobFailure | null;
 };
 
 type RecentDataset = {
@@ -79,6 +115,10 @@ export {
     Artifact,
     ArtifactSource,
     CheckoutStatus,
+    JobFailure,
+    JobHeartbeatEvent,
+    JobProgressEvent,
+    JobStatus,
     PricingCatalog,
     PricingPack,
     RecentDataset,

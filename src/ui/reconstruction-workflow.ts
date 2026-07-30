@@ -1,6 +1,6 @@
 import { ReconstructionArtifacts } from './reconstruction-artifacts';
 import { ReconstructionBilling } from './reconstruction-billing';
-import { ReconstructionJob } from './reconstruction-job';
+import { ReconstructionJob, ReconstructionJobError } from './reconstruction-job';
 import { UploadResponse } from './reconstruction-types';
 import { ReconstructionUpload } from './reconstruction-upload';
 import {
@@ -103,6 +103,7 @@ class ReconstructionWorkflow {
     async cancelJob() {
         this.cancelled = true;
         this.billing.cancelPolling();
+        this.view.setRetryAvailable(false);
         this.view.checkoutLink.hidden = true;
         this.upload.cancel();
         await this.job.cancel();
@@ -144,6 +145,7 @@ class ReconstructionWorkflow {
         const candidates = Array.from(list ?? []).filter(file => IMAGE_EXTENSIONS.test(file.name));
         this.view.setTab('create');
         this.clearPreparedDataset();
+        this.view.setRetryAvailable(false);
         this.files = candidates;
         this.relativePaths = candidates.map(file => (
             (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name
@@ -171,6 +173,7 @@ class ReconstructionWorkflow {
     private async reconstruct() {
         if (!this.canStart) return;
         this.cancelled = false;
+        this.view.setRetryAvailable(false);
         this.view.checkoutLink.hidden = true;
         this.setBusy(true);
         this.view.cancelButton.hidden = false;
@@ -206,9 +209,12 @@ class ReconstructionWorkflow {
             await this.job.run(prepared.datasetId);
         } catch (error) {
             if (this.cancelled || this.job.wasCancelled) return;
+            const jobError = error instanceof ReconstructionJobError ? error : null;
             this.view.cancelButton.hidden = true;
-            this.view.setState('Reconstruction failed', messageOf(error), { mode: 'failed' });
+            this.view.setRetryAvailable(Boolean(jobError?.retryable));
+            this.view.setState(jobError?.title || 'Reconstruction failed', messageOf(error), { mode: 'failed' });
             this.setBusy(false);
+            if (jobError && !jobError.retryable) this.view.startButton.disabled = true;
         }
     }
 }

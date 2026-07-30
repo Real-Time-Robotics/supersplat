@@ -1,5 +1,9 @@
 import { ProgressVisual, ReconstructionProgress } from './reconstruction-progress';
-import { StageEvent } from './reconstruction-types';
+import {
+    JobHeartbeatEvent,
+    JobProgressEvent,
+    StageEvent
+} from './reconstruction-types';
 
 class ReconstructionView {
     readonly fileSummary: HTMLElement;
@@ -77,6 +81,10 @@ class ReconstructionView {
                     <div class="recon-state">
                         <strong class="recon-status">Ready</strong>
                         <span class="recon-status-detail">Choose a set of photos captured around an object or space.</span>
+                        <span class="recon-worker-status" role="status" hidden>
+                            <i></i>
+                            <span></span>
+                        </span>
                     </div>
                 </div>
                 <a class="recon-checkout" target="reconstruction-checkout" rel="noopener" hidden>Open checkout ↗</a>
@@ -182,6 +190,18 @@ class ReconstructionView {
 
     setStage(stage: StageEvent) {
         this.progress.setStage(stage);
+    }
+
+    setStageProgress(progress: JobProgressEvent) {
+        this.progress.setStageProgress(progress);
+    }
+
+    setWorkerStatus(heartbeat: JobHeartbeatEvent | null) {
+        this.progress.setWorkerStatus(heartbeat);
+    }
+
+    setRetryAvailable(retryable: boolean) {
+        this.startButton.textContent = retryable ? 'Retry reconstruction' : 'Create Gaussian Splat';
     }
 
     setBusy(busy: boolean, canStart: boolean) {
