@@ -51,6 +51,11 @@ type JobProgressEvent = {
     message?: string | null;
     rate?: number | null;
     eta_seconds?: number | null;
+    file?: string | null;
+    file_index?: number | null;
+    file_total?: number | null;
+    file_loaded?: number | null;
+    file_size?: number | null;
     observed_at: string;
 };
 
@@ -107,6 +112,11 @@ type Artifact = {
     local?: boolean;
 };
 
+type JobArtifactAvailableEvent = Artifact & {
+    state: 'available';
+    available_at: string;
+};
+
 type ArtifactSource =
     | { type: 'job'; jobId: string; label: string }
     | { type: 'run'; run: RecentRun; label: string };
@@ -115,6 +125,7 @@ export {
     Artifact,
     ArtifactSource,
     CheckoutStatus,
+    JobArtifactAvailableEvent,
     JobFailure,
     JobHeartbeatEvent,
     JobProgressEvent,

@@ -3,6 +3,7 @@ import {
     JobProgressEvent,
     StageEvent
 } from './reconstruction-types';
+import { formatBytes } from './reconstruction-utils';
 
 type ProgressVisual =
     | { mode: 'idle'; center?: string }
@@ -31,7 +32,8 @@ const STAGE_LABELS: Record<string, string> = {
     refine: 'Refining mesh',
     texture: 'Texturing model',
     copc: 'Preparing point cloud',
-    dsm: 'Building elevation map'
+    dsm: 'Building elevation map',
+    publish_results: 'Uploading results'
 };
 
 const clampPercent = (value: number) => Math.max(0, Math.min(100, value));
@@ -54,21 +56,28 @@ const formatQuantity = (value: number) => value.toLocaleString(undefined, {
     maximumFractionDigits: Number.isInteger(value) ? 0 : 1
 });
 
+const isByteUnit = (unit: string | null) => /^(?:b|byte|bytes)$/i.test(unit || '');
+
 const formatProgressAmount = (progress: JobProgressEvent) => {
     if (progress.current === null || progress.total === null) return '';
     if (progress.unit === 'percent') return `${formatQuantity(progress.current)}%`;
+    if (isByteUnit(progress.unit)) {
+        return `${formatBytes(progress.current)} / ${formatBytes(progress.total)}`;
+    }
     const amount = `${formatQuantity(progress.current)} / ${formatQuantity(progress.total)}`;
     return progress.unit ? `${amount} ${progress.unit}` : amount;
 };
 
 const formatProgressRate = (progress: JobProgressEvent) => {
     if (progress.rate == null || progress.rate <= 0) return '';
+    if (isByteUnit(progress.unit)) return `${formatBytes(progress.rate)}/s`;
     const unit = progress.unit === 'percent' ? '%' : progress.unit;
     return `${formatQuantity(progress.rate)}${unit ? ` ${unit}` : ''}/s`;
 };
 
 const formatEta = (seconds: number | null | undefined) => {
     if (seconds == null || !Number.isFinite(seconds) || seconds < 0) return '';
+    if (seconds === 0) return '';
     if (seconds < 60) return `~${Math.max(1, Math.ceil(seconds))}s left`;
     const minutes = Math.floor(seconds / 60);
     if (minutes < 60) return `~${minutes}m ${Math.ceil(seconds % 60)}s left`;
@@ -79,6 +88,41 @@ const formatEta = (seconds: number | null | undefined) => {
 const progressPhaseLabel = (progress: JobProgressEvent) => {
     const value = progress.message || progress.phase || '';
     return value.replace(/[_-]+/g, ' ').replace(/^\w/, character => character.toUpperCase());
+};
+
+const progressFile = (progress: JobProgressEvent) => {
+    const path = progress.file?.trim();
+    if (!path) return null;
+
+    const name = path.split(/[\\/]/).pop() || path;
+    const validIndex = progress.file_index != null &&
+        Number.isFinite(progress.file_index) &&
+        progress.file_index > 0;
+    const validTotal = progress.file_total != null &&
+        Number.isFinite(progress.file_total) &&
+        progress.file_total > 0;
+    const position = validIndex && validTotal ?
+        `File ${progress.file_index} of ${progress.file_total}` :
+        '';
+
+    const hasFileProgress = progress.file_loaded != null &&
+        progress.file_size != null &&
+        Number.isFinite(progress.file_loaded) &&
+        Number.isFinite(progress.file_size) &&
+        progress.file_size > 0;
+    const accessible = [
+        `Current file: ${path}`,
+        position,
+        hasFileProgress ?
+            `File progress: ${formatBytes(progress.file_loaded!)} of ${formatBytes(progress.file_size!)}` :
+            ''
+    ].filter(Boolean).join('. ');
+
+    return {
+        path,
+        visual: [name, position].filter(Boolean).join(' · '),
+        accessible
+    };
 };
 
 class ReconstructionProgress {
@@ -114,7 +158,7 @@ class ReconstructionProgress {
         this.stageProgress = null;
         this.notice = '';
         this.status.textContent = title;
-        this.detail.textContent = detail;
+        this.setDetail(detail);
 
         const value = visual.mode === 'determinate' ?
             clampPercent(visual.value) :
@@ -155,7 +199,7 @@ class ReconstructionProgress {
             this.stageProgress = null;
             const total = Math.max(1, stage.total);
             this.status.textContent = `Completed: ${stageLabel(stage.step)}`;
-            this.detail.textContent = `Stage ${stage.index} of ${stage.total} complete.`;
+            this.setDetail(`Stage ${stage.index} of ${stage.total} complete.`);
             this.center.textContent = `${stage.index}/${stage.total}`;
             this.valueCircle.style.strokeDashoffset = String(100 - clampPercent((stage.index / total) * 100));
             this.card.dataset.mode = stage.returncode === 0 ? 'stage-complete' : 'failed';
@@ -198,7 +242,7 @@ class ReconstructionProgress {
     showNotice(message: string, durationMs = 5000) {
         this.notice = message;
         this.noticeUntil = Date.now() + durationMs;
-        this.detail.textContent = message;
+        this.setDetail(message);
     }
 
     destroy() {
@@ -216,16 +260,25 @@ class ReconstructionProgress {
         const total = Math.max(1, this.stage.total);
         const completed = Math.max(0, this.stage.index - 1);
         this.status.textContent = stageLabel(this.stage.step);
-        if (!this.notice || Date.now() >= this.noticeUntil) {
-            this.notice = '';
-            const elapsed = formatElapsed(Date.now() - this.stageStartedAt);
-            const phase = this.stageProgress ? progressPhaseLabel(this.stageProgress) : '';
-            this.detail.textContent = [
-                phase,
-                `Stage ${this.stage.index} of ${this.stage.total}`,
-                `active for ${elapsed}`
-            ].filter(Boolean).join(' · ');
-        }
+        if (this.notice && Date.now() >= this.noticeUntil) this.notice = '';
+        const elapsed = formatElapsed(Date.now() - this.stageStartedAt);
+        const phase = this.stageProgress ? progressPhaseLabel(this.stageProgress) : '';
+        const file = this.stageProgress ? progressFile(this.stageProgress) : null;
+        const detail = [
+            this.notice,
+            phase,
+            file?.visual,
+            `Stage ${this.stage.index} of ${this.stage.total}`,
+            `active for ${elapsed}`
+        ].filter(Boolean).join(' · ');
+        const accessibleDetail = [
+            this.notice,
+            phase,
+            file?.accessible,
+            `Stage ${this.stage.index} of ${this.stage.total}`,
+            `active for ${elapsed}`
+        ].filter(Boolean).join(' · ');
+        this.setDetail(detail, accessibleDetail, file?.path);
         this.center.textContent = `${this.stage.index}/${this.stage.total}`;
         this.valueCircle.style.strokeDashoffset = String(100 - clampPercent((completed / total) * 100));
         this.card.dataset.mode = 'stage';
@@ -235,8 +288,20 @@ class ReconstructionProgress {
     private renderDeterminateProgress(progress: JobProgressEvent) {
         const stagePercent = clampPercent((progress.current! / progress.total!) * 100);
         const phase = progressPhaseLabel(progress);
+        const file = progressFile(progress);
         const detail = [
+            this.notice && Date.now() < this.noticeUntil ? this.notice : '',
             phase,
+            file?.visual,
+            this.stage ? `Stage ${this.stage.index} of ${this.stage.total}` : '',
+            formatProgressAmount(progress),
+            formatProgressRate(progress),
+            formatEta(progress.eta_seconds)
+        ].filter(Boolean).join(' · ');
+        const accessibleDetail = [
+            this.notice && Date.now() < this.noticeUntil ? this.notice : '',
+            phase,
+            file?.accessible,
             this.stage ? `Stage ${this.stage.index} of ${this.stage.total}` : '',
             formatProgressAmount(progress),
             formatProgressRate(progress),
@@ -244,10 +309,8 @@ class ReconstructionProgress {
         ].filter(Boolean).join(' · ');
 
         this.status.textContent = stageLabel(progress.stage);
-        if (!this.notice || Date.now() >= this.noticeUntil) {
-            this.notice = '';
-            this.detail.textContent = detail;
-        }
+        if (this.notice && Date.now() >= this.noticeUntil) this.notice = '';
+        this.setDetail(detail, accessibleDetail, file?.path);
         this.center.textContent = `${Math.round(stagePercent)}%`;
         this.valueCircle.style.strokeDashoffset = String(100 - stagePercent);
         this.card.dataset.mode = 'determinate';
@@ -255,7 +318,10 @@ class ReconstructionProgress {
         this.ring.setAttribute('aria-valuemin', '0');
         this.ring.setAttribute('aria-valuemax', '100');
         this.ring.setAttribute('aria-valuenow', String(Math.round(stagePercent)));
-        this.ring.setAttribute('aria-valuetext', `${Math.round(stagePercent)}% of current stage. ${detail}`);
+        this.ring.setAttribute(
+            'aria-valuetext',
+            `${Math.round(stagePercent)}% of current stage. ${accessibleDetail}`
+        );
     }
 
     private setStageAria(stage: StageEvent, completed: number) {
@@ -267,6 +333,20 @@ class ReconstructionProgress {
             'aria-valuetext',
             `Stage ${stage.index} of ${stage.total}: ${stageLabel(stage.step)}`
         );
+    }
+
+    private setDetail(text: string, accessibleText = text, title?: string) {
+        this.detail.textContent = text;
+        if (title) {
+            this.detail.title = title;
+        } else {
+            this.detail.removeAttribute('title');
+        }
+        if (accessibleText !== text) {
+            this.detail.setAttribute('aria-label', accessibleText);
+        } else {
+            this.detail.removeAttribute('aria-label');
+        }
     }
 
     private stopStageTimer() {

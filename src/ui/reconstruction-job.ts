@@ -3,6 +3,7 @@ import { ReconstructionBilling } from './reconstruction-billing';
 import {
     Artifact,
     ArtifactSource,
+    JobArtifactAvailableEvent,
     JobFailure,
     JobHeartbeatEvent,
     JobProgressEvent,
@@ -176,8 +177,10 @@ class ReconstructionJob {
             this.eventStreamUnavailable = false;
             if (this.lastStage?.phase === 'start') {
                 this.view.setStage(this.lastStage);
+                if (this.lastProgress?.stage === this.lastStage.step) {
+                    this.view.setStageProgress(this.lastProgress);
+                }
             }
-            if (this.lastProgress) this.view.setStageProgress(this.lastProgress);
             if (this.lastHeartbeat) this.view.setWorkerStatus(this.lastHeartbeat);
         };
         source.addEventListener('stage', (event) => {
@@ -199,11 +202,11 @@ class ReconstructionJob {
             this.view.setWorkerStatus(heartbeat);
         });
         source.addEventListener('artifact', (event) => {
-            const artifact = eventData<{ name?: string }>(event);
-            if (!artifact) return;
-            this.view.progress.showNotice(
-                artifact.name ? `Artifact ready: ${artifact.name}` : 'Artifact ready.'
-            );
+            const artifact = eventData<JobArtifactAvailableEvent>(event);
+            if (!artifact || artifact.state !== 'available' ||
+                artifact.primary !== true ||
+                typeof artifact.name !== 'string' || !artifact.name) return;
+            this.view.progress.showNotice(`Primary model available: ${artifact.name}`);
         });
         source.addEventListener('end', () => {
             source.close();
