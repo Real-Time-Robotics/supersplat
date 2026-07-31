@@ -461,7 +461,10 @@ app.post('/api/reconstruction/jobs', asyncRoute(async (req, res) => {
 
 app.get('/api/reconstruction/jobs/:jobId', asyncRoute(async (req, res) => {
     const job = await gp.getJob(req.params.jobId);
-    const artifacts = job.terminal ? await gp.listArtifacts(req.params.jobId).catch(() => []) : [];
+    const delivering = job.current_stage?.step === 'publish_results';
+    const artifacts = job.terminal || delivering
+        ? await gp.listArtifacts(req.params.jobId).catch(() => [])
+        : [];
     const scope = await resolveJobCacheScope(req.params.jobId, job);
     res.json({
         job,
@@ -508,7 +511,8 @@ app.get('/api/reconstruction/jobs/:jobId/events', async (req, res) => {
             const data = event.type === 'stage' ? event.stage :
                 event.type === 'progress' ? event.progress :
                     event.type === 'heartbeat' ? event.heartbeat :
-                        event.artifact;
+                        event.type === 'dataset' ? event.dataset :
+                            event.artifact;
             res.write(`event: ${event.type}\ndata: ${JSON.stringify(data)}\n\n`);
         }
     } catch (error) {

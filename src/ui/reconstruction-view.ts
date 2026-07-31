@@ -10,6 +10,7 @@ class ReconstructionView {
     readonly creditValue: HTMLElement;
     readonly startButton: HTMLButtonElement;
     readonly cancelButton: HTMLButtonElement;
+    readonly openPrimaryButton: HTMLButtonElement;
     readonly checkoutLink: HTMLAnchorElement;
     readonly imageInput: HTMLInputElement;
     readonly folderInput: HTMLInputElement;
@@ -89,6 +90,7 @@ class ReconstructionView {
                 </div>
                 <a class="recon-checkout" target="reconstruction-checkout" rel="noopener" hidden>Open checkout ↗</a>
                 <div class="recon-shared-actions">
+                    <button class="recon-button recon-primary recon-open-primary" type="button" hidden>Open model now</button>
                     <button class="recon-button recon-cancel" type="button" hidden>Cancel</button>
                 </div>
             </section>
@@ -136,6 +138,7 @@ class ReconstructionView {
         this.progress = new ReconstructionProgress(root);
         this.startButton = this.query('.recon-start');
         this.cancelButton = this.query('.recon-cancel');
+        this.openPrimaryButton = this.query('.recon-open-primary');
         this.checkoutLink = this.query('.recon-checkout');
         this.imageInput = this.query('.recon-image-input');
         this.folderInput = this.query('.recon-folder-input');

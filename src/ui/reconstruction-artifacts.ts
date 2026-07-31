@@ -1,5 +1,6 @@
 import { Events } from '../events';
 import { ReconstructionDatasets } from './reconstruction-datasets';
+import type { ProgressVisual } from './reconstruction-progress';
 import { Artifact, ArtifactSource, RecentDataset, RecentRun } from './reconstruction-types';
 import {
     OPENABLE_ARTIFACT_EXTENSIONS,
@@ -9,6 +10,16 @@ import {
     readJson
 } from './reconstruction-utils';
 import { ReconstructionView } from './reconstruction-view';
+
+type ArtifactOpenResult = {
+    status: 'opened' | 'downloaded' | 'cancelled' | 'failed';
+    message?: string;
+};
+
+type ArtifactOpenOptions = {
+    manageView?: boolean;
+    report?: (title: string, detail: string, visual: ProgressVisual) => void;
+};
 
 class ReconstructionArtifacts {
     private activeDownload: AbortController | null = null;
@@ -42,7 +53,10 @@ class ReconstructionArtifacts {
 
     cancelDownload() {
         this.activeDownload?.abort();
-        this.activeDownload = null;
+    }
+
+    get isDownloading() {
+        return this.activeDownload !== null;
     }
 
     async refreshRecentRuns() {
@@ -159,12 +173,21 @@ class ReconstructionArtifacts {
         }
     }
 
-    async openArtifact(artifact: Artifact, source: ArtifactSource) {
+    async openArtifact(
+        artifact: Artifact,
+        source: ArtifactSource,
+        options: ArtifactOpenOptions = {}
+    ): Promise<ArtifactOpenResult> {
         this.activeDownload?.abort();
         const controller = new AbortController();
         this.activeDownload = controller;
-        this.view.setBusy(true, this.canStart());
-        this.view.cancelButton.hidden = false;
+        const manageView = options.manageView ?? true;
+        const report = options.report ??
+            ((title: string, detail: string, visual: ProgressVisual) => this.view.setState(title, detail, visual));
+        if (manageView) {
+            this.view.setBusy(true, this.canStart());
+            this.view.cancelButton.hidden = false;
+        }
         const filename = artifact.name.split('/').pop() || 'genesis-artifact';
         try {
             let response: Response;
@@ -182,11 +205,11 @@ class ReconstructionArtifacts {
             if (!response.ok) await readJson(response);
             artifact.local = response.headers.get('X-Artifact-Local') === 'true';
             this.updateArtifactLocation(artifact);
-            const blob = await this.readDownload(response, artifact, controller.signal);
+            const blob = await this.readDownload(response, artifact, controller.signal, report);
             artifact.local = true;
             this.updateArtifactLocation(artifact);
             if (OPENABLE_ARTIFACT_EXTENSIONS.test(filename)) {
-                this.view.setState(
+                report(
                     'Opening artifact',
                     `${filename} · ${formatBytes(blob.size)}`,
                     { mode: 'indeterminate', center: 'Open' }
@@ -195,37 +218,43 @@ class ReconstructionArtifacts {
                     type: blob.type || 'application/octet-stream'
                 });
                 await this.events.invoke('import', [{ filename, contents: file }]);
-                this.view.setState(
+                report(
                     'Artifact opened in SuperSplat',
                     `${filename} · ${formatBytes(blob.size)}`,
                     { mode: 'done' }
                 );
-            } else {
-                const url = URL.createObjectURL(blob);
-                const anchor = document.createElement('a');
-                anchor.href = url;
-                anchor.download = filename;
-                anchor.click();
-                setTimeout(() => URL.revokeObjectURL(url), 0);
-                this.view.setState(
-                    'Artifact downloaded',
-                    `${filename} · ${formatBytes(blob.size)}`,
-                    { mode: 'done' }
-                );
+                return { status: 'opened' };
             }
+            const url = URL.createObjectURL(blob);
+            const anchor = document.createElement('a');
+            anchor.href = url;
+            anchor.download = filename;
+            anchor.click();
+            setTimeout(() => URL.revokeObjectURL(url), 0);
+            report(
+                'Artifact downloaded',
+                `${filename} · ${formatBytes(blob.size)}`,
+                { mode: 'done' }
+            );
+            return { status: 'downloaded' };
         } catch (error) {
             if (this.activeDownload === controller) {
                 if ((error as DOMException)?.name === 'AbortError') {
-                    this.view.setState('Download cancelled', filename, { mode: 'idle' });
+                    report('Download cancelled', filename, { mode: 'idle' });
                 } else {
-                    this.view.setState('Could not download artifact', messageOf(error), { mode: 'failed' });
+                    report('Could not download artifact', messageOf(error), { mode: 'failed' });
                 }
             }
+            return (error as DOMException)?.name === 'AbortError' ?
+                { status: 'cancelled' } :
+                { status: 'failed', message: messageOf(error) };
         } finally {
             if (this.activeDownload === controller) {
                 this.activeDownload = null;
-                this.view.cancelButton.hidden = true;
-                this.view.setBusy(false, this.canStart());
+                if (manageView) {
+                    this.view.cancelButton.hidden = true;
+                    this.view.setBusy(false, this.canStart());
+                }
             }
         }
     }
@@ -271,7 +300,12 @@ class ReconstructionArtifacts {
         location.setAttribute('aria-label', label);
     }
 
-    private async readDownload(response: Response, artifact: Artifact, signal: AbortSignal): Promise<Blob> {
+    private async readDownload(
+        response: Response,
+        artifact: Artifact,
+        signal: AbortSignal,
+        report: (title: string, detail: string, visual: ProgressVisual) => void
+    ): Promise<Blob> {
         const headerSize = Number(response.headers.get('Content-Length') || 0);
         const total = headerSize > 0 ? headerSize : Math.max(0, Number(artifact.size) || 0);
         const contentType = response.headers.get('Content-Type') || 'application/octet-stream';
@@ -284,7 +318,7 @@ class ReconstructionArtifacts {
         let loaded = 0;
         let lastRendered = 0;
         const operation = artifact.local ? 'Loading local copy' : 'Downloading';
-        this.view.setState(`${operation}: ${artifact.name}`,
+        report(`${operation}: ${artifact.name}`,
             total > 0 ? `0 B / ${formatBytes(total)} · estimating…` : 'Starting download…',
             total > 0 ? { mode: 'determinate', value: 0 } : { mode: 'indeterminate' });
 
@@ -310,7 +344,7 @@ class ReconstructionArtifacts {
                 const speedAndEta = speed > 0 ?
                     ` · ${formatBytes(speed)}/s${total > 0 ? ` · ${formatDuration(eta)}` : ''}` :
                     ' · estimating…';
-                this.view.setState(`${operation}: ${artifact.name}`, transferred + speedAndEta,
+                report(`${operation}: ${artifact.name}`, transferred + speedAndEta,
                     total > 0 ?
                         { mode: 'determinate', value: (loaded / total) * 100 } :
                         { mode: 'indeterminate' });
@@ -319,11 +353,14 @@ class ReconstructionArtifacts {
             await reader.cancel().catch((): void => {});
             throw error;
         }
-        this.view.setState(`${operation}: ${artifact.name}`,
+        report(`${operation}: ${artifact.name}`,
             `${formatBytes(loaded)} / ${formatBytes(total || loaded)} · complete`,
             { mode: 'done' });
         return new Blob(chunks, { type: contentType });
     }
 }
 
-export { ReconstructionArtifacts };
+export {
+    ArtifactOpenResult,
+    ReconstructionArtifacts
+};

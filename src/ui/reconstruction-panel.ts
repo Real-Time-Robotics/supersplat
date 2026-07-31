@@ -49,8 +49,11 @@ class ReconstructionPanel extends Container {
         runtime.workflow = workflow;
 
         view.cancelButton.addEventListener('click', () => {
-            artifacts.cancelDownload();
-            workflow.cancelJob();
+            if (artifacts.isDownloading) {
+                artifacts.cancelDownload();
+            } else {
+                workflow.cancelJob();
+            }
         });
 
         const setVisible = (visible: boolean) => {

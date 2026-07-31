@@ -101,19 +101,30 @@ class ReconstructionWorkflow {
     }
 
     async cancelJob() {
-        this.cancelled = true;
-        this.billing.cancelPolling();
+        this.view.cancelButton.disabled = true;
         this.view.setRetryAvailable(false);
         this.view.checkoutLink.hidden = true;
         this.upload.cancel();
-        await this.job.cancel();
-        this.view.cancelButton.hidden = true;
-        this.view.setState(
-            'Cancellation requested',
-            'The job will stop at the next safe checkpoint.',
-            { mode: 'indeterminate', center: 'Stop' }
-        );
-        this.setBusy(false);
+        try {
+            const accepted = await this.job.cancel();
+            if (!accepted) {
+                this.cancelled = false;
+                return;
+            }
+            this.cancelled = true;
+            this.billing.cancelPolling();
+            this.view.cancelButton.hidden = true;
+            this.view.setState(
+                'Cancellation requested',
+                'The job will stop at the next safe checkpoint.',
+                { mode: 'indeterminate', center: 'Stop' }
+            );
+            this.setBusy(false);
+        } catch (error) {
+            this.cancelled = false;
+            this.view.cancelButton.disabled = false;
+            this.view.progress.showNotice(`Could not cancel: ${messageOf(error)}`, 8000);
+        }
     }
 
     private restorePreparedDataset() {

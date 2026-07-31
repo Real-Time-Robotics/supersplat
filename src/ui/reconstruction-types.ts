@@ -1,3 +1,5 @@
+import type { JobDatasetEvent } from 'genesis-recon';
+
 type UploadResponse = {
     state: 'ready' | 'checkout_required';
     datasetId: string;
@@ -117,6 +119,8 @@ type JobArtifactAvailableEvent = Artifact & {
     available_at: string;
 };
 
+type JobDatasetAvailableEvent = JobDatasetEvent;
+
 type ArtifactSource =
     | { type: 'job'; jobId: string; label: string }
     | { type: 'run'; run: RecentRun; label: string };
@@ -126,6 +130,7 @@ export {
     ArtifactSource,
     CheckoutStatus,
     JobArtifactAvailableEvent,
+    JobDatasetAvailableEvent,
     JobFailure,
     JobHeartbeatEvent,
     JobProgressEvent,

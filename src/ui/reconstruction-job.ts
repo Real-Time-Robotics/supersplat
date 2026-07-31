@@ -4,6 +4,7 @@ import {
     Artifact,
     ArtifactSource,
     JobArtifactAvailableEvent,
+    JobDatasetAvailableEvent,
     JobFailure,
     JobHeartbeatEvent,
     JobProgressEvent,
@@ -108,11 +109,19 @@ const eventData = <T>(event: Event): T | null => {
 class ReconstructionJob {
     private activeJobId: string | null = null;
     private activeEvents: EventSource | null = null;
+    private submissionPromise: Promise<string> | null = null;
     private cancelled = false;
     private lastStage: StageEvent | null = null;
     private lastProgress: JobProgressEvent | null = null;
     private lastHeartbeat: JobHeartbeatEvent | null = null;
     private eventStreamUnavailable = false;
+    private deliveryActive = false;
+    private availablePrimary: Artifact | null = null;
+    private openingPrimary = false;
+    private primaryOpenAttempted = false;
+    private openedPrimaryName: string | null = null;
+    private primaryOpenPromise: Promise<void> | null = null;
+    private terminalFailure = false;
 
     constructor(
         private readonly view: ReconstructionView,
@@ -120,6 +129,7 @@ class ReconstructionJob {
         private readonly artifacts: ReconstructionArtifacts,
         private readonly canStart: () => boolean
     ) {
+        this.view.openPrimaryButton.addEventListener('click', () => this.togglePrimaryOpen());
     }
 
     get wasCancelled() {
@@ -132,10 +142,21 @@ class ReconstructionJob {
         this.lastProgress = null;
         this.lastHeartbeat = null;
         this.eventStreamUnavailable = false;
+        this.deliveryActive = false;
+        this.availablePrimary = null;
+        this.openingPrimary = false;
+        this.primaryOpenAttempted = false;
+        this.openedPrimaryName = null;
+        this.primaryOpenPromise = null;
+        this.terminalFailure = false;
+        this.view.openPrimaryButton.hidden = true;
+        this.view.openPrimaryButton.disabled = false;
+        this.view.openPrimaryButton.textContent = 'Open model now';
+        this.view.cancelButton.disabled = false;
         this.view.setWorkerStatus(null);
         this.view.setRetryAvailable(false);
 
-        const response = await fetch('/api/reconstruction/jobs', {
+        const submission = fetch('/api/reconstruction/jobs', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -143,9 +164,14 @@ class ReconstructionJob {
                 preset: 'standard',
                 idempotencyKey: crypto.randomUUID()
             })
-        });
-        const data = await readJson<{ jobId: string }>(response);
-        this.activeJobId = data.jobId;
+        }).then(response => readJson<{ jobId: string }>(response))
+        .then(data => data.jobId);
+        this.submissionPromise = submission;
+        try {
+            this.activeJobId = await submission;
+        } finally {
+            if (this.submissionPromise === submission) this.submissionPromise = null;
+        }
         this.view.setState(
             'Job submitted',
             `Job ${this.activeJobId.slice(0, 8)} · waiting for the first stage`,
@@ -155,18 +181,25 @@ class ReconstructionJob {
         await this.waitForJob(this.activeJobId);
     }
 
-    async cancel() {
+    async cancel(): Promise<boolean> {
+        if (this.submissionPromise) await this.submissionPromise;
+        if (this.activeJobId) {
+            const response = await fetch(`/api/reconstruction/jobs/${encodeURIComponent(this.activeJobId)}/cancel`, {
+                method: 'POST'
+            });
+            if (response.status === 409) {
+                this.enterDelivery();
+                return false;
+            }
+            if (!response.ok) await readJson(response);
+        }
         this.cancelled = true;
         this.activeEvents?.close();
         this.activeEvents = null;
         this.view.setWorkerStatus(null);
         this.view.setRetryAvailable(false);
-        if (this.activeJobId) {
-            await fetch(`/api/reconstruction/jobs/${encodeURIComponent(this.activeJobId)}/cancel`, {
-                method: 'POST'
-            }).catch((): void => {});
-        }
         this.activeJobId = null;
+        return true;
     }
 
     private followEvents(jobId: string) {
@@ -188,6 +221,7 @@ class ReconstructionJob {
             if (!stage) return;
             this.lastStage = stage;
             this.view.setStage(stage);
+            this.observeStage(stage);
         });
         source.addEventListener('progress', (event) => {
             const progress = eventData<JobProgressEvent>(event);
@@ -206,7 +240,15 @@ class ReconstructionJob {
             if (!artifact || artifact.state !== 'available' ||
                 artifact.primary !== true ||
                 typeof artifact.name !== 'string' || !artifact.name) return;
-            this.view.progress.showNotice(`Primary model available: ${artifact.name}`);
+            this.offerPrimary(artifact);
+        });
+        source.addEventListener('dataset', (event) => {
+            const dataset = eventData<JobDatasetAvailableEvent>(event);
+            if (!dataset || dataset.state !== 'available' || dataset.kind !== 'sparse' ||
+                typeof dataset.dataset_id !== 'string' || !dataset.dataset_id) return;
+            if (!this.availablePrimary) {
+                this.view.progress.showNotice('Camera alignment data is available.', 8000);
+            }
         });
         source.addEventListener('end', () => {
             source.close();
@@ -252,14 +294,21 @@ class ReconstructionJob {
             const { job } = data;
             if (job.terminal) {
                 artifacts = Array.isArray(data.artifacts) ? data.artifacts : [];
+                this.deliveryActive = false;
                 this.activeEvents?.close();
                 this.activeEvents = null;
                 this.view.cancelButton.hidden = true;
                 this.view.setWorkerStatus(null);
                 this.activeJobId = null;
-                if (job.status !== 'done') throw terminalError(job);
+                if (job.status !== 'done') {
+                    this.terminalFailure = true;
+                    this.artifacts.cancelDownload();
+                    this.view.openPrimaryButton.hidden = true;
+                    throw terminalError(job);
+                }
                 break;
             }
+            for (const artifact of data.artifacts ?? []) this.offerPrimary(artifact);
             const hasProgressSnapshot = Boolean(job.current_stage || job.progress);
             if (this.eventStreamUnavailable && !hasProgressSnapshot) {
                 this.view.setState(
@@ -278,6 +327,8 @@ class ReconstructionJob {
             await delay(2500);
         }
 
+        if (this.primaryOpenPromise) await this.primaryOpenPromise;
+        this.view.openPrimaryButton.hidden = true;
         await this.billing.refreshCredits();
         await this.artifacts.refreshRecentRuns();
         if (!artifacts.length) throw new Error('The job finished without any downloadable artifacts.');
@@ -287,7 +338,7 @@ class ReconstructionJob {
             label: `Job ${jobId.slice(0, 8)}`
         };
         this.artifacts.showArtifacts(artifacts, source);
-        if (artifacts.length === 1) {
+        if (artifacts.length === 1 && !this.primaryOpenAttempted) {
             await this.artifacts.openArtifact(artifacts[0], source);
         } else {
             const primary = artifacts.find(artifact => artifact.primary);
@@ -316,11 +367,119 @@ class ReconstructionJob {
         if (job.current_stage) {
             this.lastStage = job.current_stage;
             this.view.setStage(job.current_stage);
+            this.observeStage(job.current_stage);
         }
         if (job.progress &&
             (!this.lastProgress || job.progress.observed_at >= this.lastProgress.observed_at)) {
             this.lastProgress = job.progress;
             this.view.setStageProgress(job.progress);
+        }
+    }
+
+    private observeStage(stage: StageEvent) {
+        if (stage.step === 'publish_results') this.enterDelivery();
+    }
+
+    private enterDelivery() {
+        const firstObservation = !this.deliveryActive;
+        this.deliveryActive = true;
+        this.view.cancelButton.hidden = true;
+        this.view.cancelButton.disabled = true;
+        if (firstObservation && !this.availablePrimary) {
+            this.view.progress.showNotice(
+                'Processing is complete. Securing your results cannot be cancelled.',
+                12000
+            );
+        }
+    }
+
+    private offerPrimary(artifact: Artifact) {
+        if (!artifact.primary || !artifact.name.toLowerCase().endsWith('.ply')) return;
+        const firstObservation = this.availablePrimary?.name !== artifact.name;
+        this.availablePrimary = artifact;
+        if (this.openedPrimaryName === artifact.name) return;
+        const button = this.view.openPrimaryButton;
+        button.hidden = false;
+        button.disabled = false;
+        if (!this.openingPrimary && !this.primaryOpenAttempted) {
+            button.textContent = 'Open model now';
+        }
+        button.title = `${artifact.name} is ready while remaining files continue uploading`;
+        button.setAttribute('aria-label', `Open ${artifact.name} now`);
+        if (firstObservation) {
+            this.view.progress.showNotice(
+                `Primary model ready: ${artifact.name}. Remaining files are still uploading.`,
+                10000
+            );
+        }
+    }
+
+    private togglePrimaryOpen() {
+        if (this.openingPrimary) {
+            this.view.openPrimaryButton.disabled = true;
+            this.artifacts.cancelDownload();
+            return;
+        }
+        const artifact = this.availablePrimary;
+        const jobId = this.activeJobId;
+        if (!artifact || !jobId) return;
+        this.primaryOpenAttempted = true;
+        this.openingPrimary = true;
+        const button = this.view.openPrimaryButton;
+        button.textContent = 'Cancel opening';
+        button.title = `Cancel downloading ${artifact.name}`;
+        const source: ArtifactSource = {
+            type: 'job',
+            jobId,
+            label: `Job ${jobId.slice(0, 8)}`
+        };
+        const task = this.openPrimary(artifact, source);
+        this.primaryOpenPromise = task;
+        task.finally(() => {
+            if (this.primaryOpenPromise === task) this.primaryOpenPromise = null;
+        });
+    }
+
+    private async openPrimary(artifact: Artifact, source: ArtifactSource) {
+        const result = await this.artifacts.openArtifact(artifact, source, {
+            manageView: false,
+            report: (title, detail, visual) => {
+                const button = this.view.openPrimaryButton;
+                button.title = `${title}: ${detail}`;
+                if (visual.mode === 'determinate') {
+                    button.textContent = `Cancel opening · ${Math.round(visual.value)}%`;
+                } else if (title === 'Opening artifact') {
+                    button.textContent = 'Opening model…';
+                    button.disabled = true;
+                }
+            }
+        });
+        this.openingPrimary = false;
+        const button = this.view.openPrimaryButton;
+        button.disabled = false;
+        if (this.terminalFailure) {
+            button.hidden = true;
+            return;
+        }
+        if (result.status === 'opened' || result.status === 'downloaded') {
+            this.openedPrimaryName = artifact.name;
+            button.hidden = true;
+            this.view.progress.showNotice(
+                this.deliveryActive ?
+                    'Primary model opened. Remaining files are still uploading.' :
+                    'Primary model opened.',
+                8000
+            );
+        } else {
+            button.hidden = false;
+            button.textContent = result.status === 'cancelled' ? 'Open model now' : 'Retry opening';
+            button.title = result.message || `Open ${artifact.name}`;
+            if (result.status === 'failed') {
+                this.view.progress.showNotice(
+                    `Could not open the primary model yet: ${result.message || 'download failed'}`,
+                    8000
+                );
+            }
         }
     }
 }
