@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-This is the **Real-Time-Robotics fork of SuperSplat** — a browser-based 3D Gaussian Splat editor (from [playcanvas/supersplat](https://github.com/playcanvas/supersplat)). The fork adds a **Reconstruction panel** that turns a folder of photos into a Gaussian Splat via the Genesis Point TypeScript SDK, then opens the resulting PLY in the editor.
+This is the **Real-Time-Robotics fork of SuperSplat** — a browser-based 3D Gaussian Splat editor (from [playcanvas/supersplat](https://github.com/playcanvas/supersplat)). The fork adds a **Reconstruction panel** that turns a folder of photos into either a Gaussian Splat or a textured photogrammetry mesh via the Genesis Point TypeScript SDK, then opens the resulting PLY or GLB in the editor.
 
 Two moving parts beyond upstream:
 - `src/ui/reconstruction-panel.ts` — the client panel (upload progress, credit/checkout flow, SSE progress).

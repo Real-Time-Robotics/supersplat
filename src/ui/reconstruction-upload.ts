@@ -1,4 +1,4 @@
-import { UploadProgress, UploadResponse } from './reconstruction-types';
+import { ReconstructionPipeline, UploadProgress, UploadResponse } from './reconstruction-types';
 import { formatBytes, formatDuration } from './reconstruction-utils';
 import { ReconstructionView } from './reconstruction-view';
 
@@ -15,7 +15,11 @@ class ReconstructionUpload {
         this.activeUpload = null;
     }
 
-    run(files: File[], relativePaths: string[]): Promise<UploadResponse> {
+    run(
+        files: File[],
+        relativePaths: string[],
+        pipeline: ReconstructionPipeline
+    ): Promise<UploadResponse> {
         return new Promise((resolve, reject) => {
             const operationId = crypto.randomUUID();
             const source = new EventSource(`/api/reconstruction/uploads/${encodeURIComponent(operationId)}/events`);
@@ -24,6 +28,7 @@ class ReconstructionUpload {
             form.append('relativePaths', JSON.stringify(relativePaths));
             form.append('label', `SuperSplat ${new Date().toLocaleString('en-US')}`);
             form.append('operationId', operationId);
+            form.append('pipeline', pipeline);
 
             source.addEventListener('progress', (event) => {
                 this.updateStorageProgress(JSON.parse(event.data) as UploadProgress);

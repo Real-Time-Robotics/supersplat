@@ -1,9 +1,9 @@
 # SuperSplat × Genesis Point
 
 This is the [Real-Time-Robotics fork of SuperSplat](https://github.com/Real-Time-Robotics/supersplat).
-It adds a Reconstruction panel that turns a folder or a selection of photos into a
-Gaussian Splat through the Genesis Point TypeScript SDK, then opens the resulting PLY
-model directly in SuperSplat.
+It adds a Reconstruction panel that turns a folder or a selection of photos into either
+a Gaussian Splat or a textured photogrammetry mesh through the Genesis Point TypeScript
+SDK, then opens the primary PLY or GLB model directly in SuperSplat.
 
 The original editor and its Gaussian Splat inspection and editing tools come from
 [playcanvas/supersplat](https://github.com/playcanvas/supersplat).
@@ -43,10 +43,15 @@ browser-bundle rebuilds, run `npm run sdk:build` once and then `npm run develop`
 
 1. Select the orange Reconstruction icon in the right toolbar.
 2. Log in, register, or enter an existing Genesis API key without leaving SuperSplat.
-3. Choose an image folder, select multiple images, or drop the images into the panel.
-4. Add credits from the panel if the quoted balance is insufficient.
-5. Select **Tạo Gaussian Splat** and follow the upload and reconstruction progress.
-6. When processing finishes, the primary PLY artifact opens automatically in SuperSplat.
+3. Choose **3D Gaussian Splatting** or **Photogrammetry**.
+4. Choose an image folder, select multiple images, or drop the images into the panel.
+5. Add credits from the panel if the quoted balance is insufficient.
+6. Start reconstruction and follow the shared stage/in-stage progress display.
+7. When processing finishes, the primary PLY or GLB artifact opens in SuperSplat.
+
+The Photogrammetry card extends the Standard preset with the SfM front-half needed for
+direct image uploads. It requires EXIF GPS in at least three source photos and produces
+the preset's textured GLB, orthophoto, and DSM deliverables.
 
 The proxy stores each API key only in an in-memory, HttpOnly-cookie-backed server session.
 Sessions are forgotten when the server restarts or when the user selects **Forget on this

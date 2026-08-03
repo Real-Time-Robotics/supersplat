@@ -1,6 +1,7 @@
 const IMAGE_EXTENSIONS = /\.(?:jpe?g|png|tiff?|bmp|webp)$/i;
 const OPENABLE_ARTIFACT_EXTENSIONS = /\.(?:ply|splat|sog|ksplat|spz|glb|gltf)$/i;
 const PREPARED_DATASET_KEY = 'genesis.reconstruction.preparedDataset';
+const PIPELINE_KEY = 'genesis.reconstruction.pipeline';
 const JOB_NOT_FOUND_GRACE = 3;
 
 const delay = (ms: number) => new Promise<void>((resolve) => {
@@ -48,6 +49,7 @@ export {
     IMAGE_EXTENSIONS,
     JOB_NOT_FOUND_GRACE,
     OPENABLE_ARTIFACT_EXTENSIONS,
+    PIPELINE_KEY,
     PREPARED_DATASET_KEY,
     delay,
     formatBytes,

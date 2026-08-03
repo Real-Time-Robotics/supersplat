@@ -2,6 +2,7 @@ import { ProgressVisual, ReconstructionProgress } from './reconstruction-progres
 import {
     JobHeartbeatEvent,
     JobProgressEvent,
+    ReconstructionPipeline,
     StageEvent
 } from './reconstruction-types';
 
@@ -35,7 +36,11 @@ class ReconstructionView {
     readonly createTabPanel: HTMLElement;
     readonly recentTabPanel: HTMLElement;
     readonly dropzone: HTMLDivElement;
+    readonly pipelineButtons: HTMLButtonElement[];
+    readonly pipelineDescription: HTMLElement;
+    readonly pipelineNote: HTMLElement;
     readonly progress: ReconstructionProgress;
+    private pipeline: ReconstructionPipeline = 'splat';
 
     constructor(readonly root: HTMLElement) {
         const body = document.createElement('div');
@@ -45,7 +50,7 @@ class ReconstructionView {
                 <div class="recon-auth-hero">
                     <div class="recon-auth-brand">
                         <strong>Genesis Reconstruction</strong>
-                        <span>Turn your photos into a Gaussian Splat model.</span>
+                        <span>Turn your photos into a production-ready 3D model.</span>
                     </div>
                 </div>
                 <div class="recon-auth-tabs" role="tablist" aria-label="Account access">
@@ -94,7 +99,7 @@ class ReconstructionView {
                 <button class="recon-button recon-sign-out" type="button">Forget on this device</button>
             </section>
             <div class="recon-intro">
-                <strong>Images to Gaussian Splat</strong>
+                <strong>Images to 3D model</strong>
             </div>
             <section class="recon-credit">
                 <div class="recon-credit-balance">
@@ -150,6 +155,30 @@ class ReconstructionView {
                 </div>
             </section>
             <section id="recon-create-tab" class="recon-tab-panel" role="tabpanel">
+                <section class="recon-pipeline-picker" aria-labelledby="recon-pipeline-heading">
+                    <div class="recon-section-heading">
+                        <strong id="recon-pipeline-heading">Choose a reconstruction pipeline</strong>
+                        <span class="recon-pipeline-description">Editable Gaussian Splat for fast browser viewing.</span>
+                    </div>
+                    <div class="recon-pipeline-options" role="radiogroup" aria-label="Reconstruction pipeline">
+                        <button class="recon-pipeline-card active" type="button" role="radio" aria-checked="true" data-pipeline="splat">
+                            <span class="recon-pipeline-mark">3DGS</span>
+                            <span class="recon-pipeline-copy">
+                                <strong>3D Gaussian Splatting</strong>
+                                <small>Fast, editable scene for SuperSplat</small>
+                            </span>
+                            <span class="recon-pipeline-check" aria-hidden="true">&#10003;</span>
+                        </button>
+                        <button class="recon-pipeline-card" type="button" role="radio" aria-checked="false" data-pipeline="photogrammetry">
+                            <span class="recon-pipeline-mark">MESH</span>
+                            <span class="recon-pipeline-copy">
+                                <strong>Photogrammetry</strong>
+                                <small>GPS-aligned mesh, orthophoto and DSM</small>
+                            </span>
+                            <span class="recon-pipeline-check" aria-hidden="true">&#10003;</span>
+                        </button>
+                    </div>
+                </section>
                 <div class="recon-dropzone" tabindex="0">
                     <div class="recon-drop-icon">＋</div>
                     <strong>Drop an image folder here</strong>
@@ -215,6 +244,9 @@ class ReconstructionView {
         this.artifactTitle = this.query('.recon-artifact-title');
         this.artifactList = this.query('.recon-artifact-list');
         this.dropzone = this.query('.recon-dropzone');
+        this.pipelineButtons = Array.from(root.querySelectorAll<HTMLButtonElement>('.recon-pipeline-card'));
+        this.pipelineDescription = this.query('.recon-pipeline-description');
+        this.pipelineNote = this.query('.recon-note');
         const tabs = root.querySelectorAll<HTMLButtonElement>('.recon-tabs > .recon-tab');
         this.createTabButton = tabs[0];
         this.recentTabButton = tabs[1];
@@ -274,13 +306,36 @@ class ReconstructionView {
     }
 
     setRetryAvailable(retryable: boolean) {
-        this.startButton.textContent = retryable ? 'Retry reconstruction' : 'Create Gaussian Splat';
+        this.startButton.textContent = retryable ?
+            'Retry reconstruction' :
+            this.pipeline === 'splat' ? 'Create Gaussian Splat' : 'Create textured mesh';
+    }
+
+    setPipeline(pipeline: ReconstructionPipeline) {
+        this.pipeline = pipeline;
+        for (const button of this.pipelineButtons) {
+            const selected = button.dataset.pipeline === pipeline;
+            button.classList.toggle('active', selected);
+            button.setAttribute('aria-checked', String(selected));
+        }
+        if (pipeline === 'photogrammetry') {
+            this.pipelineDescription.textContent =
+                'GPS-aligned textured mesh with orthophoto and DSM deliverables.';
+            this.pipelineNote.textContent =
+                'Photogrammetry uses the Standard preset and requires EXIF GPS in at least three source photos.';
+        } else {
+            this.pipelineDescription.textContent = 'Editable Gaussian Splat for fast browser viewing.';
+            this.pipelineNote.textContent =
+                'Credits are only held once the job starts. Completed artifacts remain available in Recent models.';
+        }
+        this.setRetryAvailable(false);
     }
 
     setBusy(busy: boolean, canStart: boolean) {
         this.startButton.disabled = busy || !canStart;
         this.imageInput.disabled = busy;
         this.folderInput.disabled = busy;
+        for (const button of this.pipelineButtons) button.disabled = busy;
         this.root.querySelectorAll<HTMLButtonElement>('.recon-run, .recon-delete-dataset')
         .forEach((button) => {
             button.disabled = busy;

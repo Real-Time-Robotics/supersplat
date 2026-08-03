@@ -68,6 +68,30 @@ class HttpError extends Error {
     }
 }
 
+const reconstructionPipelines = new Set(['splat', 'photogrammetry']);
+const pipelineFor = (value, fallback = 'splat') => {
+    const pipeline = String(value || fallback);
+    if (!reconstructionPipelines.has(pipeline)) {
+        throw new HttpError(400, `Unsupported reconstruction pipeline: ${pipeline}`, 'invalid_pipeline');
+    }
+    return pipeline;
+};
+
+const photogrammetryUploadOverrides = {
+    run_downscale: true,
+    run_feature: true,
+    run_matching: true,
+    run_mapper: true,
+    run_sor: true,
+    downscale_factor: 4,
+    image_subdir: 'images_4',
+    sparse_subdir: 'sparse/0_geo',
+    geo_register: true,
+    run_georef: true,
+    run_ortho: true,
+    run_name: 'standard'
+};
+
 const cookiesFor = req => Object.fromEntries(
     String(req.headers.cookie || '')
     .split(';')
@@ -370,7 +394,10 @@ const contentTypeFor = (filename) => {
     const extension = path.extname(filename).toLowerCase();
     const contentTypes = {
         '.json': 'application/json',
+        '.glb': 'model/gltf-binary',
+        '.gltf': 'model/gltf+json',
         '.ksplat': 'application/x-gaussian-splat',
+        '.obj': 'model/obj',
         '.ply': 'application/ply',
         '.spz': 'application/x-gaussian-splat',
         '.splat': 'application/x-gaussian-splat',
@@ -567,7 +594,8 @@ app.get('/api/reconstruction/checkouts/:checkoutId', asyncRoute(async (req, res)
 
 app.get('/api/reconstruction/datasets/:datasetId/quote', asyncRoute(async (req, res) => {
     const gp = clientFor(req);
-    res.json(await gp.quote(req.params.datasetId, 'splat'));
+    const pipeline = pipelineFor(req.query.pipeline);
+    res.json(await gp.quote(req.params.datasetId, pipeline));
 }));
 
 app.get('/api/reconstruction/runs', asyncRoute(async (req, res) => {
@@ -644,6 +672,7 @@ app.post('/api/reconstruction/upload', upload.array('images', 2000), asyncRoute(
     const gp = new Client(baseUrl, session.apiKey);
     const files = Array.isArray(req.files) ? req.files : [];
     const operationId = String(req.body.operationId || randomUUID());
+    const pipeline = pipelineFor(req.body.pipeline);
     channelFor(operationId, session.id);
     if (!files.length) {
         res.status(400).json({ error: 'Hãy chọn ít nhất một ảnh.' });
@@ -673,7 +702,7 @@ app.post('/api/reconstruction/upload', upload.array('images', 2000), asyncRoute(
             signal: abortController.signal,
             onProgress: progress => publishUploadEvent(operationId, 'progress', progress)
         });
-        const quote = await gp.quote(datasetId, 'splat');
+        const quote = await gp.quote(datasetId, pipeline);
 
         if (quote.balance < quote.required) {
             const creditsNeeded = Math.max(0, Math.ceil(quote.required - quote.balance));
@@ -701,13 +730,18 @@ app.post('/api/reconstruction/jobs', asyncRoute(async (req, res) => {
         res.status(400).json({ error: 'Thiếu datasetId.' });
         return;
     }
+    const pipeline = pipelineFor(req.body.pipeline);
     const preset = String(req.body.preset || 'standard');
-    const config = { ...await gp.getPreset('splat', preset), data_dir: datasetId };
+    const config = {
+        ...await gp.getPreset(pipeline, preset),
+        ...(pipeline === 'photogrammetry' ? photogrammetryUploadOverrides : {}),
+        data_dir: datasetId
+    };
     const idempotencyKey = String(req.body.idempotencyKey || randomUUID());
-    const jobId = await gp.submitJob('splat', config, { idempotencyKey });
+    const jobId = await gp.submitJob(pipeline, config, { idempotencyKey });
     jobContexts.set(jobId, {
         datasetId,
-        pipeline: 'splat',
+        pipeline,
         runName: preset,
         submittedAt: Date.now() / 1000,
         created: null
@@ -803,7 +837,7 @@ app.get('/api/reconstruction/jobs/:jobId/model', asyncRoute(async (req, res) => 
         res.status(404).json({
             error: requestedName
                 ? `Artifact "${requestedName}" does not exist for this job.`
-                : 'Job đã hoàn tất nhưng không có Gaussian Splat PLY artifact.'
+                : 'The job completed without a primary model artifact.'
         });
         return;
     }
@@ -832,7 +866,7 @@ app.get('/api/reconstruction/datasets/:datasetId/runs/:pipeline/:runName/model',
             res.status(404).json({
                 error: requestedName
                     ? `Artifact "${requestedName}" does not exist for this run.`
-                : 'Run has no Gaussian Splat PLY artifact.'
+                : 'The run has no primary model artifact.'
             });
             return;
         }

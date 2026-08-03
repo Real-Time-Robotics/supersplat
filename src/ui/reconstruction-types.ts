@@ -1,5 +1,7 @@
 import type { JobDatasetEvent } from 'genesis-recon';
 
+type ReconstructionPipeline = 'splat' | 'photogrammetry';
+
 type UploadResponse = {
     state: 'ready' | 'checkout_required';
     datasetId: string;
@@ -139,6 +141,7 @@ export {
     PricingPack,
     RecentDataset,
     RecentRun,
+    ReconstructionPipeline,
     StageEvent,
     UploadProgress,
     UploadResponse

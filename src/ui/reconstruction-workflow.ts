@@ -1,10 +1,11 @@
 import { ReconstructionArtifacts } from './reconstruction-artifacts';
 import { ReconstructionBilling } from './reconstruction-billing';
 import { ReconstructionJob, ReconstructionJobError } from './reconstruction-job';
-import { UploadResponse } from './reconstruction-types';
+import { ReconstructionPipeline, UploadResponse } from './reconstruction-types';
 import { ReconstructionUpload } from './reconstruction-upload';
 import {
     IMAGE_EXTENSIONS,
+    PIPELINE_KEY,
     PREPARED_DATASET_KEY,
     messageOf,
     readJson
@@ -14,7 +15,10 @@ import { ReconstructionView } from './reconstruction-view';
 class ReconstructionWorkflow {
     private files: File[] = [];
     private relativePaths: string[] = [];
-    private preparedDataset: Pick<UploadResponse, 'datasetId' | 'quote'> | null = null;
+    private preparedDataset: (Pick<UploadResponse, 'datasetId' | 'quote'> & {
+        pipeline: ReconstructionPipeline;
+    }) | null = null;
+    private pipeline: ReconstructionPipeline = 'splat';
     private cancelled = false;
     private readonly upload: ReconstructionUpload;
     private readonly job: ReconstructionJob;
@@ -26,6 +30,20 @@ class ReconstructionWorkflow {
     ) {
         this.upload = new ReconstructionUpload(view);
         this.job = new ReconstructionJob(view, billing, artifacts, () => this.canStart);
+
+        const savedPipeline = localStorage.getItem(PIPELINE_KEY);
+        if (savedPipeline === 'photogrammetry') this.pipeline = savedPipeline;
+        this.view.setPipeline(this.pipeline);
+        for (const button of view.pipelineButtons) {
+            button.addEventListener('click', () => {
+                const pipeline = button.dataset.pipeline;
+                if (pipeline === 'splat' || pipeline === 'photogrammetry') {
+                    this.selectPipeline(pipeline).catch((error) => {
+                        this.view.setState('Could not change pipeline', messageOf(error), { mode: 'failed' });
+                    });
+                }
+            });
+        }
 
         view.folderInput.addEventListener('change', () => this.selectFiles(view.folderInput.files));
         view.imageInput.addEventListener('change', () => this.selectFiles(view.imageInput.files));
@@ -66,9 +84,11 @@ class ReconstructionWorkflow {
 
     async refreshPreparedQuote(): Promise<UploadResponse | null> {
         if (!this.preparedDataset) return null;
+        this.preparedDataset.pipeline = this.pipeline;
         try {
             const response = await fetch(
-                `/api/reconstruction/datasets/${encodeURIComponent(this.preparedDataset.datasetId)}/quote`,
+                `/api/reconstruction/datasets/${encodeURIComponent(this.preparedDataset.datasetId)}/quote` +
+                `?pipeline=${encodeURIComponent(this.pipeline)}`,
                 { cache: 'no-store' }
             );
             if (response.status === 404) {
@@ -82,7 +102,7 @@ class ReconstructionWorkflow {
             const creditsNeeded = Math.max(0, Math.ceil(quote.required - quote.balance));
             if (creditsNeeded === 0) {
                 this.view.setState('Credits available',
-                    `The dataset is already uploaded. Press Create Gaussian Splat to start the ${quote.required.toLocaleString()}-credit job.`,
+                    `The dataset is already uploaded. Press ${this.actionLabel} to start the ${quote.required.toLocaleString()}-credit job.`,
                     { mode: 'done', center: 'Ready' });
             } else {
                 this.view.setState('Insufficient credits',
@@ -131,7 +151,11 @@ class ReconstructionWorkflow {
         try {
             const value = JSON.parse(localStorage.getItem(PREPARED_DATASET_KEY) || 'null');
             if (!value?.datasetId || !value?.quote) return;
-            this.preparedDataset = value;
+            this.preparedDataset = {
+                datasetId: value.datasetId,
+                quote: value.quote,
+                pipeline: this.pipeline
+            };
             this.view.fileSummary.textContent = `Dataset ${value.datasetId} is already uploaded · ready to reuse`;
             this.view.startButton.disabled = false;
         } catch {
@@ -150,6 +174,43 @@ class ReconstructionWorkflow {
     private clearPreparedDataset() {
         this.preparedDataset = null;
         this.persistPreparedDataset();
+    }
+
+    private get actionLabel() {
+        return this.pipeline === 'splat' ? 'Create Gaussian Splat' : 'Create textured mesh';
+    }
+
+    private async selectPipeline(pipeline: ReconstructionPipeline) {
+        if (pipeline === this.pipeline) return;
+        this.pipeline = pipeline;
+        localStorage.setItem(PIPELINE_KEY, pipeline);
+        this.view.setPipeline(pipeline);
+        this.view.setRetryAvailable(false);
+
+        if (this.preparedDataset) {
+            this.view.setBusy(true, false);
+            this.view.setState(
+                'Updating quote',
+                `Checking the uploaded dataset for ${pipeline === 'splat' ? 'Gaussian Splatting' : 'Photogrammetry'}.`,
+                { mode: 'indeterminate' }
+            );
+            try {
+                await this.refreshPreparedQuote();
+            } catch (error) {
+                this.view.setState('Could not update quote', messageOf(error), { mode: 'failed' });
+            } finally {
+                this.setBusy(false);
+            }
+            return;
+        }
+
+        if (this.files.length > 0) {
+            this.view.setState(
+                'Ready to upload',
+                `${this.files.length.toLocaleString()} selected images will be processed with ${pipeline === 'splat' ? 'Gaussian Splatting' : 'Photogrammetry'}.`,
+                { mode: 'idle' }
+            );
+        }
     }
 
     private selectFiles(list: FileList | null) {
@@ -173,7 +234,7 @@ class ReconstructionWorkflow {
             'Ready to upload',
             candidates.length < 20 ?
                 'A small image set may produce an unstable model; use at least 20 well-overlapping photos.' :
-                'It will upload, quote the credit cost, then start automatically once the balance is sufficient.',
+                `It will upload, quote the ${this.pipeline === 'splat' ? 'Gaussian Splatting' : 'Photogrammetry'} cost, then start automatically once the balance is sufficient.`,
             { mode: 'idle' });
     }
 
@@ -191,10 +252,11 @@ class ReconstructionWorkflow {
         try {
             let prepared = await this.refreshPreparedQuote();
             if (!prepared) {
-                prepared = await this.upload.run(this.files, this.relativePaths);
+                prepared = await this.upload.run(this.files, this.relativePaths, this.pipeline);
                 this.preparedDataset = {
                     datasetId: prepared.datasetId,
-                    quote: prepared.quote
+                    quote: prepared.quote,
+                    pipeline: this.pipeline
                 };
                 this.persistPreparedDataset();
             }
@@ -217,7 +279,7 @@ class ReconstructionWorkflow {
                 return;
             }
 
-            await this.job.run(prepared.datasetId);
+            await this.job.run(prepared.datasetId, this.pipeline);
         } catch (error) {
             if (this.cancelled || this.job.wasCancelled) return;
             const jobError = error instanceof ReconstructionJobError ? error : null;

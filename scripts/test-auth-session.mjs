@@ -29,9 +29,11 @@ const waitForServer = async (url, child) => {
     throw new Error('Timed out waiting for SuperSplat server.');
 };
 
-test('login, registration, direct key, and logout use isolated cookie sessions', async (context) => {
+test('auth sessions and photogrammetry proxy flow remain isolated and typed', async (context) => {
     const registrations = [];
     const revoked = [];
+    const quotes = [];
+    const submissions = [];
     let issuer = '';
     const gateway = createServer(async (req, res) => {
         const url = new URL(req.url, issuer);
@@ -53,6 +55,20 @@ test('login, registration, direct key, and logout use isolated cookie sessions',
             sendJson(res, 201, { sub: 'registered-user' });
         } else if (req.method === 'GET' && url.pathname === '/billing/credits') {
             sendJson(res, 200, { customer_id: 'direct-user', balance: 123, billable: true });
+        } else if (req.method === 'GET' && url.pathname === '/billing/quote') {
+            quotes.push(Object.fromEntries(url.searchParams));
+            sendJson(res, 200, { required: 40, balance: 123, billable_gpx: 1.5 });
+        } else if (req.method === 'GET' &&
+            url.pathname === '/v1/pipelines/photogrammetry/presets/standard') {
+            sendJson(res, 200, {
+                name: 'standard',
+                config: { sparse_subdir: 'sparse/0_geo', image_subdir: 'images_4' }
+            });
+        } else if (req.method === 'POST' && url.pathname === '/v1/jobs') {
+            let body = '';
+            for await (const chunk of req) body += chunk;
+            submissions.push(JSON.parse(body));
+            sendJson(res, 202, { job_id: 'photo-job' });
         } else {
             sendJson(res, 404, { detail: `Unexpected mock route ${req.method} ${url.pathname}` });
         }
@@ -142,4 +158,46 @@ test('login, registration, direct key, and logout use isolated cookie sessions',
     });
     assert.equal(direct.status, 200);
     assert.equal((await direct.json()).account.customerId, 'direct-user');
+    const directCookie = direct.headers.get('set-cookie');
+
+    const quote = await fetch(`${app}/api/reconstruction/datasets/dataset-1/quote?pipeline=photogrammetry`, {
+        headers: { Cookie: directCookie }
+    });
+    assert.equal(quote.status, 200);
+    assert.deepEqual(quotes, [{ dataset: 'dataset-1', pipeline: 'photogrammetry' }]);
+
+    const invalidQuote = await fetch(`${app}/api/reconstruction/datasets/dataset-1/quote?pipeline=unknown`, {
+        headers: { Cookie: directCookie }
+    });
+    assert.equal(invalidQuote.status, 400);
+
+    const job = await fetch(`${app}/api/reconstruction/jobs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Cookie: directCookie },
+        body: JSON.stringify({
+            datasetId: 'dataset-1',
+            pipeline: 'photogrammetry',
+            preset: 'standard',
+            idempotencyKey: 'photo-idempotency-key'
+        })
+    });
+    assert.equal(job.status, 202);
+    assert.equal((await job.json()).jobId, 'photo-job');
+    assert.equal(submissions.length, 1);
+    assert.equal(submissions[0].pipeline_name, 'photogrammetry');
+    assert.deepEqual(submissions[0].config, {
+        sparse_subdir: 'sparse/0_geo',
+        image_subdir: 'images_4',
+        run_downscale: true,
+        run_feature: true,
+        run_matching: true,
+        run_mapper: true,
+        run_sor: true,
+        downscale_factor: 4,
+        geo_register: true,
+        run_georef: true,
+        run_ortho: true,
+        run_name: 'standard',
+        data_dir: 'dataset-1'
+    });
 });

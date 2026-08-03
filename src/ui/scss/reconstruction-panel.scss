@@ -581,6 +581,110 @@
     }
 }
 
+.recon-pipeline-picker {
+    margin-bottom: 10px;
+}
+
+.recon-pipeline-options {
+    display: grid;
+    gap: 7px;
+    margin-top: 7px;
+}
+
+.recon-pipeline-card {
+    display: grid;
+    grid-template-columns: 42px minmax(0, 1fr) 18px;
+    align-items: center;
+    gap: 9px;
+    width: 100%;
+    min-height: 58px;
+    padding: 8px 9px;
+    color: $text-secondary;
+    text-align: left;
+    background-color: $bcg-darkest;
+    border: 1px solid $bcg-light;
+    border-radius: 3px;
+    cursor: pointer;
+    transition: border-color 120ms ease, background-color 120ms ease, color 120ms ease;
+
+    &:hover {
+        color: $text-primary;
+        background-color: $bcg-dark;
+        border-color: $clr-default;
+    }
+
+    &:focus-visible {
+        outline: 1px solid $clr-hilight;
+        outline-offset: 2px;
+    }
+
+    &.active {
+        color: $text-primary;
+        background-color: rgba($clr-hilight, 0.08);
+        border-color: $clr-hilight;
+
+        .recon-pipeline-check {
+            color: $clr-active;
+            background-color: $clr-hilight;
+            border-color: $clr-hilight;
+        }
+    }
+
+    &:disabled {
+        color: $clr-disabled;
+        background-color: $bcg-darker;
+        border-color: $bcg-light;
+        cursor: default;
+    }
+}
+
+.recon-pipeline-mark {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 42px;
+    height: 34px;
+    color: $clr-icon-hilight;
+    background-color: $bcg-dark;
+    border-radius: 2px;
+    font-size: 10px;
+    font-weight: bold;
+    letter-spacing: 0.04em;
+}
+
+.recon-pipeline-copy {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 3px;
+
+    strong {
+        color: inherit;
+        font-weight: bold;
+    }
+
+    small {
+        overflow: hidden;
+        color: $text-secondary;
+        font-size: 11px;
+        line-height: 1.25;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+}
+
+.recon-pipeline-check {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    color: transparent;
+    border: 1px solid $bcg-light;
+    border-radius: 50%;
+    font-size: 10px;
+}
+
 .recon-dropzone {
     padding: 16px 12px;
     text-align: center;

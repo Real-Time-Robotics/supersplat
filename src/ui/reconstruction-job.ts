@@ -9,9 +9,15 @@ import {
     JobHeartbeatEvent,
     JobProgressEvent,
     JobStatus,
+    ReconstructionPipeline,
     StageEvent
 } from './reconstruction-types';
-import { JOB_NOT_FOUND_GRACE, delay, readJson } from './reconstruction-utils';
+import {
+    JOB_NOT_FOUND_GRACE,
+    OPENABLE_ARTIFACT_EXTENSIONS,
+    delay,
+    readJson
+} from './reconstruction-utils';
 import { ReconstructionView } from './reconstruction-view';
 
 class ReconstructionJobError extends Error {
@@ -136,7 +142,7 @@ class ReconstructionJob {
         return this.cancelled;
     }
 
-    async run(datasetId: string) {
+    async run(datasetId: string, pipeline: ReconstructionPipeline) {
         this.cancelled = false;
         this.lastStage = null;
         this.lastProgress = null;
@@ -161,6 +167,7 @@ class ReconstructionJob {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 datasetId,
+                pipeline,
                 preset: 'standard',
                 idempotencyKey: crypto.randomUUID()
             })
@@ -394,7 +401,7 @@ class ReconstructionJob {
     }
 
     private offerPrimary(artifact: Artifact) {
-        if (!artifact.primary || !artifact.name.toLowerCase().endsWith('.ply')) return;
+        if (!artifact.primary || !OPENABLE_ARTIFACT_EXTENSIONS.test(artifact.name)) return;
         const firstObservation = this.availablePrimary?.name !== artifact.name;
         this.availablePrimary = artifact;
         if (this.openedPrimaryName === artifact.name) return;
