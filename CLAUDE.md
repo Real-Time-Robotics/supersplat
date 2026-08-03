@@ -14,7 +14,6 @@ Two moving parts beyond upstream:
 
 The `reconstruction` repo must be cloned **next to** `supersplat` (`../reconstruction/sdk/typescript`). `genesis-recon` is a `file:` dependency pointing there, and `npm run build` runs `sdk:build` in that repo first. Node >= 20.19.
 
-Genesis credentials live in `.env.local` (gitignored): `GENESIS_API_KEY`, optional `GENESIS_BASE_URL` (default `https://recons.rtrobotics.com`), `PORT`. Server exits on startup if the key is missing.
 
 ## Commands
 
@@ -49,7 +48,7 @@ Feature modules follow a `registerXxxEvents(events, ...)` convention and are wir
 
 ## Server (`server.mjs`)
 
-Single Express file. Routes under `/api/reconstruction/*`: health, credits, pricing, checkout (+ status polling), dataset quote/delete, image upload (multer, up to 2000 files → SSE `uploads/:id/events`), job create/status/cancel (+ SSE `jobs/:id/events`), and `jobs/:id/model` to fetch the result PLY. It thinly wraps the `genesis-recon` `Client`. Everything else falls through to static `dist/` + SPA `index.html`.
+Single Express file. Session routes under `/api/reconstruction/session*` handle login, registration, direct API-key entry, and logout without browser navigation. API keys stay server-side in memory and clients authenticate using an HttpOnly cookie. The remaining routes cover health, credits, pricing, checkout (+ status polling), dataset quote/delete, image upload (multer, up to 2000 files → SSE `uploads/:id/events`), job create/status/cancel (+ SSE `jobs/:id/events`), and model/artifact delivery. Each request creates its own `genesis-recon` client from the session key. Everything else falls through to static `dist/` + SPA `index.html`.
 
 ## Conventions
 

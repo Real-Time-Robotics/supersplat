@@ -136,6 +136,257 @@
     border-radius: 2px;
 }
 
+.recon-auth,
+.recon-app {
+    min-height: 0;
+
+    &[hidden] {
+        display: none !important;
+    }
+}
+
+.recon-auth {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    justify-content: flex-start;
+    gap: 10px;
+    overflow: auto;
+}
+
+.recon-auth-hero {
+    position: relative;
+    display: flex;
+    min-height: 142px;
+    flex: 0 0 142px;
+    align-items: flex-end;
+    overflow: hidden;
+    background-image:
+        linear-gradient(180deg, rgba(15, 15, 15, 0.04) 15%, rgba(15, 15, 15, 0.9) 100%),
+        url('/static/images/genesis-reconstruction.webp');
+    background-position: center 52%;
+    background-size: cover;
+    border-radius: 3px;
+}
+
+.recon-auth-brand {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 13px 14px;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+
+    strong {
+        color: #fff;
+        font-size: 23px;
+        font-weight: 600;
+        letter-spacing: -0.35px;
+    }
+
+    span {
+        color: rgba(255, 255, 255, 0.78);
+        line-height: 1.4;
+    }
+}
+
+.recon-auth-tabs {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 2px;
+    padding: 2px;
+    background-color: $bcg-darkest;
+    border-radius: 3px;
+}
+
+.recon-auth-tab {
+    min-height: 30px;
+    color: $text-secondary;
+    background: transparent;
+    border: 0;
+    border-radius: 2px;
+    cursor: pointer;
+
+    &:hover,
+    &.active {
+        color: $text-primary;
+        background-color: $bcg-dark;
+    }
+
+    &.active {
+        box-shadow: inset 0 -2px 0 $clr-hilight;
+    }
+}
+
+.recon-auth-form {
+    display: flex;
+    box-sizing: border-box;
+    height: 100%;
+    flex-direction: column;
+    gap: 10px;
+
+    &[hidden] {
+        display: none;
+    }
+
+    label {
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+        color: $text-secondary;
+        font-size: 11px;
+    }
+
+    input {
+        box-sizing: border-box;
+        width: 100%;
+        height: 32px;
+        padding: 5px 8px;
+        color: $text-primary;
+        background-color: $bcg-darkest;
+        border: 1px solid $bcg-dark;
+        border-radius: 2px;
+        outline: none;
+
+        &:focus {
+            border-color: $clr-hilight;
+        }
+    }
+
+    > p {
+        margin: -2px 0 0;
+        color: $text-secondary;
+        font-size: 10px;
+        line-height: 1.4;
+    }
+
+    > .recon-primary {
+        margin-top: auto;
+    }
+}
+
+.recon-auth-stage {
+    height: 280px;
+    min-height: 280px;
+    flex: 0 0 280px;
+}
+
+.recon-auth-names {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+}
+
+.recon-auth-secret-input {
+    position: relative;
+    display: block;
+
+    input {
+        padding-right: 50px;
+    }
+}
+
+.recon-auth-reveal {
+    position: absolute;
+    top: 1px;
+    right: 1px;
+    height: 30px;
+    padding: 0 8px;
+    color: $text-secondary;
+    background: transparent;
+    border: 0;
+    cursor: pointer;
+}
+
+.recon-auth-created {
+    display: flex;
+    box-sizing: border-box;
+    height: 100%;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px;
+    background-color: $bcg-darkest;
+    border-radius: 2px;
+
+    &[hidden] {
+        display: none;
+    }
+
+    > p {
+        margin: 0;
+        color: $text-secondary;
+    }
+
+    > div {
+        display: flex;
+        gap: 6px;
+    }
+
+    code {
+        min-width: 0;
+        flex: 1 1 auto;
+        padding: 7px;
+        overflow: auto;
+        color: $text-primary;
+        background-color: $bcg-primary;
+        user-select: all;
+        white-space: nowrap;
+    }
+
+    > .recon-auth-continue {
+        margin-top: auto;
+    }
+}
+
+.recon-auth-status {
+    min-height: 16px;
+    margin: 0;
+    color: $text-secondary;
+    line-height: 1.4;
+
+    &.error {
+        color: $error;
+    }
+}
+
+.recon-app {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-height: 0;
+}
+
+.recon-account {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 9px;
+    color: $text-secondary;
+    font-size: 10px;
+
+    > span {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    strong {
+        color: $text-primary;
+        font-weight: normal;
+    }
+}
+
+.recon-sign-out {
+    min-height: 22px;
+    padding: 2px 6px;
+    color: $text-secondary;
+    font-size: 10px;
+    white-space: nowrap;
+}
+
 .recon-credit-balance {
     display: flex;
     align-items: center;

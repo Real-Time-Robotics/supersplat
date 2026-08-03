@@ -3,6 +3,7 @@ import { Button, Container, Label } from '@playcanvas/pcui';
 import { Events } from '../events';
 import { i18n } from './localization';
 import { ReconstructionArtifacts } from './reconstruction-artifacts';
+import { ReconstructionAuth } from './reconstruction-auth';
 import { ReconstructionBilling } from './reconstruction-billing';
 import { ReconstructionView } from './reconstruction-view';
 import { ReconstructionWorkflow } from './reconstruction-workflow';
@@ -47,6 +48,12 @@ class ReconstructionPanel extends Container {
         );
         const workflow = new ReconstructionWorkflow(view, billing, artifacts);
         runtime.workflow = workflow;
+        const auth = new ReconstructionAuth(view, async () => {
+            await Promise.all([
+                billing.refreshCredits(),
+                artifacts.refreshRecentRuns()
+            ]);
+        });
 
         view.cancelButton.addEventListener('click', () => {
             if (artifacts.isDownloading) {
@@ -61,8 +68,7 @@ class ReconstructionPanel extends Container {
                 this.hidden = !visible;
                 events.fire('reconstructionPanel.visible', visible);
                 if (visible) {
-                    billing.refreshCredits();
-                    artifacts.refreshRecentRuns();
+                    auth.ensure();
                 }
             }
         };
@@ -75,9 +81,6 @@ class ReconstructionPanel extends Container {
         events.on('settingsPanel.visible', (visible: boolean) => {
             if (visible) setVisible(false);
         });
-
-        billing.refreshCredits();
-        artifacts.refreshRecentRuns();
     }
 }
 

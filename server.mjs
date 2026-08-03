@@ -31,24 +31,20 @@ try {
     // Environment variables are also supported, so a local file is optional.
 }
 
-const apiKey = process.env.GENESIS_API_KEY || localEnv.GENESIS_API_KEY;
 const baseUrl = process.env.GENESIS_BASE_URL || localEnv.GENESIS_BASE_URL || 'https://recons.rtrobotics.com';
 const port = Number(process.env.PORT || localEnv.PORT || 3000);
-
-if (!apiKey) {
-    console.error('Missing GENESIS_API_KEY. Add it to .env.local before starting the app.');
-    process.exit(1);
-}
+const sessionCookie = 'genesis_reconstruction_session';
+const sessionLifetimeMs = 7 * 24 * 60 * 60 * 1000;
 
 await Promise.all([
     mkdir(uploadDir, { recursive: true }),
     mkdir(artifactCacheDir, { recursive: true })
 ]);
 
-const gp = new Client(baseUrl, apiKey);
 const app = express();
 const jobContexts = new Map();
 const uploadChannels = new Map();
+const sessions = new Map();
 const upload = multer({
     dest: uploadDir,
     limits: {
@@ -62,6 +58,188 @@ app.use(express.json({ limit: '1mb' }));
 
 const asyncRoute = (handler) => (req, res, next) => {
     Promise.resolve(handler(req, res, next)).catch(next);
+};
+
+class HttpError extends Error {
+    constructor(status, message, code = 'local_error') {
+        super(message);
+        this.status = status;
+        this.code = code;
+    }
+}
+
+const cookiesFor = req => Object.fromEntries(
+    String(req.headers.cookie || '')
+    .split(';')
+    .map(part => part.trim())
+    .filter(Boolean)
+    .map((part) => {
+        const split = part.indexOf('=');
+        if (split < 0) return [part, ''];
+        return [part.slice(0, split), decodeURIComponent(part.slice(split + 1))];
+    })
+);
+
+const sessionFor = (req) => {
+    const id = cookiesFor(req)[sessionCookie];
+    const session = id ? sessions.get(id) : null;
+    if (!session) return null;
+    if (session.expiresAt <= Date.now()) {
+        sessions.delete(id);
+        return null;
+    }
+    session.expiresAt = Date.now() + sessionLifetimeMs;
+    return session;
+};
+
+const requireSession = (req) => {
+    const session = sessionFor(req);
+    if (!session) throw new HttpError(401, 'Open Reconstruction and sign in or enter an API key.', 'authentication_required');
+    return session;
+};
+
+const clientFor = req => new Client(baseUrl, requireSession(req).apiKey);
+
+const cookieAttributes = (req, maxAge) => {
+    const attributes = [
+        `${sessionCookie}=`,
+        'HttpOnly',
+        'SameSite=Strict',
+        'Path=/',
+        `Max-Age=${maxAge}`
+    ];
+    const forwardedProtocol = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim();
+    if (req.secure || forwardedProtocol === 'https') attributes.push('Secure');
+    return attributes;
+};
+
+const establishSession = (req, res, apiKey, account = {}) => {
+    const id = randomUUID();
+    const session = {
+        id,
+        apiKey,
+        account: {
+            label: String(account.label || 'API key user'),
+            customerId: String(account.customerId || '')
+        },
+        expiresAt: Date.now() + sessionLifetimeMs
+    };
+    sessions.set(id, session);
+    const attributes = cookieAttributes(req, Math.floor(sessionLifetimeMs / 1000));
+    attributes[0] = `${sessionCookie}=${encodeURIComponent(id)}`;
+    res.setHeader('Set-Cookie', attributes.join('; '));
+    return session;
+};
+
+const clearSession = (req, res) => {
+    const id = cookiesFor(req)[sessionCookie];
+    if (id) sessions.delete(id);
+    res.setHeader('Set-Cookie', cookieAttributes(req, 0).join('; '));
+};
+
+const errorDetail = (payload, fallback) => {
+    const detail = payload?.detail ?? payload?.error_description ?? payload?.error ?? fallback;
+    if (typeof detail === 'string') return detail;
+    if (detail && typeof detail.message === 'string') return detail.message;
+    return fallback;
+};
+
+const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+const validateLogin = (email, password) => {
+    if (!emailPattern.test(email) || email.length > 255) {
+        throw new HttpError(400, 'Enter a valid email address.', 'invalid_email');
+    }
+    if (!password || password.length > 256) {
+        throw new HttpError(400, 'Enter your password.', 'invalid_password');
+    }
+};
+
+const validateRegistration = ({ firstName, lastName, email, password, confirmPassword }) => {
+    validateLogin(email, password);
+    if (!firstName || firstName.length > 100) {
+        throw new HttpError(400, 'First Name is required.', 'invalid_first_name');
+    }
+    if (!lastName || lastName.length > 100) {
+        throw new HttpError(400, 'Last Name is required.', 'invalid_last_name');
+    }
+    if (password.length < 6) {
+        throw new HttpError(400, 'Password must contain at least 6 characters.', 'password_too_short');
+    }
+    if (!confirmPassword || password !== confirmPassword) {
+        throw new HttpError(400, 'Passwords do not match.', 'password_mismatch');
+    }
+};
+
+const gatewayJson = async (pathname, init = {}) => {
+    const response = await fetch(new URL(pathname, `${baseUrl.replace(/\/$/, '')}/`), init);
+    const payload = response.status === 204
+        ? null
+        : await response.json().catch(() => null);
+    if (!response.ok) {
+        throw new HttpError(
+            response.status,
+            errorDetail(payload, `Genesis API returned ${response.status}.`),
+            payload?.code || 'gateway_error'
+        );
+    }
+    return payload;
+};
+
+const passwordLogin = async (email, password) => {
+    const config = await gatewayJson('/v1/config');
+    const issuer = String(config?.oidc_issuer || '').replace(/\/$/, '');
+    const clientId = String(config?.oidc_client_id || '');
+    if (!issuer || !clientId) {
+        throw new HttpError(503, 'Genesis authentication is not configured.', 'auth_not_configured');
+    }
+    const body = new URLSearchParams({
+        grant_type: 'password',
+        client_id: clientId,
+        username: email,
+        password,
+        scope: 'openid'
+    });
+    const response = await fetch(`${issuer}/protocol/openid-connect/token`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok || !payload?.access_token) {
+        throw new HttpError(
+            response.status === 400 || response.status === 401 ? 401 : response.status,
+            errorDetail(payload, 'Email or password is incorrect.'),
+            'login_failed'
+        );
+    }
+    return payload.access_token;
+};
+
+const createSuperSplatKey = async (accessToken) => {
+    const headers = { Authorization: `Bearer ${accessToken}` };
+    const listed = await gatewayJson('/v1/api-keys', { headers });
+    const keys = Array.isArray(listed) ? listed : (listed?.api_keys || listed?.keys || []);
+    const existing = keys.filter(key => key?.name === 'SuperSplat Reconstruction' && !key?.revoked_at);
+    await Promise.all(existing.map(key => gatewayJson(`/v1/api-keys/${encodeURIComponent(key.id)}`, {
+        method: 'DELETE',
+        headers
+    })));
+    const created = await gatewayJson('/v1/api-keys', {
+        method: 'POST',
+        headers: { ...headers, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: 'SuperSplat Reconstruction' })
+    });
+    const apiKey = created?.key || created?.api_key;
+    if (!apiKey) throw new HttpError(502, 'Genesis did not return the newly created API key.', 'missing_api_key');
+    return { apiKey, customerId: created?.customer_id || '' };
+};
+
+const loginAndCreateSession = async (req, res, email, password) => {
+    const accessToken = await passwordLogin(email, password);
+    const { apiKey, customerId } = await createSuperSplatKey(accessToken);
+    const session = establishSession(req, res, apiKey, { label: email, customerId });
+    return { session, apiKey };
 };
 
 const normalizeName = (name, index) => {
@@ -109,7 +287,7 @@ const artifactsWithCacheStatus = async (scope, artifacts) => Promise.all(
     }))
 );
 
-const datasetArtifactCachePaths = async (datasetId) => {
+const datasetArtifactCachePaths = async (gp, datasetId) => {
     const cachePaths = new Set();
     const runs = await gp.listRuns(datasetId).catch(() => []);
     await Promise.all(runs.map(async (run) => {
@@ -137,7 +315,7 @@ const datasetArtifactCachePaths = async (datasetId) => {
     return [...cachePaths];
 };
 
-const resolveJobCacheScope = async (jobId, job) => {
+const resolveJobCacheScope = async (gp, jobId, job) => {
     const context = jobContexts.get(jobId);
     if (!context) return ['job', jobId];
     if ((job?.terminal || job == null) && context.created == null) {
@@ -268,16 +446,21 @@ const sendArtifact = async (res, scope, artifact, getRemoteStream) => {
     }
 };
 
-const channelFor = (id) => {
+const channelFor = (id, sessionId = null) => {
     let channel = uploadChannels.get(id);
     if (!channel) {
         channel = {
+            sessionId,
             clients: new Set(),
             latest: null,
             cleanupTimer: null
         };
         uploadChannels.set(id, channel);
     }
+    if (sessionId && channel.sessionId && channel.sessionId !== sessionId) {
+        throw new HttpError(404, 'Upload operation not found.', 'upload_not_found');
+    }
+    if (sessionId && !channel.sessionId) channel.sessionId = sessionId;
     return channel;
 };
 
@@ -294,20 +477,78 @@ const publishUploadEvent = (id, event, data) => {
     }
 };
 
-app.get('/api/reconstruction/health', asyncRoute(async (_req, res) => {
+app.get('/api/reconstruction/session', asyncRoute(async (req, res) => {
+    const session = requireSession(req);
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ authenticated: true, account: session.account });
+}));
+
+app.post('/api/reconstruction/session/api-key', asyncRoute(async (req, res) => {
+    const apiKey = String(req.body.apiKey || '').trim();
+    if (!apiKey.startsWith('gp_live_')) {
+        throw new HttpError(400, 'Enter a valid Genesis API key beginning with gp_live_.', 'invalid_api_key');
+    }
+    const gp = new Client(baseUrl, apiKey);
+    const credits = await gp.getCreditBalance();
+    const session = establishSession(req, res, apiKey, {
+        label: credits?.customer_id ? `Customer ${credits.customer_id}` : 'API key user',
+        customerId: credits?.customer_id || ''
+    });
+    res.json({ authenticated: true, account: session.account });
+}));
+
+app.post('/api/reconstruction/session/login', asyncRoute(async (req, res) => {
+    const email = String(req.body.email || '').trim();
+    const password = String(req.body.password || '');
+    validateLogin(email, password);
+    const { session, apiKey } = await loginAndCreateSession(req, res, email, password);
+    res.json({ authenticated: true, account: session.account, apiKey });
+}));
+
+app.post('/api/reconstruction/session/register', asyncRoute(async (req, res) => {
+    const firstName = String(req.body.firstName || '').trim();
+    const lastName = String(req.body.lastName || '').trim();
+    const email = String(req.body.email || '').trim();
+    const password = String(req.body.password || '');
+    const confirmPassword = String(req.body.confirmPassword || '');
+    validateRegistration({ firstName, lastName, email, password, confirmPassword });
+    await gatewayJson('/v1/auth/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            first_name: firstName,
+            last_name: lastName,
+            email,
+            password
+        })
+    });
+    const { session, apiKey } = await loginAndCreateSession(req, res, email, password);
+    res.status(201).json({ authenticated: true, account: session.account, apiKey });
+}));
+
+app.delete('/api/reconstruction/session', (req, res) => {
+    clearSession(req, res);
+    res.status(204).end();
+});
+
+app.get('/api/reconstruction/health', asyncRoute(async (req, res) => {
+    const gp = clientFor(req);
     const credits = await gp.getCreditBalance();
     res.json({ ok: true, baseUrl: gp.baseUrl, credits });
 }));
 
-app.get('/api/reconstruction/credits', asyncRoute(async (_req, res) => {
+app.get('/api/reconstruction/credits', asyncRoute(async (req, res) => {
+    const gp = clientFor(req);
     res.json(await gp.getCreditBalance());
 }));
 
-app.get('/api/reconstruction/pricing', asyncRoute(async (_req, res) => {
+app.get('/api/reconstruction/pricing', asyncRoute(async (req, res) => {
+    const gp = clientFor(req);
     res.json(await gp.getPricingCatalog());
 }));
 
 app.post('/api/reconstruction/checkout', asyncRoute(async (req, res) => {
+    const gp = clientFor(req);
     const packCredits = req.body.packCredits == null ? undefined : Number(req.body.packCredits);
     const customCredits = req.body.customCredits == null ? undefined : Number(req.body.customCredits);
     if ((packCredits == null) === (customCredits == null)) {
@@ -320,14 +561,17 @@ app.post('/api/reconstruction/checkout', asyncRoute(async (req, res) => {
 }));
 
 app.get('/api/reconstruction/checkouts/:checkoutId', asyncRoute(async (req, res) => {
+    const gp = clientFor(req);
     res.json(await gp.getCheckout(req.params.checkoutId));
 }));
 
 app.get('/api/reconstruction/datasets/:datasetId/quote', asyncRoute(async (req, res) => {
+    const gp = clientFor(req);
     res.json(await gp.quote(req.params.datasetId, 'splat'));
 }));
 
 app.get('/api/reconstruction/runs', asyncRoute(async (req, res) => {
+    const gp = clientFor(req);
     const limit = Math.min(50, Math.max(1, Number(req.query.limit) || 12));
     const envelope = await gp.listDatasets({ limit });
     const datasets = envelope.datasets || envelope.rows || [];
@@ -356,8 +600,9 @@ app.get('/api/reconstruction/runs', asyncRoute(async (req, res) => {
 }));
 
 app.delete('/api/reconstruction/datasets/:datasetId', asyncRoute(async (req, res) => {
+    const gp = clientFor(req);
     const { datasetId } = req.params;
-    const cachePaths = await datasetArtifactCachePaths(datasetId);
+    const cachePaths = await datasetArtifactCachePaths(gp, datasetId);
     await gp.deleteDataset(datasetId);
     const cacheCleanup = await Promise.allSettled(
         cachePaths.map(cachePath => rm(cachePath, { force: true }))
@@ -373,8 +618,15 @@ app.delete('/api/reconstruction/datasets/:datasetId', asyncRoute(async (req, res
 }));
 
 app.get('/api/reconstruction/uploads/:operationId/events', (req, res) => {
+    let session;
+    try {
+        session = requireSession(req);
+    } catch (error) {
+        res.status(error.status || 401).json({ error: error.message, code: error.code });
+        return;
+    }
     const operationId = req.params.operationId;
-    const channel = channelFor(operationId);
+    const channel = channelFor(operationId, session.id);
     clearTimeout(channel.cleanupTimer);
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache, no-transform');
@@ -388,8 +640,11 @@ app.get('/api/reconstruction/uploads/:operationId/events', (req, res) => {
 });
 
 app.post('/api/reconstruction/upload', upload.array('images', 2000), asyncRoute(async (req, res) => {
+    const session = requireSession(req);
+    const gp = new Client(baseUrl, session.apiKey);
     const files = Array.isArray(req.files) ? req.files : [];
     const operationId = String(req.body.operationId || randomUUID());
+    channelFor(operationId, session.id);
     if (!files.length) {
         res.status(400).json({ error: 'Hãy chọn ít nhất một ảnh.' });
         return;
@@ -440,6 +695,7 @@ app.post('/api/reconstruction/upload', upload.array('images', 2000), asyncRoute(
 }));
 
 app.post('/api/reconstruction/jobs', asyncRoute(async (req, res) => {
+    const gp = clientFor(req);
     const datasetId = String(req.body.datasetId || '');
     if (!datasetId) {
         res.status(400).json({ error: 'Thiếu datasetId.' });
@@ -460,12 +716,13 @@ app.post('/api/reconstruction/jobs', asyncRoute(async (req, res) => {
 }));
 
 app.get('/api/reconstruction/jobs/:jobId', asyncRoute(async (req, res) => {
+    const gp = clientFor(req);
     const job = await gp.getJob(req.params.jobId);
     const delivering = job.current_stage?.step === 'publish_results';
     const artifacts = job.terminal || delivering
         ? await gp.listArtifacts(req.params.jobId).catch(() => [])
         : [];
-    const scope = await resolveJobCacheScope(req.params.jobId, job);
+    const scope = await resolveJobCacheScope(gp, req.params.jobId, job);
     res.json({
         job,
         artifacts: await artifactsWithCacheStatus(scope, artifacts)
@@ -474,6 +731,7 @@ app.get('/api/reconstruction/jobs/:jobId', asyncRoute(async (req, res) => {
 
 app.get('/api/reconstruction/datasets/:datasetId/runs/:pipeline/:runName/artifacts',
     asyncRoute(async (req, res) => {
+        const gp = clientFor(req);
         const { datasetId, pipeline, runName } = req.params;
         const artifacts = await gp.listRunArtifacts(datasetId, pipeline, runName);
         const scope = runCacheScope(datasetId, pipeline, runName, req.query.created || 'unknown');
@@ -481,11 +739,19 @@ app.get('/api/reconstruction/datasets/:datasetId/runs/:pipeline/:runName/artifac
     }));
 
 app.post('/api/reconstruction/jobs/:jobId/cancel', asyncRoute(async (req, res) => {
+    const gp = clientFor(req);
     await gp.cancelJob(req.params.jobId);
     res.status(204).end();
 }));
 
 app.get('/api/reconstruction/jobs/:jobId/events', async (req, res) => {
+    let gp;
+    try {
+        gp = clientFor(req);
+    } catch (error) {
+        res.status(error.status || 401).json({ error: error.message, code: error.code });
+        return;
+    }
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache, no-transform');
     res.setHeader('Connection', 'keep-alive');
@@ -525,6 +791,7 @@ app.get('/api/reconstruction/jobs/:jobId/events', async (req, res) => {
 });
 
 app.get('/api/reconstruction/jobs/:jobId/model', asyncRoute(async (req, res) => {
+    const gp = clientFor(req);
     const artifacts = await gp.listArtifacts(req.params.jobId);
     const requestedName = String(req.query.name || '');
     const artifact = requestedName
@@ -541,7 +808,7 @@ app.get('/api/reconstruction/jobs/:jobId/model', asyncRoute(async (req, res) => 
         return;
     }
 
-    const scope = await resolveJobCacheScope(req.params.jobId);
+    const scope = await resolveJobCacheScope(gp, req.params.jobId);
     await sendArtifact(
         res,
         scope,
@@ -552,6 +819,7 @@ app.get('/api/reconstruction/jobs/:jobId/model', asyncRoute(async (req, res) => 
 
 app.get('/api/reconstruction/datasets/:datasetId/runs/:pipeline/:runName/model',
     asyncRoute(async (req, res) => {
+        const gp = clientFor(req);
         const { datasetId, pipeline, runName } = req.params;
         const artifacts = await gp.listRunArtifacts(datasetId, pipeline, runName);
         const requestedName = String(req.query.name || '');
@@ -582,7 +850,7 @@ app.use(express.static(path.join(rootDir, 'dist'), { etag: false, maxAge: 0 }));
 app.use((_req, res) => res.sendFile(path.join(rootDir, 'dist', 'index.html')));
 
 app.use((error, _req, res, _next) => {
-    const status = error instanceof ApiError ? error.status : 500;
+    const status = error instanceof ApiError || error instanceof HttpError ? error.status : 500;
     const detail = error instanceof ApiError ? error.detail : (error?.message || String(error));
     console.error(`[reconstruction] ${status}: ${detail}`);
     if (!res.headersSent) res.status(status).json({ error: detail, code: error?.code || 'local_error' });

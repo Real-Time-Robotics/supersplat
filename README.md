@@ -25,11 +25,9 @@ npm install
 Copy-Item .env.example .env.local
 ```
 
-Set your Genesis Point access key in `.env.local`:
-
-```dotenv
-GENESIS_API_KEY=gp_live_replace_me
-```
+`.env.local` only configures the optional Genesis base URL and local port. User
+credentials are requested inside the Reconstruction panel and are not read from the
+environment.
 
 Build and run the local app:
 
@@ -44,10 +42,13 @@ browser-bundle rebuilds, run `npm run sdk:build` once and then `npm run develop`
 ## Usage
 
 1. Select the orange Reconstruction icon in the right toolbar.
-2. Choose an image folder, select multiple images, or drop the images into the panel.
-3. Add Polar sandbox credits from the panel if the quoted balance is insufficient.
-4. Select **Tạo Gaussian Splat** and follow the upload and reconstruction progress.
-5. When processing finishes, the primary PLY artifact opens automatically in SuperSplat.
+2. Log in, register, or enter an existing Genesis API key without leaving SuperSplat.
+3. Choose an image folder, select multiple images, or drop the images into the panel.
+4. Add credits from the panel if the quoted balance is insufficient.
+5. Select **Tạo Gaussian Splat** and follow the upload and reconstruction progress.
+6. When processing finishes, the primary PLY artifact opens automatically in SuperSplat.
 
-Checkout in this fork uses Polar sandbox. Local credentials belong in `.env.local`, which
-is ignored by Git.
+The proxy stores each API key only in an in-memory, HttpOnly-cookie-backed server session.
+Sessions are forgotten when the server restarts or when the user selects **Forget on this
+device**. Login and registration rotate a dedicated `SuperSplat Reconstruction` API key
+and show the new value once so it can be copied.

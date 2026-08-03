@@ -6,6 +6,9 @@ import {
 } from './reconstruction-types';
 
 class ReconstructionView {
+    readonly authPanel: HTMLElement;
+    readonly appPanel: HTMLElement;
+    readonly accountLabel: HTMLElement;
     readonly fileSummary: HTMLElement;
     readonly creditValue: HTMLElement;
     readonly startButton: HTMLButtonElement;
@@ -38,6 +41,58 @@ class ReconstructionView {
         const body = document.createElement('div');
         body.className = 'recon-body blocks-shortcuts';
         body.innerHTML = `
+            <section class="recon-auth" aria-label="Genesis Reconstruction account">
+                <div class="recon-auth-hero">
+                    <div class="recon-auth-brand">
+                        <strong>Genesis Reconstruction</strong>
+                        <span>Turn your photos into a Gaussian Splat model.</span>
+                    </div>
+                </div>
+                <div class="recon-auth-tabs" role="tablist" aria-label="Account access">
+                    <button class="recon-auth-tab active" type="button" role="tab" data-auth-tab="login" aria-selected="true">Log in</button>
+                    <button class="recon-auth-tab" type="button" role="tab" data-auth-tab="register" aria-selected="false">Register</button>
+                    <button class="recon-auth-tab" type="button" role="tab" data-auth-tab="api-key" aria-selected="false">API key</button>
+                </div>
+                <div class="recon-auth-stage">
+                    <form class="recon-auth-form" data-auth-form="login">
+                        <label>Email<input name="email" type="email" autocomplete="username" minlength="3" maxlength="255" required></label>
+                        <label>Password<input name="password" type="password" autocomplete="current-password" maxlength="256" required></label>
+                        <button class="recon-button recon-primary" type="submit">Log in</button>
+                    </form>
+                    <form class="recon-auth-form" data-auth-form="register" hidden>
+                        <div class="recon-auth-names">
+                            <label>First Name<input name="firstName" autocomplete="given-name" maxlength="100" required></label>
+                            <label>Last Name<input name="lastName" autocomplete="family-name" maxlength="100" required></label>
+                        </div>
+                        <label>Email<input name="email" type="email" autocomplete="username" minlength="3" maxlength="255" required></label>
+                        <label>Password<input name="password" type="password" autocomplete="new-password" minlength="6" maxlength="256" required></label>
+                        <label>Confirm Password<input name="confirmPassword" type="password" autocomplete="new-password" minlength="6" maxlength="256" required></label>
+                        <button class="recon-button recon-primary" type="submit">Create account</button>
+                    </form>
+                    <form class="recon-auth-form" data-auth-form="api-key" hidden>
+                        <label>Genesis API key
+                            <span class="recon-auth-secret-input">
+                                <input name="apiKey" type="password" autocomplete="off" spellcheck="false" placeholder="gp_live_..." required>
+                                <button class="recon-auth-reveal" type="button" aria-label="Show API key">Show</button>
+                            </span>
+                        </label>
+                        <p>Use an existing key without logging in. It stays in this server session and is never saved in the browser.</p>
+                        <button class="recon-button recon-primary" type="submit">Continue with API key</button>
+                    </form>
+                    <div class="recon-auth-created" hidden>
+                        <strong>Your SuperSplat API key</strong>
+                        <p>This key is shown once. Copy it before continuing.</p>
+                        <div><code></code><button class="recon-button recon-copy-key" type="button">Copy</button></div>
+                        <button class="recon-button recon-primary recon-auth-continue" type="button">Continue</button>
+                    </div>
+                </div>
+                <p class="recon-auth-status" role="status"></p>
+            </section>
+            <div class="recon-app" hidden>
+            <section class="recon-account">
+                <span>Signed in as <strong class="recon-account-label"></strong></span>
+                <button class="recon-button recon-sign-out" type="button">Forget on this device</button>
+            </section>
             <div class="recon-intro">
                 <strong>Images to Gaussian Splat</strong>
             </div>
@@ -130,9 +185,13 @@ class ReconstructionView {
                     </div>
                     <div class="recon-artifact-list"></div>
                 </section>
-            </section>`;
+            </section>
+            </div>`;
         root.appendChild(body);
 
+        this.authPanel = this.query('.recon-auth');
+        this.appPanel = this.query('.recon-app');
+        this.accountLabel = this.query('.recon-account-label');
         this.fileSummary = this.query('.recon-file-summary');
         this.creditValue = this.query('.recon-credit-value');
         this.progress = new ReconstructionProgress(root);
@@ -156,7 +215,7 @@ class ReconstructionView {
         this.artifactTitle = this.query('.recon-artifact-title');
         this.artifactList = this.query('.recon-artifact-list');
         this.dropzone = this.query('.recon-dropzone');
-        const tabs = root.querySelectorAll<HTMLButtonElement>('.recon-tab');
+        const tabs = root.querySelectorAll<HTMLButtonElement>('.recon-tabs > .recon-tab');
         this.createTabButton = tabs[0];
         this.recentTabButton = tabs[1];
         this.createTabPanel = this.query('#recon-create-tab');
@@ -185,6 +244,17 @@ class ReconstructionView {
         this.recentTabButton.setAttribute('aria-selected', String(!create));
         this.createTabPanel.hidden = !create;
         this.recentTabPanel.hidden = create;
+    }
+
+    showAuth() {
+        this.authPanel.hidden = false;
+        this.appPanel.hidden = true;
+    }
+
+    showApp(accountLabel: string) {
+        this.accountLabel.textContent = accountLabel;
+        this.authPanel.hidden = true;
+        this.appPanel.hidden = false;
     }
 
     setState(title: string, detail: string, visual: ProgressVisual = { mode: 'idle' }) {
