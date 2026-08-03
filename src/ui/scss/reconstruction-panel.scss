@@ -1090,7 +1090,7 @@
     gap: 6px;
     margin-bottom: 5px;
 
-    > div {
+    .recon-dataset-info {
         display: flex;
         min-width: 0;
         flex-direction: column;
@@ -1108,6 +1108,17 @@
         color: $text-secondary;
         font-size: 10px;
     }
+}
+
+.recon-dataset-actions {
+    display: flex;
+    align-self: stretch;
+    gap: 4px;
+}
+
+.recon-use-dataset {
+    padding: 5px 7px;
+    font-size: 10px;
 }
 
 .recon-dataset-models {

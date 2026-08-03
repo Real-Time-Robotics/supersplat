@@ -201,7 +201,7 @@ class ReconstructionView {
                     <div class="recon-recent-heading">
                         <div>
                             <strong>Recent datasets</strong>
-                            <span>Open completed models or permanently delete a dataset</span>
+                            <span>Reuse source images, open completed models, or delete a dataset</span>
                         </div>
                         <button class="recon-button recon-refresh-runs" type="button" aria-label="Refresh recent models">↻</button>
                     </div>
@@ -336,7 +336,7 @@ class ReconstructionView {
         this.imageInput.disabled = busy;
         this.folderInput.disabled = busy;
         for (const button of this.pipelineButtons) button.disabled = busy;
-        this.root.querySelectorAll<HTMLButtonElement>('.recon-run, .recon-delete-dataset')
+        this.root.querySelectorAll<HTMLButtonElement>('.recon-run, .recon-use-dataset, .recon-delete-dataset')
         .forEach((button) => {
             button.disabled = busy;
         });

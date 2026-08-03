@@ -31,7 +31,8 @@ class ReconstructionArtifacts {
         private readonly events: Events,
         private readonly view: ReconstructionView,
         private readonly canStart: () => boolean,
-        onDatasetDeleted: (datasetId: string) => Promise<void> | void
+        onDatasetDeleted: (datasetId: string) => Promise<void> | void,
+        private readonly onDatasetSelected: (dataset: RecentDataset) => Promise<void> | void
     ) {
         this.datasets = new ReconstructionDatasets(
             events,
@@ -77,6 +78,7 @@ class ReconstructionArtifacts {
                 const heading = document.createElement('div');
                 heading.className = 'recon-dataset-heading';
                 const info = document.createElement('div');
+                info.className = 'recon-dataset-info';
                 const name = document.createElement('strong');
                 name.textContent = dataset.label || dataset.dataset_id;
                 name.title = dataset.label || dataset.dataset_id;
@@ -85,10 +87,18 @@ class ReconstructionArtifacts {
                 datasetDetail.textContent =
                     `${dataset.image_count.toLocaleString()} source images · ${formatBytes(dataset.bytes)} · ${created.toLocaleString('en-US')}`;
                 info.append(name, datasetDetail);
+                const actions = document.createElement('div');
+                actions.className = 'recon-dataset-actions';
+                const useButton = document.createElement('button');
+                useButton.type = 'button';
+                useButton.className = 'recon-button recon-primary recon-use-dataset';
+                useButton.textContent = 'Use dataset';
+                useButton.title = `Use ${dataset.label || dataset.dataset_id} without uploading it again`;
+                useButton.addEventListener('click', () => this.onDatasetSelected(dataset));
                 const deleteButton = document.createElement('button');
                 deleteButton.type = 'button';
                 deleteButton.className = 'recon-button recon-delete-dataset';
-                deleteButton.textContent = 'Delete dataset';
+                deleteButton.textContent = 'Delete';
                 deleteButton.title = `Delete dataset ${dataset.label || dataset.dataset_id}`;
                 deleteButton.setAttribute(
                     'aria-label',
@@ -98,7 +108,8 @@ class ReconstructionArtifacts {
                     'click',
                     () => this.datasets.requestDelete(dataset, deleteButton)
                 );
-                heading.append(info, deleteButton);
+                actions.append(useButton, deleteButton);
+                heading.append(info, actions);
                 const models = document.createElement('div');
                 models.className = 'recon-dataset-models';
                 if (!dataset.models.length) {

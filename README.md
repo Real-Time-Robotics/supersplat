@@ -44,7 +44,9 @@ browser-bundle rebuilds, run `npm run sdk:build` once and then `npm run develop`
 1. Select the orange Reconstruction icon in the right toolbar.
 2. Log in, register, or enter an existing Genesis API key without leaving SuperSplat.
 3. Choose **3D Gaussian Splatting** or **Photogrammetry**.
-4. Choose an image folder, select multiple images, or drop the images into the panel.
+4. Choose an image folder, select multiple images, drop images into the panel, or select
+   **Use dataset** under **Recent models** to reconstruct existing source images without
+   uploading them again.
 5. Add credits from the panel if the quoted balance is insufficient.
 6. Start reconstruction and follow the shared stage/in-stage progress display.
 7. When processing finishes, the primary PLY or GLB artifact opens in SuperSplat.

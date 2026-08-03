@@ -1,7 +1,7 @@
 import { ReconstructionArtifacts } from './reconstruction-artifacts';
 import { ReconstructionBilling } from './reconstruction-billing';
 import { ReconstructionJob, ReconstructionJobError } from './reconstruction-job';
-import { ReconstructionPipeline, UploadResponse } from './reconstruction-types';
+import { RecentDataset, ReconstructionPipeline, UploadResponse } from './reconstruction-types';
 import { ReconstructionUpload } from './reconstruction-upload';
 import {
     IMAGE_EXTENSIONS,
@@ -82,6 +82,52 @@ class ReconstructionWorkflow {
         }
     }
 
+    async useExistingDataset(dataset: RecentDataset) {
+        const datasetLabel = dataset.label || dataset.dataset_id;
+        this.files = [];
+        this.relativePaths = [];
+        this.view.folderInput.value = '';
+        this.view.imageInput.value = '';
+        this.clearPreparedDataset();
+        this.view.setTab('create');
+        this.view.setRetryAvailable(false);
+        this.view.checkoutLink.hidden = true;
+        this.view.fileSummary.textContent =
+            `${datasetLabel} · ${dataset.image_count.toLocaleString()} existing images`;
+        this.view.setState(
+            'Checking existing dataset',
+            `Quoting ${this.pipelineName} without uploading the images again.`,
+            { mode: 'indeterminate' }
+        );
+        this.setBusy(true);
+
+        try {
+            const response = await fetch(
+                `/api/reconstruction/datasets/${encodeURIComponent(dataset.dataset_id)}/quote` +
+                `?pipeline=${encodeURIComponent(this.pipeline)}`,
+                { cache: 'no-store' }
+            );
+            if (response.status === 404) {
+                throw new Error('This dataset is no longer available on R2. Choose another dataset or upload images.');
+            }
+            const quote = await readJson<UploadResponse['quote']>(response);
+            this.preparedDataset = {
+                datasetId: dataset.dataset_id,
+                pipeline: this.pipeline,
+                quote
+            };
+            this.applyPreparedQuote(quote);
+            this.view.fileSummary.textContent =
+                `${datasetLabel} · ${dataset.image_count.toLocaleString()} existing images · ready to reuse`;
+        } catch (error) {
+            this.clearPreparedDataset();
+            this.view.fileSummary.textContent = 'No images selected';
+            this.view.setState('Could not use dataset', messageOf(error), { mode: 'failed' });
+        } finally {
+            this.setBusy(false);
+        }
+    }
+
     async refreshPreparedQuote(): Promise<UploadResponse | null> {
         if (!this.preparedDataset) return null;
         this.preparedDataset.pipeline = this.pipeline;
@@ -93,28 +139,10 @@ class ReconstructionWorkflow {
             );
             if (response.status === 404) {
                 this.clearPreparedDataset();
-                throw new Error('The uploaded dataset is no longer on R2; the next Start will upload the images again.');
+                throw new Error('The selected dataset is no longer available on R2. Choose another dataset or upload images.');
             }
             const quote = await readJson<UploadResponse['quote']>(response);
-            this.preparedDataset.quote = quote;
-            this.persistPreparedDataset();
-            this.billing.setBalance(quote.balance);
-            const creditsNeeded = Math.max(0, Math.ceil(quote.required - quote.balance));
-            if (creditsNeeded === 0) {
-                this.view.setState('Credits available',
-                    `The dataset is already uploaded. Press ${this.actionLabel} to start the ${quote.required.toLocaleString()}-credit job.`,
-                    { mode: 'done', center: 'Ready' });
-            } else {
-                this.view.setState('Insufficient credits',
-                    `The dataset is already on R2; ${creditsNeeded.toLocaleString()} more credits are needed. Buy credits and press Start again; the images will not be uploaded twice.`,
-                    { mode: 'idle', center: 'Credit' });
-            }
-            return {
-                state: creditsNeeded === 0 ? 'ready' : 'checkout_required',
-                datasetId: this.preparedDataset.datasetId,
-                quote,
-                creditsNeeded
-            };
+            return this.applyPreparedQuote(quote);
         } catch (error) {
             throw new Error(`Could not recheck the uploaded dataset: ${messageOf(error)}`);
         }
@@ -176,8 +204,35 @@ class ReconstructionWorkflow {
         this.persistPreparedDataset();
     }
 
+    private applyPreparedQuote(quote: UploadResponse['quote']): UploadResponse {
+        if (!this.preparedDataset) throw new Error('No dataset is selected.');
+        this.preparedDataset.quote = quote;
+        this.persistPreparedDataset();
+        this.billing.setBalance(quote.balance);
+        const creditsNeeded = Math.max(0, Math.ceil(quote.required - quote.balance));
+        if (creditsNeeded === 0) {
+            this.view.setState('Credits available',
+                `The dataset is already uploaded. Press ${this.actionLabel} to start the ${quote.required.toLocaleString()}-credit job.`,
+                { mode: 'done', center: 'Ready' });
+        } else {
+            this.view.setState('Insufficient credits',
+                `The dataset is already on R2; ${creditsNeeded.toLocaleString()} more credits are needed. Buy credits and press Start again; the images will not be uploaded twice.`,
+                { mode: 'idle', center: 'Credit' });
+        }
+        return {
+            state: creditsNeeded === 0 ? 'ready' : 'checkout_required',
+            datasetId: this.preparedDataset.datasetId,
+            quote,
+            creditsNeeded
+        };
+    }
+
     private get actionLabel() {
         return this.pipeline === 'splat' ? 'Create Gaussian Splat' : 'Create textured mesh';
+    }
+
+    private get pipelineName() {
+        return this.pipeline === 'splat' ? 'Gaussian Splatting' : 'Photogrammetry';
     }
 
     private async selectPipeline(pipeline: ReconstructionPipeline) {

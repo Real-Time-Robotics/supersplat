@@ -34,11 +34,29 @@ test('auth sessions and photogrammetry proxy flow remain isolated and typed', as
     const revoked = [];
     const quotes = [];
     const submissions = [];
+    let uploadSessions = 0;
     let issuer = '';
     const gateway = createServer(async (req, res) => {
         const url = new URL(req.url, issuer);
         if (req.method === 'GET' && url.pathname === '/v1/config') {
             sendJson(res, 200, { oidc_issuer: issuer, oidc_client_id: 'supersplat-test' });
+        } else if (req.method === 'GET' && url.pathname === '/v1/datasets') {
+            sendJson(res, 200, {
+                datasets: [{
+                    dataset_id: 'dataset-1',
+                    label: 'Existing capture',
+                    image_count: 42,
+                    bytes: 123456,
+                    created: 1700000000,
+                    runs: {}
+                }],
+                total: 1
+            });
+        } else if (req.method === 'GET' && url.pathname === '/v1/datasets/dataset-1/runs') {
+            sendJson(res, 200, { runs: [] });
+        } else if (req.method === 'POST' && url.pathname === '/v1/datasets/sessions') {
+            uploadSessions += 1;
+            sendJson(res, 201, { dataset_id: 'unexpected-upload' });
         } else if (req.method === 'POST' && url.pathname === '/protocol/openid-connect/token') {
             sendJson(res, 200, { access_token: 'human-token' });
         } else if (req.method === 'GET' && url.pathname === '/v1/api-keys') {
@@ -160,6 +178,19 @@ test('auth sessions and photogrammetry proxy flow remain isolated and typed', as
     assert.equal((await direct.json()).account.customerId, 'direct-user');
     const directCookie = direct.headers.get('set-cookie');
 
+    const recent = await fetch(`${app}/api/reconstruction/runs`, {
+        headers: { Cookie: directCookie }
+    });
+    assert.equal(recent.status, 200);
+    assert.deepEqual((await recent.json()).datasets, [{
+        dataset_id: 'dataset-1',
+        label: 'Existing capture',
+        image_count: 42,
+        bytes: 123456,
+        created: 1700000000,
+        models: []
+    }]);
+
     const quote = await fetch(`${app}/api/reconstruction/datasets/dataset-1/quote?pipeline=photogrammetry`, {
         headers: { Cookie: directCookie }
     });
@@ -200,4 +231,5 @@ test('auth sessions and photogrammetry proxy flow remain isolated and typed', as
         run_name: 'standard',
         data_dir: 'dataset-1'
     });
+    assert.equal(uploadSessions, 0, 'reusing an existing dataset must not create an upload session');
 });

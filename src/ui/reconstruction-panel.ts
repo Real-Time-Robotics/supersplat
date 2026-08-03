@@ -44,7 +44,8 @@ class ReconstructionPanel extends Container {
             events,
             view,
             () => runtime.workflow?.canStart ?? false,
-            datasetId => runtime.workflow?.handleDatasetDeleted(datasetId)
+            datasetId => runtime.workflow?.handleDatasetDeleted(datasetId),
+            dataset => runtime.workflow?.useExistingDataset(dataset)
         );
         const workflow = new ReconstructionWorkflow(view, billing, artifacts);
         runtime.workflow = workflow;
