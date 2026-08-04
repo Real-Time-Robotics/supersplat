@@ -1,3 +1,4 @@
+import { basisGlueUrl, basisWasmUrl } from './basis-cdn';
 import { version as appVersion } from '../package.json';
 
 // export default null
@@ -26,6 +27,11 @@ const cacheUrls = [
     './static/locales/zh-CN.json'
 ];
 
+const cdnUrls = [
+    basisGlueUrl,
+    basisWasmUrl
+];
+
 self.addEventListener('install', (event) => {
     console.log(`installing v${appVersion}`);
 
@@ -34,6 +40,9 @@ self.addEventListener('install', (event) => {
         caches.open(cacheName)
         .then((cache) => {
             cache.addAll(cacheUrls);
+            cache.addAll(cdnUrls).catch((err) => {
+                console.warn(`failed to cache basis transcoder: ${err}`);
+            });
         })
     );
 });
