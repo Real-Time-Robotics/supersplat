@@ -46,6 +46,9 @@ const assertSingleFile = (json: GltfDocument, isGlb: boolean) => {
         if (isGlb && index === 0 && !buffer.uri) {
             return false;
         }
+        if (isGlb && !buffer.uri && buffer.extensions?.EXT_meshopt_compression?.fallback === true) {
+            return false;
+        }
         return !buffer.uri || !buffer.uri.startsWith('data:');
     });
     const externalImage = (json.images ?? []).find((image: any) => image.uri && !image.uri.startsWith('data:'));

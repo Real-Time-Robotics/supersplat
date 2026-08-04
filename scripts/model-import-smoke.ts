@@ -68,6 +68,34 @@ equal(
     [...raw]
 );
 
+// gltfpack -cc GLBs put compressed bytes in buffer 0 and describe a URI-less
+// fallback buffer for the decoded views. This remains a self-contained GLB and
+// must be flattened to the single BIN buffer before PlayCanvas parses it.
+const fallbackJson = structuredClone(json);
+fallbackJson.buffers = [
+    { byteLength: compressed.byteLength },
+    {
+        byteLength: raw.byteLength,
+        extensions: { EXT_meshopt_compression: { fallback: true } }
+    }
+];
+fallbackJson.bufferViews[0].buffer = 1;
+const fallbackGlb = buildGlb(fallbackJson, compressed);
+const fallbackSource = await inspectModelSource({
+    filename: 'gltfpack.glb',
+    contents: new Blob([fallbackGlb]) as File
+});
+equal(fallbackSource.meshopt, true);
+const decodedFallback = parseGlb(await decodeMeshoptGlb(await (fallbackSource.contents as Blob).arrayBuffer()));
+equal(decodedFallback.json.buffers.length, 1);
+equal(decodedFallback.json.bufferViews[0].buffer, 0);
+equal(decodedFallback.json.bufferViews[0].extensions, undefined);
+const decodedFallbackOffset = decodedFallback.json.bufferViews[0].byteOffset;
+equal(
+    [...decodedFallback.binary.subarray(decodedFallbackOffset, decodedFallbackOffset + raw.byteLength)],
+    [...raw]
+);
+
 const embedded = structuredClone(json);
 embedded.extensionsUsed = [];
 embedded.extensionsRequired = [];

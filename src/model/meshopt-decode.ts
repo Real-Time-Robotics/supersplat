@@ -33,8 +33,8 @@ const decodeMeshoptGlb = async (contents: ArrayBuffer): Promise<ArrayBuffer> => 
     if (compressedViews.length === 0) {
         return contents;
     }
-    if ((json.buffers ?? []).length !== 1) {
-        throw new Error('Meshopt models with multiple buffers are not supported.');
+    if (!Array.isArray(json.buffers) || json.buffers.length === 0) {
+        throw new Error('The Meshopt model does not define a source buffer.');
     }
 
     if (!workersInitialized && typeof Worker !== 'undefined') {
@@ -75,6 +75,14 @@ const decodeMeshoptGlb = async (contents: ArrayBuffer): Promise<ArrayBuffer> => 
         decodedViews.push({ index, bytes, mode: extension.mode, stride });
     }
 
+    const compressedIndices = new Set(decodedViews.map(entry => entry.index));
+    const unsupportedView = (json.bufferViews ?? []).find((view: any, index: number) => (
+        view.buffer !== 0 && !compressedIndices.has(index)
+    ));
+    if (unsupportedView) {
+        throw new Error('Meshopt models with non-fallback secondary buffers are not supported.');
+    }
+
     const originalLength = binary.byteLength;
     let outputLength = align4(originalLength);
     for (const entry of decodedViews) {
@@ -105,7 +113,11 @@ const decodeMeshoptGlb = async (contents: ArrayBuffer): Promise<ArrayBuffer> => 
         offset += align4(entry.bytes.byteLength);
     }
 
-    json.buffers[0].byteLength = output.byteLength;
+    json.buffers = [{ ...json.buffers[0], byteLength: output.byteLength }];
+    delete json.buffers[0].extensions?.[EXTENSION];
+    if (json.buffers[0].extensions && Object.keys(json.buffers[0].extensions).length === 0) {
+        delete json.buffers[0].extensions;
+    }
     removeExtension(json.extensionsUsed);
     removeExtension(json.extensionsRequired);
     return buildGlb(json, output);
