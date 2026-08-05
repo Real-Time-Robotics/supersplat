@@ -9,3 +9,4 @@ node_modules
 .env.local
 .artifact-cache
 .server-uploads
+.server-logs
