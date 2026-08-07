@@ -47,7 +47,7 @@ class ReconstructionPanel extends Container {
             datasetId => runtime.workflow?.handleDatasetDeleted(datasetId),
             dataset => runtime.workflow?.useExistingDataset(dataset)
         );
-        const workflow = new ReconstructionWorkflow(view, billing, artifacts);
+        const workflow = new ReconstructionWorkflow(events, view, billing, artifacts);
         runtime.workflow = workflow;
         const auth = new ReconstructionAuth(view, async () => {
             await Promise.all([
