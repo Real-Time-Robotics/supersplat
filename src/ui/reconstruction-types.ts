@@ -91,7 +91,7 @@ type RecentDataset = {
     image_count: number;
     bytes: number;
     created: number;
-    models: RecentRun[];
+    run_counts: Record<string, number>;
 };
 
 type RecentRun = {

@@ -112,27 +112,20 @@ class ReconstructionArtifacts {
                 heading.append(info, actions);
                 const models = document.createElement('div');
                 models.className = 'recon-dataset-models';
-                if (!dataset.models.length) {
-                    const empty = document.createElement('span');
-                    empty.textContent = 'No completed models yet.';
-                    models.appendChild(empty);
-                }
-                for (const run of dataset.models) {
-                    const button = document.createElement('button');
-                    button.type = 'button';
-                    button.className = 'recon-button recon-run';
-                    const runName = document.createElement('strong');
-                    runName.textContent = `${run.pipeline}/${run.run_name}`;
-                    const runCreated = new Date(run.created < 1e12 ? run.created * 1000 : run.created);
-                    const detail = document.createElement('span');
-                    const artifactLabel =
-                        `${run.artifact_count} artifact${run.artifact_count === 1 ? '' : 's'}`;
-                    detail.textContent =
-                        `${runCreated.toLocaleString('en-US')} · ${artifactLabel} · ${formatBytes(run.bytes)}`;
-                    button.append(runName, detail);
-                    button.addEventListener('click', () => this.loadRecentRunArtifacts(run));
-                    models.appendChild(button);
-                }
+                const total = Object.values(dataset.run_counts || {})
+                .reduce((sum, count) => sum + count, 0);
+                const expand = document.createElement('button');
+                expand.type = 'button';
+                expand.className = 'recon-button recon-expand-dataset';
+                expand.textContent = total ?
+                    `Xem ${total} lần chạy` :
+                    'Chưa có lần chạy nào';
+                expand.disabled = total === 0;
+                expand.addEventListener(
+                    'click',
+                    () => this.loadDatasetModels(dataset, models, expand)
+                );
+                models.appendChild(expand);
                 card.append(heading, models);
                 this.view.recentRuns.appendChild(card);
             }
@@ -140,6 +133,59 @@ class ReconstructionArtifacts {
             this.view.recentRuns.textContent = `Could not load datasets: ${messageOf(error)}`;
         } finally {
             this.view.refreshRunsButton.disabled = false;
+        }
+    }
+
+    private async loadDatasetModels(
+        dataset: RecentDataset,
+        container: HTMLElement,
+        trigger: HTMLButtonElement
+    ) {
+        trigger.disabled = true;
+        trigger.textContent = 'Đang tải…';
+        try {
+            const response = await fetch(
+                `/api/reconstruction/datasets/${encodeURIComponent(dataset.dataset_id)}/runs`,
+                { cache: 'no-store' }
+            );
+            const data = await readJson<{ runs: RecentRun[] }>(response);
+            const models = data.runs
+            .filter(run => run.status === 'done' && run.artifact_count > 0 && run.primary)
+            .sort((a, b) => b.created - a.created)
+            .map(run => ({
+                ...run,
+                dataset_id: dataset.dataset_id,
+                dataset_label: dataset.label || '',
+                image_count: dataset.image_count
+            }));
+            container.textContent = '';
+            if (!models.length) {
+                const empty = document.createElement('span');
+                empty.textContent = data.runs.length ?
+                    `${data.runs.length} lần chạy · chưa có mô hình nào hoàn tất` :
+                    'Chưa có mô hình nào hoàn tất.';
+                container.appendChild(empty);
+                return;
+            }
+            for (const run of models) {
+                const button = document.createElement('button');
+                button.type = 'button';
+                button.className = 'recon-button recon-run';
+                const runName = document.createElement('strong');
+                runName.textContent = `${run.pipeline}/${run.run_name}`;
+                const runCreated = new Date(run.created < 1e12 ? run.created * 1000 : run.created);
+                const detail = document.createElement('span');
+                const artifactLabel =
+                    `${run.artifact_count} artifact${run.artifact_count === 1 ? '' : 's'}`;
+                detail.textContent =
+                    `${runCreated.toLocaleString('en-US')} · ${artifactLabel} · ${formatBytes(run.bytes)}`;
+                button.append(runName, detail);
+                button.addEventListener('click', () => this.loadRecentRunArtifacts(run));
+                container.appendChild(button);
+            }
+        } catch (error) {
+            trigger.disabled = false;
+            trigger.textContent = `Không tải được: ${messageOf(error)}`;
         }
     }
 
