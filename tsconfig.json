@@ -29,6 +29,7 @@
     ],
     "exclude": [
         "src/debug.ts", // Testing file
+        "src/**/*.test.ts",
         "dist",
         "node_modules"
     ]

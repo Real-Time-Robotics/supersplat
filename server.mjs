@@ -1,18 +1,17 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { createReadStream, openAsBlob } from 'node:fs';
+import { createReadStream } from 'node:fs';
 import { mkdir, open as openFile, readFile, rename, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
 
 import express from 'express';
-import multer from 'multer';
 import { ApiError, Client } from 'genesis-recon';
 
 import { currentLogPath, errorSummary, initLogging, instrumentFetch, logger } from './server-log.mjs';
 
 const rootDir = path.dirname(fileURLToPath(import.meta.url));
-const uploadDir = path.join(rootDir, '.server-uploads');
 const artifactCacheDir = path.join(rootDir, '.artifact-cache');
 const logDir = path.join(rootDir, '.server-logs');
 const envPath = path.join(rootDir, '.env.local');
@@ -40,14 +39,12 @@ const sessionCookie = 'genesis_reconstruction_session';
 const sessionLifetimeMs = 7 * 24 * 60 * 60 * 1000;
 
 await Promise.all([
-    mkdir(uploadDir, { recursive: true }),
     mkdir(artifactCacheDir, { recursive: true }),
     initLogging(logDir)
 ]);
 
-// A rejection nobody awaited is the normal shape of a failure inside the SDK's
-// parallel upload fan-out: once one presigned PUT rejects, the siblings still in
-// flight resolve into nothing. Without this they vanish silently.
+// The proxy and the artifact cache both hand work to streams that outlive their request,
+// so an unawaited rejection would otherwise vanish silently.
 process.on('unhandledRejection', (reason) => {
     logger.fail('process.unhandled_rejection', reason);
 });
@@ -57,17 +54,35 @@ process.on('uncaughtException', (error) => {
 
 const app = express();
 const jobContexts = new Map();
-const uploadChannels = new Map();
 const sessions = new Map();
-const upload = multer({
-    dest: uploadDir,
-    limits: {
-        files: 2000,
-        fileSize: 1024 * 1024 * 1024
-    }
-});
+
+const RUN_CACHE_TTL_MS = 60_000;
+
+const cachedRuns = async (session, gp, datasetId) => {
+    const hit = session.runs.get(datasetId);
+    if (hit && Date.now() - hit.at < RUN_CACHE_TTL_MS) return hit.runs;
+    const runs = await gp.listRuns(datasetId);
+    session.runs.set(datasetId, { runs, at: Date.now() });
+    return runs;
+};
+
+const invalidateRuns = (datasetId) => {
+    for (const session of sessions.values()) session.runs.delete(datasetId);
+};
 
 app.disable('x-powered-by');
+
+const HOP_BY_HOP = new Set([
+    'connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization',
+    'te', 'trailer', 'transfer-encoding', 'upgrade',
+    'content-encoding', 'content-length'
+]);
+const FORWARDED_REQUEST_HEADERS = ['content-type', 'accept', 'idempotency-key', 'last-event-id'];
+
+app.use('/api/gp', (req, res, next) => {
+    proxyToGateway(req, res).catch(next);
+});
+
 app.use(express.json({ limit: '1mb' }));
 
 const asyncRoute = (handler) => (req, res, next) => {
@@ -102,8 +117,22 @@ const photogrammetryUploadOverrides = {
     sparse_subdir: 'sparse/0_geo',
     geo_register: true,
     run_georef: true,
-    run_ortho: true,
-    run_name: 'standard'
+    run_ortho: true
+};
+
+const withRunName = (config, runNameField, runName) => {
+    const [head, ...rest] = runNameField.split('.');
+    if (rest.length === 0) return { ...config, [head]: runName };
+    return { ...config, [head]: withRunName(config[head] ?? {}, rest.join('.'), runName) };
+};
+
+const runNameFieldFor = async (gp, pipeline) => {
+    const info = (await gp.listPipelines()).find(p => p.name === pipeline);
+    if (!info?.run_name_field) {
+        throw new HttpError(502, `Genesis did not say where ${pipeline} keeps its run name.`,
+            'run_name_field_unknown');
+    }
+    return info.run_name_field;
 };
 
 const cookiesFor = req => Object.fromEntries(
@@ -144,15 +173,59 @@ const gatewayOrigin = (() => {
     }
 })();
 
-// Every Client gets an instrumented fetch. This is the only seam that sees BOTH
-// the gateway's JSON calls and the presigned PUTs the SDK sends straight to the
-// object store -- the latter bypass this server's routes entirely, so without
-// this wrapper an upload that dies at 89% leaves no trace here at all.
 const makeClient = (apiKey, context = {}) => new Client(baseUrl, apiKey, {
     fetch: instrumentFetch(globalThis.fetch.bind(globalThis), { gatewayOrigin, context })
 });
 
 const clientFor = req => makeClient(requireSession(req).apiKey);
+
+const proxyToGateway = async (req, res) => {
+    const session = requireSession(req);
+    const target = new URL(req.url, baseUrl);
+    if (target.origin !== gatewayOrigin || !target.pathname.startsWith('/v1/')) {
+        throw new HttpError(404, 'Proxy path not allowed.', 'proxy_path_denied');
+    }
+    const headers = new Headers({ Authorization: `Bearer ${session.apiKey}` });
+    for (const name of FORWARDED_REQUEST_HEADERS) {
+        const value = req.headers[name];
+        if (value) headers.set(name, String(value));
+    }
+    const hasBody = req.method !== 'GET' && req.method !== 'HEAD';
+    const abort = new AbortController();
+    res.on('close', () => abort.abort());
+
+    let upstream;
+    try {
+        upstream = await fetch(target, {
+            method: req.method,
+            headers,
+            signal: abort.signal,
+            ...(hasBody ? { body: req, duplex: 'half' } : {})
+        });
+    } catch (error) {
+        if (abort.signal.aborted) return;   // the browser hung up; nothing to answer
+        throw new HttpError(502, `Genesis is unreachable: ${errorSummary(error)}`, 'gateway_unreachable');
+    }
+
+    for (const [name, value] of upstream.headers) {
+        if (!HOP_BY_HOP.has(name.toLowerCase())) res.setHeader(name, value);
+    }
+    res.status(upstream.status);
+    if (!upstream.body) {
+        res.end();
+        return;
+    }
+    res.flushHeaders();
+    try {
+        await pipeline(Readable.fromWeb(upstream.body), res);
+    } catch (error) {
+        // The reader hanging up is the normal end of an SSE stream, not a fault.
+        if (!abort.signal.aborted) {
+            logger.warn('proxy.stream_failed', { summary: errorSummary(error) });
+        }
+        if (!res.writableEnded) res.end();
+    }
+};
 
 const cookieAttributes = (req, maxAge) => {
     const attributes = [
@@ -176,6 +249,7 @@ const establishSession = (req, res, apiKey, account = {}) => {
             label: String(account.label || 'API key user'),
             customerId: String(account.customerId || '')
         },
+        runs: new Map(),
         expiresAt: Date.now() + sessionLifetimeMs
     };
     sessions.set(id, session);
@@ -294,16 +368,6 @@ const loginAndCreateSession = async (req, res, email, password) => {
     const { apiKey, customerId } = await createSuperSplatKey(accessToken);
     const session = establishSession(req, res, apiKey, { label: email, customerId });
     return { session, apiKey };
-};
-
-const normalizeName = (name, index) => {
-    const cleaned = String(name || `image-${index}.jpg`)
-    .replaceAll('\\', '/')
-    .split('/')
-    .filter(Boolean)
-    .join('__')
-    .replace(/[^a-zA-Z0-9._-]/g, '_');
-    return cleaned || `image-${index}.jpg`;
 };
 
 const runCacheScope = (datasetId, pipeline, runName, created) =>
@@ -503,82 +567,6 @@ const sendArtifact = async (res, scope, artifact, getRemoteStream) => {
     }
 };
 
-const channelFor = (id, sessionId = null) => {
-    let channel = uploadChannels.get(id);
-    if (!channel) {
-        channel = {
-            sessionId,
-            clients: new Set(),
-            latest: null,
-            cleanupTimer: null
-        };
-        uploadChannels.set(id, channel);
-    }
-    if (sessionId && channel.sessionId && channel.sessionId !== sessionId) {
-        throw new HttpError(404, 'Upload operation not found.', 'upload_not_found');
-    }
-    if (sessionId && !channel.sessionId) channel.sessionId = sessionId;
-    return channel;
-};
-
-const UPLOAD_RESUME_ATTEMPTS = 4;
-const UPLOAD_RESUME_DELAYS_MS = [5_000, 15_000, 30_000];
-
-const isResumableUploadError = (error) => {
-    if (error?.name === 'AbortError') return false;
-    const status = typeof error?.status === 'number' ? error.status : null;
-    if (status === null) return true;
-    return status === 429 || status >= 500;
-};
-
-const sleepUnlessAborted = (ms, signal) => new Promise((resolve) => {
-    if (signal?.aborted) return resolve();
-    const onAbort = () => { clearTimeout(timer); resolve(); };
-    const timer = setTimeout(() => { signal?.removeEventListener('abort', onAbort); resolve(); }, ms);
-    signal?.addEventListener('abort', onAbort, { once: true });
-});
-
-const uploadWithResume = async (gp, uploadables, opts) => {
-    for (let attempt = 0; ; attempt++) {
-        try {
-            return await gp.uploadDataset(uploadables, {
-                label: opts.label,
-                signal: opts.signal,
-                onProgress: opts.onProgress,
-                datasetId: opts.getResumeId() ?? undefined
-            });
-        } catch (error) {
-            const last = attempt >= UPLOAD_RESUME_ATTEMPTS - 1;
-            if (opts.signal?.aborted || last) throw error;
-            if (error?.status === 404 && opts.getResumeId()) opts.clearResumeId();
-            else if (!isResumableUploadError(error)) throw error;
-            const delay = UPLOAD_RESUME_DELAYS_MS[attempt] ?? 30_000;
-            logger.warn('upload.resuming', {
-                operationId: opts.operationId,
-                attempt: attempt + 1,
-                resumeId: opts.getResumeId(),
-                retryInMs: delay,
-                summary: errorSummary(error),
-                ...opts.stats()
-            });
-            await sleepUnlessAborted(delay, opts.signal);
-        }
-    }
-};
-
-const publishUploadEvent = (id, event, data) => {
-    const channel = channelFor(id);
-    channel.latest = { event, data };
-    const frame = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
-    channel.clients.forEach(client => client.write(frame));
-    if (event === 'end' || event === 'failed') {
-        channel.clients.forEach(client => client.end());
-        channel.clients.clear();
-        clearTimeout(channel.cleanupTimer);
-        channel.cleanupTimer = setTimeout(() => uploadChannels.delete(id), 30_000);
-    }
-};
-
 app.get('/api/reconstruction/session', asyncRoute(async (req, res) => {
     const session = requireSession(req);
     res.setHeader('Cache-Control', 'no-store');
@@ -678,27 +666,25 @@ app.get('/api/reconstruction/runs', asyncRoute(async (req, res) => {
     const limit = Math.min(50, Math.max(1, Number(req.query.limit) || 12));
     const envelope = await gp.listDatasets({ limit });
     const datasets = envelope.datasets || envelope.rows || [];
-    const groups = await Promise.all(datasets.map(async dataset => ({
-        dataset,
-        runs: await gp.listRuns(dataset.dataset_id)
-    })));
     res.json({
-        datasets: groups.map(({ dataset, runs }) => ({
+        datasets: datasets.map(dataset => ({
             dataset_id: dataset.dataset_id,
             label: dataset.label,
             image_count: dataset.image_count,
             bytes: dataset.bytes,
             created: dataset.created,
-            models: runs
-            .filter(run => run.status === 'done' && run.artifact_count > 0 && run.primary)
-            .sort((a, b) => b.created - a.created)
-            .map(run => ({
-                ...run,
-                dataset_id: dataset.dataset_id,
-                dataset_label: dataset.label,
-                image_count: dataset.image_count
-            }))
+            run_counts: dataset.runs
         }))
+    });
+}));
+
+app.get('/api/reconstruction/datasets/:datasetId/runs', asyncRoute(async (req, res) => {
+    const session = requireSession(req);
+    const gp = clientFor(req);
+    const { datasetId } = req.params;
+    res.json({
+        dataset_id: datasetId,
+        runs: await cachedRuns(session, gp, datasetId)
     });
 }));
 
@@ -707,6 +693,7 @@ app.delete('/api/reconstruction/datasets/:datasetId', asyncRoute(async (req, res
     const { datasetId } = req.params;
     const cachePaths = await datasetArtifactCachePaths(gp, datasetId);
     await gp.deleteDataset(datasetId);
+    invalidateRuns(datasetId);
     const cacheCleanup = await Promise.allSettled(
         cachePaths.map(cachePath => rm(cachePath, { force: true }))
     );
@@ -720,124 +707,6 @@ app.delete('/api/reconstruction/datasets/:datasetId', asyncRoute(async (req, res
     res.status(204).end();
 }));
 
-app.get('/api/reconstruction/uploads/:operationId/events', (req, res) => {
-    let session;
-    try {
-        session = requireSession(req);
-    } catch (error) {
-        res.status(error.status || 401).json({ error: error.message, code: error.code });
-        return;
-    }
-    const operationId = req.params.operationId;
-    const channel = channelFor(operationId, session.id);
-    clearTimeout(channel.cleanupTimer);
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache, no-transform');
-    res.setHeader('Connection', 'keep-alive');
-    res.flushHeaders();
-    channel.clients.add(res);
-    if (channel.latest) {
-        res.write(`event: ${channel.latest.event}\ndata: ${JSON.stringify(channel.latest.data)}\n\n`);
-    }
-    req.on('close', () => channel.clients.delete(res));
-});
-
-app.post('/api/reconstruction/upload', upload.array('images', 2000), asyncRoute(async (req, res) => {
-    const session = requireSession(req);
-    const files = Array.isArray(req.files) ? req.files : [];
-    const operationId = String(req.body.operationId || randomUUID());
-    const gp = makeClient(session.apiKey, { operationId });
-    const pipeline = pipelineFor(req.body.pipeline);
-    channelFor(operationId, session.id);
-    if (!files.length) {
-        res.status(400).json({ error: 'Hãy chọn ít nhất một ảnh.' });
-        return;
-    }
-
-    let relativePaths = [];
-    try {
-        relativePaths = JSON.parse(req.body.relativePaths || '[]');
-    } catch {
-        relativePaths = [];
-    }
-
-    const startedAt = Date.now();
-    const totalBytes = files.reduce((sum, file) => sum + (file.size || 0), 0);
-    let lastProgress = null;
-    let lastLoggedAt = 0;
-    let lastPhase = null;
-    let resumeId = null;
-    const uploadStats = () => ({
-        phase: lastProgress?.phase ?? 'presign',
-        loaded: lastProgress?.loaded ?? 0,
-        total: lastProgress?.total ?? totalBytes,
-        percent: lastProgress?.total ? Math.round((lastProgress.loaded / lastProgress.total) * 100) : 0,
-        lastFile: lastProgress?.file ?? null,
-        elapsedMs: Date.now() - startedAt
-    });
-
-    const abortController = new AbortController();
-    res.on('close', () => {
-        if (!res.writableEnded) {
-            logger.warn('upload.client_disconnected', { operationId, ...uploadStats() });
-            abortController.abort();
-        }
-    });
-
-    logger.info('upload.start', {
-        operationId, pipeline, files: files.length, totalBytes
-    });
-
-    try {
-        const uploadables = await Promise.all(files.map(async (file, index) => ({
-            name: normalizeName(relativePaths[index] || file.originalname, index),
-            data: await openAsBlob(file.path, { type: file.mimetype || 'application/octet-stream' })
-        })));
-        const label = String(req.body.label || `SuperSplat ${new Date().toISOString()}`).slice(0, 120);
-        const onProgress = (progress) => {
-            lastProgress = progress;
-            if (progress.datasetId) resumeId = progress.datasetId;
-            const now = Date.now();
-            if (progress.phase !== lastPhase || now - lastLoggedAt > 10_000) {
-                lastPhase = progress.phase;
-                lastLoggedAt = now;
-                logger.info('upload.progress', { operationId, ...uploadStats() });
-            }
-            publishUploadEvent(operationId, 'progress', progress);
-        };
-        const datasetId = await uploadWithResume(gp, uploadables, {
-            label, operationId, onProgress, signal: abortController.signal,
-            stats: uploadStats,
-            getResumeId: () => resumeId,
-            clearResumeId: () => { resumeId = null; }
-        });
-        logger.info('upload.stored', { operationId, datasetId, ...uploadStats() });
-        const quote = await gp.quote(datasetId, pipeline);
-
-        if (quote.balance < quote.required) {
-            const creditsNeeded = Math.max(0, Math.ceil(quote.required - quote.balance));
-            publishUploadEvent(operationId, 'end', { datasetId });
-            logger.info('upload.checkout_required', { operationId, datasetId, creditsNeeded });
-            res.json({ state: 'checkout_required', datasetId, quote, creditsNeeded });
-            return;
-        }
-
-        publishUploadEvent(operationId, 'end', { datasetId });
-        logger.info('upload.ok', { operationId, datasetId, ...uploadStats() });
-        res.json({ state: 'ready', datasetId, quote });
-    } catch (error) {
-        logger.fail('upload.failed', error, {
-            operationId, pipeline, files: files.length, aborted: abortController.signal.aborted, ...uploadStats()
-        });
-        publishUploadEvent(operationId, 'failed', {
-            message: errorSummary(error)
-        });
-        throw error;
-    } finally {
-        await Promise.all(files.map(file => rm(file.path, { force: true }).catch(() => undefined)));
-    }
-}));
-
 app.post('/api/reconstruction/jobs', asyncRoute(async (req, res) => {
     const gp = clientFor(req);
     const datasetId = String(req.body.datasetId || '');
@@ -847,17 +716,26 @@ app.post('/api/reconstruction/jobs', asyncRoute(async (req, res) => {
     }
     const pipeline = pipelineFor(req.body.pipeline);
     const preset = String(req.body.preset || 'standard');
-    const config = {
-        ...await gp.getPreset(pipeline, preset),
+    const runName = String(req.body.runName || preset);
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(runName)) {
+        throw new HttpError(400, `Tên lần chạy không hợp lệ: ${runName}`, 'invalid_run_name');
+    }
+    const [presetConfig, runNameField] = await Promise.all([
+        gp.getPreset(pipeline, preset),
+        runNameFieldFor(gp, pipeline)
+    ]);
+    const config = withRunName({
+        ...presetConfig,
         ...(pipeline === 'photogrammetry' ? photogrammetryUploadOverrides : {}),
         data_dir: datasetId
-    };
+    }, runNameField, runName);
     const idempotencyKey = String(req.body.idempotencyKey || randomUUID());
     const jobId = await gp.submitJob(pipeline, config, { idempotencyKey });
+    invalidateRuns(datasetId);
     jobContexts.set(jobId, {
         datasetId,
         pipeline,
-        runName: preset,
+        runName,
         submittedAt: Date.now() / 1000,
         created: null
     });
@@ -915,11 +793,12 @@ app.get('/api/reconstruction/jobs/:jobId/events', async (req, res) => {
             lastEventId,
             signal: abortController.signal
         })) {
-            // Logs remain available in the backend for diagnostics. The reconstruction UI
-            // consumes the structured progress, liveness, artifact, and terminal frames.
             if (event.type === 'log') continue;
             if (event.id) res.write(`id: ${event.id}\n`);
             if (event.type === 'end') {
+                // A finished job changes the run listing.
+                const context = jobContexts.get(req.params.jobId);
+                if (context?.datasetId) invalidateRuns(context.datasetId);
                 res.write('event: end\ndata: {}\n\n');
                 break;
             }

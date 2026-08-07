@@ -1,33 +1,8 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
-import { once } from 'node:events';
 import { test } from 'node:test';
 
-const listenOnRandomPort = async (server) => {
-    server.listen(0, '127.0.0.1');
-    await once(server, 'listening');
-    return server.address().port;
-};
-
-const sendJson = (res, status, payload) => {
-    res.writeHead(status, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify(payload));
-};
-
-const waitForServer = async (url, child) => {
-    for (let attempt = 0; attempt < 50; attempt++) {
-        if (child.exitCode != null) throw new Error(`SuperSplat server exited with ${child.exitCode}`);
-        try {
-            const response = await fetch(url);
-            if (response.status === 401) return;
-        } catch {
-            // The listener may not be ready yet.
-        }
-        await new Promise(resolve => setTimeout(resolve, 50));
-    }
-    throw new Error('Timed out waiting for SuperSplat server.');
-};
+import { listenOnRandomPort, sendJson, signInWithApiKey, startApp } from './test-support.mjs';
 
 test('auth sessions and photogrammetry proxy flow remain isolated and typed', async (context) => {
     const registrations = [];
@@ -76,6 +51,13 @@ test('auth sessions and photogrammetry proxy flow remain isolated and typed', as
         } else if (req.method === 'GET' && url.pathname === '/billing/quote') {
             quotes.push(Object.fromEntries(url.searchParams));
             sendJson(res, 200, { required: 40, balance: 123, billable_gpx: 1.5 });
+        } else if (req.method === 'GET' && url.pathname === '/v1/pipelines') {
+            sendJson(res, 200, [
+                { name: 'photogrammetry', label: 'Photogrammetry', supports_viewer: false,
+                    run_name_field: 'run_name' },
+                { name: 'splat', label: 'Splat', supports_viewer: true,
+                    run_name_field: 'train.result_name' }
+            ]);
         } else if (req.method === 'GET' &&
             url.pathname === '/v1/pipelines/photogrammetry/presets/standard') {
             sendJson(res, 200, {
@@ -94,22 +76,8 @@ test('auth sessions and photogrammetry proxy flow remain isolated and typed', as
     const gatewayPort = await listenOnRandomPort(gateway);
     issuer = `http://127.0.0.1:${gatewayPort}`;
 
-    const portProbe = createServer();
-    const appPort = await listenOnRandomPort(portProbe);
-    await new Promise(resolve => portProbe.close(resolve));
-    const child = spawn(process.execPath, ['server.mjs'], {
-        cwd: new URL('..', import.meta.url),
-        env: { ...process.env, GENESIS_BASE_URL: issuer, PORT: String(appPort) },
-        stdio: ['ignore', 'pipe', 'pipe']
-    });
-    context.after(async () => {
-        child.kill();
-        gateway.close();
-        await Promise.allSettled([once(child, 'exit'), once(gateway, 'close')]);
-    });
-
-    const app = `http://127.0.0.1:${appPort}`;
-    await waitForServer(`${app}/api/reconstruction/session`, child);
+    context.after(() => gateway.close());
+    const app = await startApp(context, gatewayPort);
 
     const login = await fetch(`${app}/api/reconstruction/session/login`, {
         method: 'POST',
@@ -188,7 +156,7 @@ test('auth sessions and photogrammetry proxy flow remain isolated and typed', as
         image_count: 42,
         bytes: 123456,
         created: 1700000000,
-        models: []
+        run_counts: {}
     }]);
 
     const quote = await fetch(`${app}/api/reconstruction/datasets/dataset-1/quote?pipeline=photogrammetry`, {
@@ -232,4 +200,46 @@ test('auth sessions and photogrammetry proxy flow remain isolated and typed', as
         data_dir: 'dataset-1'
     });
     assert.equal(uploadSessions, 0, 'reusing an existing dataset must not create an upload session');
+});
+
+test('a splat run name is placed at the published nested path, merging not replacing', async (context) => {
+    const submissions = [];
+    const gateway = createServer(async (req, res) => {
+        const url = new URL(req.url, 'http://x');
+        if (req.method === 'GET' && url.pathname === '/v1/pipelines') {
+            sendJson(res, 200, [{ name: 'splat', label: 'Splat', supports_viewer: true,
+                run_name_field: 'train.result_name' }]);
+        } else if (req.method === 'GET' &&
+            url.pathname === '/v1/pipelines/splat/presets/standard') {
+            sendJson(res, 200, {
+                name: 'standard',
+                config: { train: { iterations: 30000, sh_degree: 3 }, other: 1 }
+            });
+        } else if (req.method === 'GET' && url.pathname === '/billing/credits') {
+            sendJson(res, 200, { customer_id: 'c1', balance: 10, billable: true });
+        } else if (req.method === 'POST' && url.pathname === '/v1/jobs') {
+            let body = '';
+            for await (const chunk of req) body += chunk;
+            submissions.push(JSON.parse(body));
+            sendJson(res, 202, { job_id: 'splat-job' });
+        } else {
+            sendJson(res, 404, { detail: `Unexpected ${req.method} ${url.pathname}` });
+        }
+    });
+    const gatewayPort = await listenOnRandomPort(gateway);
+    context.after(() => gateway.close());
+    const app = await startApp(context, gatewayPort);
+    const cookie = await signInWithApiKey(app);
+
+    const job = await fetch(`${app}/api/reconstruction/jobs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Cookie: cookie },
+        body: JSON.stringify({ datasetId: 'ds1', pipeline: 'splat', runName: 'standard-2' })
+    });
+
+    assert.equal(job.status, 202);
+    assert.deepEqual(submissions[0].config.train,
+        { iterations: 30000, sh_degree: 3, result_name: 'standard-2' });
+    assert.equal(submissions[0].config.other, 1);
+    assert.equal(submissions[0].config.run_name, undefined);
 });

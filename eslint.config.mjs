@@ -38,6 +38,19 @@ export default [
             'require-atomic-updates': 'off'
         }
     }, {
+        files: ['src/**/*.test.ts'],
+        languageOptions: {
+            globals: {
+                ...globals.node
+            }
+        },
+        rules: {
+            'import/extensions': 'off',
+            'require-await': 'off',
+            'regexp/prefer-w': 'off',
+            'regexp/use-ignore-case': 'off'
+        }
+    }, {
         files: ['**/*.mjs'],
         languageOptions: {
             globals: {

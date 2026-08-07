@@ -19,7 +19,10 @@
         "build": "rollup -c",
         "watch": "rollup -c -w",
         "serve": "node server.mjs",
+        "test:ui": "node --import ./scripts/ts-resolve.mjs --test \"src/ui/*.test.ts\"",
         "test:auth-session": "node --test scripts/test-auth-session.mjs",
+        "test:gateway-proxy": "node --test scripts/test-gateway-proxy.mjs",
+        "test:runs-cache": "node --test scripts/test-runs-cache.mjs",
         "test:model-import": "node scripts/run-model-import-smoke.mjs",
         "develop": "cross-env BUILD_TYPE=debug concurrently --kill-others \"npm run watch\" \"npm run serve\"",
         "develop:auto-launch": "concurrently --kill-others \"xdg-open 'http://localhost:3000/'\" \"npm run watch\" \"npm run serve\"",
@@ -66,7 +69,6 @@
     "dependencies": {
         "express": "^5.2.1",
         "genesis-recon": "file:../reconstruction/sdk/typescript",
-        "meshoptimizer": "1.2.0",
-        "multer": "^2.2.0"
+        "meshoptimizer": "1.2.0"
     }
 }

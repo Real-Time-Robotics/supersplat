@@ -1,88 +1,91 @@
-import { ReconstructionPipeline, UploadProgress, UploadResponse } from './reconstruction-types';
-import { formatBytes, formatDuration } from './reconstruction-utils';
+import { Client } from 'genesis-recon';
+
+import { describeFailure } from './reconstruction-failure';
+import { normalizeObjectName } from './reconstruction-names';
+import { Transfer } from './reconstruction-transfer';
+import { UploadProgress } from './reconstruction-types';
+import { UploadRecords, type UploadRecord } from './reconstruction-upload-records';
+import { delay, formatBytes, formatDuration } from './reconstruction-utils';
 import { ReconstructionView } from './reconstruction-view';
 
+const gp = new Client(`${location.origin}/api/gp`, 'session-cookie');
+
+/** A transfer the user stopped. The session and its stored objects both survive. */
+class UploadPaused extends Error {
+    constructor(readonly datasetId: string) {
+        super('Đã tạm dừng tải lên.');
+        this.name = 'UploadPaused';
+    }
+}
+
 class ReconstructionUpload {
-    private activeUpload: XMLHttpRequest | null = null;
+    private readonly view: ReconstructionView;
+    private readonly records = new UploadRecords();
+    private transfer: Transfer | null = null;
     private transferKey = '';
     private transferSamples: { time: number; loaded: number }[] = [];
 
-    constructor(private readonly view: ReconstructionView) {
+    constructor(view: ReconstructionView) {
+        this.view = view;
     }
 
-    cancel() {
-        this.activeUpload?.abort();
-        this.activeUpload = null;
+    pause() {
+        this.transfer?.pause();
     }
 
-    run(
-        files: File[],
-        relativePaths: string[],
-        pipeline: ReconstructionPipeline
-    ): Promise<UploadResponse> {
-        return new Promise((resolve, reject) => {
-            const operationId = crypto.randomUUID();
-            const source = new EventSource(`/api/reconstruction/uploads/${encodeURIComponent(operationId)}/events`);
-            const form = new FormData();
-            files.forEach(file => form.append('images', file, file.name));
-            form.append('relativePaths', JSON.stringify(relativePaths));
-            form.append('label', `SuperSplat ${new Date().toLocaleString('en-US')}`);
-            form.append('operationId', operationId);
-            form.append('pipeline', pipeline);
+    /** Sessions the control plane still holds, narrowed to the ones we can resume. */
+    async openSessions(): Promise<UploadRecord[]> {
+        const sessions = await gp.listOpenSessions();
+        return this.records.reconcile(sessions.map(session => session.dataset_id));
+    }
 
-            source.addEventListener('progress', (event) => {
-                this.updateStorageProgress(JSON.parse(event.data) as UploadProgress);
-            });
-            source.addEventListener('end', () => source.close());
-            source.addEventListener('failed', (event) => {
-                const data = JSON.parse(event.data) as { message?: string };
-                this.view.setState(
-                    'Object storage upload failed',
-                    data.message || 'The upload could not be completed.',
-                    { mode: 'failed' }
-                );
-                source.close();
-            });
+    async start(named: { name: string; data: File }[], fingerprint: string,
+        pipeline: string, preset: string, label: string): Promise<string> {
+        const datasetId = await gp.createDatasetSession();
+        const record: UploadRecord = {
+            datasetId,
+            label,
+            pipeline,
+            preset,
+            fingerprint,
+            names: named.map(f => f.name),
+            totalBytes: named.reduce((sum, f) => sum + f.data.size, 0)
+        };
+        await this.records.put(record);
+        return this.drive(named, record);
+    }
 
-            const request = new XMLHttpRequest();
-            this.activeUpload = request;
-            request.open('POST', '/api/reconstruction/upload');
-            request.upload.onprogress = (event) => {
-                if (!event.lengthComputable) return;
-                this.view.setState('Sending images to localhost',
-                    this.transferDetail('browser-upload', event.loaded, event.total),
-                    {
-                        mode: 'determinate',
-                        value: (event.loaded / event.total) * 100
-                    });
-            };
-            request.onerror = () => {
-                this.activeUpload = null;
-                source.close();
-                reject(new Error('Lost connection to the localhost server.'));
-            };
-            request.onabort = () => {
-                this.activeUpload = null;
-                source.close();
-                reject(new DOMException('Upload cancelled', 'AbortError'));
-            };
-            request.onload = () => {
-                this.activeUpload = null;
-                source.close();
-                let responseBody: any = {};
-                try {
-                    responseBody = JSON.parse(request.responseText);
-                } catch {
-                    // Status handling below supplies a useful fallback.
-                }
-                if (request.status < 200 || request.status >= 300) {
-                    reject(new Error(responseBody.error || `Upload failed (${request.status})`));
-                } else {
-                    resolve(responseBody as UploadResponse);
-                }
-            };
-            request.send(form);
+    resume(record: UploadRecord, files: File[]): Promise<string> {
+        const byName = new Map(files.map((file, index) => [
+            normalizeObjectName((file as File & { webkitRelativePath?: string })
+            .webkitRelativePath || file.name, index),
+            file
+        ]));
+        const missing = record.names.filter(name => !byName.has(name));
+        if (missing.length > 0) {
+            throw new Error(`Thư mục vừa chọn thiếu ${missing.length.toLocaleString()} / ` +
+                `${record.names.length.toLocaleString()} ảnh của phiên tải lên này.`);
+        }
+        const named = record.names.map(name => ({ name, data: byName.get(name) }));
+        return this.drive(named, record);
+    }
+
+    private async drive(named: { name: string; data: File }[],
+        record: UploadRecord): Promise<string> {
+        this.transfer = new Transfer(named, record, {
+            uploadDataset: (files, opts) => gp.uploadDataset(files, opts),
+            sleep: delay
         });
+        const outcome = await this.transfer.run(progress => this.updateStorageProgress(progress));
+        this.transfer = null;
+        if (outcome.state === 'done') {
+            await this.records.remove(record.datasetId);
+            return record.datasetId;
+        }
+        if (outcome.state === 'paused') throw new UploadPaused(record.datasetId);
+        const described = describeFailure(outcome.error);
+        this.view.setState(described.title, described.detail, { mode: 'failed' });
+        throw outcome.error;
     }
 
     private transferDetail(key: string, loaded: number, total: number, suffix = '') {
@@ -111,35 +114,26 @@ class ReconstructionUpload {
 
     private updateStorageProgress(progress: UploadProgress) {
         if (progress.phase === 'presign') {
-            this.view.setState(
-                'Preparing object storage',
-                'The server is creating secure upload URLs.',
-                { mode: 'indeterminate' }
-            );
+            this.view.setState('Đang chuẩn bị kho lưu trữ',
+                'Đang tạo URL tải lên an toàn.', { mode: 'indeterminate' });
             return;
         }
         if (progress.phase === 'upload') {
             const ratio = progress.total > 0 ? progress.loaded / progress.total : 0;
             const current = progress.file ? ` · ${progress.file}` : '';
-            this.view.setState('Uploading to object storage',
+            this.view.setState('Đang tải lên kho lưu trữ',
                 this.transferDetail('object-storage-upload', progress.loaded, progress.total, current),
                 { mode: 'determinate', value: ratio * 100 });
             return;
         }
         if (progress.phase === 'finalize') {
-            this.view.setState(
-                'Finalizing dataset',
-                'Object storage received all images.',
-                { mode: 'indeterminate' }
-            );
+            this.view.setState('Đang chốt dataset',
+                'Kho lưu trữ đã nhận đủ ảnh.', { mode: 'indeterminate' });
             return;
         }
-        this.view.setState(
-            'Processing dataset',
-            'The server is validating and indexing images.',
-            { mode: 'indeterminate' }
-        );
+        this.view.setState('Đang xử lý dataset',
+            'Máy chủ đang kiểm tra và lập chỉ mục ảnh.', { mode: 'indeterminate' });
     }
 }
 
-export { ReconstructionUpload };
+export { ReconstructionUpload, UploadPaused };
