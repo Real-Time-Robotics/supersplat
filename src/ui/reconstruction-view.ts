@@ -45,6 +45,8 @@ class ReconstructionView {
     readonly artifactPanel: HTMLElement;
     readonly artifactTitle: HTMLElement;
     readonly artifactList: HTMLElement;
+    readonly cacheUsageLabel: HTMLElement;
+    readonly clearCacheButton: HTMLButtonElement;
     readonly createTabButton: HTMLButtonElement;
     readonly recentTabButton: HTMLButtonElement;
     readonly createTabPanel: HTMLElement;
@@ -234,6 +236,10 @@ class ReconstructionView {
                         <span class="recon-artifact-title"></span>
                     </div>
                     <div class="recon-artifact-list"></div>
+                    <div class="recon-cache-row">
+                        <span class="recon-cache-usage">Bộ nhớ đệm: —</span>
+                        <button type="button" class="recon-cache-clear" disabled>Xoá tất cả</button>
+                    </div>
                 </section>
             </section>
             </div>`;
@@ -267,6 +273,8 @@ class ReconstructionView {
         this.artifactPanel = this.query('.recon-artifacts');
         this.artifactTitle = this.query('.recon-artifact-title');
         this.artifactList = this.query('.recon-artifact-list');
+        this.cacheUsageLabel = this.query('.recon-cache-usage');
+        this.clearCacheButton = this.query('.recon-cache-clear');
         this.dropzone = this.query('.recon-dropzone');
         this.pipelineButtons = Array.from(root.querySelectorAll<HTMLButtonElement>('.recon-pipeline-card'));
         this.pipelineDescription = this.query('.recon-pipeline-description');
