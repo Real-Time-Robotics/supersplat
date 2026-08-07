@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { test } from 'node:test';
 
-import { listenOnRandomPort, sendJson, signInWithApiKey, startApp } from './test-support.mjs';
+import { call, envFor, listenOnRandomPort, sendJson, signInWithApiKey } from './test-support.mjs';
 
 test('the runs aggregate is lazy and cached, and the upload route is gone', async (context) => {
     const runCalls = [];
@@ -38,25 +38,25 @@ test('the runs aggregate is lazy and cached, and the upload route is gone', asyn
     const gatewayPort = await listenOnRandomPort(gateway);
     context.after(() => gateway.close());
 
-    const appOrigin = await startApp(context, gatewayPort);
-    const cookie = await signInWithApiKey(appOrigin);
+    const env = envFor(gatewayPort);
+    const cookie = await signInWithApiKey(env);
 
-    const listed = await fetch(`${appOrigin}/api/reconstruction/runs`, { headers: { cookie } });
+    const listed = await call(env, '/api/reconstruction/runs', { headers: { cookie } });
     assert.equal(listed.status, 200);
     const body = await listed.json();
     assert.equal(body.datasets[0].dataset_id, 'ds1');
     assert.deepEqual(body.datasets[0].run_counts, { splat: 1, photogrammetry: 0 });
     assert.equal(runCalls.length, 0, 'listing datasets must not list runs');
 
-    const first = await fetch(`${appOrigin}/api/reconstruction/datasets/ds1/runs`, { headers: { cookie } });
+    const first = await call(env, '/api/reconstruction/datasets/ds1/runs', { headers: { cookie } });
     const firstBody = await first.json();
     assert.equal(firstBody.runs.length, 1);
-    await fetch(`${appOrigin}/api/reconstruction/datasets/ds1/runs`, { headers: { cookie } });
+    await call(env, '/api/reconstruction/datasets/ds1/runs', { headers: { cookie } });
     assert.equal(runCalls.length, 1, 'the second open must be served from cache');
 
-    const upload = await fetch(`${appOrigin}/api/reconstruction/upload`, {
+    const upload = await call(env, '/api/reconstruction/upload', {
         method: 'POST', headers: { cookie }
     });
-    assert.match(upload.headers.get('content-type') ?? '', /text\/html/);
-    await assert.rejects(() => upload.clone().json());
+    assert.equal(upload.status, 404);
+    assert.equal((await upload.json()).code, 'not_found');
 });

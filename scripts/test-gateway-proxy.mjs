@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { test } from 'node:test';
 
-import { listenOnRandomPort, signInWithApiKey, startApp } from './test-support.mjs';
+import { call, envFor, listenOnRandomPort, signInWithApiKey } from './test-support.mjs';
 
 test('the /api/gp proxy authenticates, fences and streams', async (context) => {
     const seen = [];
@@ -41,16 +41,16 @@ test('the /api/gp proxy authenticates, fences and streams', async (context) => {
     });
     const gatewayPort = await listenOnRandomPort(gateway);
     context.after(() => gateway.close());
-    const appOrigin = await startApp(context, gatewayPort);
+    const env = envFor(gatewayPort);
 
-    const anonymous = await fetch(`${appOrigin}/api/gp/v1/datasets/sessions`, { method: 'POST' });
+    const anonymous = await call(env, '/api/gp/v1/datasets/sessions', { method: 'POST' });
     assert.equal(anonymous.status, 401);
     assert.equal(seen.length, 0);
 
-    const cookie = await signInWithApiKey(appOrigin);
+    const cookie = await signInWithApiKey(env);
     seen.length = 0;
 
-    const created = await fetch(`${appOrigin}/api/gp/v1/datasets/sessions`, {
+    const created = await call(env, '/api/gp/v1/datasets/sessions', {
         method: 'POST',
         headers: { cookie, 'Content-Type': 'application/json', 'Idempotency-Key': 'idem-1' },
         body: JSON.stringify({ hello: 'world' })
@@ -64,7 +64,7 @@ test('the /api/gp proxy authenticates, fences and streams', async (context) => {
     assert.equal(write.body, JSON.stringify({ hello: 'world' }));
 
     seen.length = 0;
-    const denied = await fetch(`${appOrigin}/api/gp/billing/credits`, { headers: { cookie } });
+    const denied = await call(env, '/api/gp/billing/credits', { headers: { cookie } });
     assert.equal(denied.status, 404);
     assert.equal((await denied.json()).code, 'proxy_path_denied');
     assert.equal(seen.length, 0);
@@ -77,7 +77,7 @@ test('the /api/gp proxy authenticates, fences and streams', async (context) => {
     const offsitePort = await listenOnRandomPort(offsite);
     context.after(() => offsite.close());
     for (const path of [`//127.0.0.1:${offsitePort}/v1/steal`, `/\\127.0.0.1:${offsitePort}/v1/steal`]) {
-        const attack = await fetch(`${appOrigin}/api/gp${path}`, { headers: { cookie } });
+        const attack = await call(env, `/api/gp${path}`, { headers: { cookie } });
         assert.equal(attack.status, 404, `${path} must not be proxied`);
         assert.equal((await attack.json()).code, 'proxy_path_denied');
     }
@@ -85,7 +85,7 @@ test('the /api/gp proxy authenticates, fences and streams', async (context) => {
     assert.equal(seen.length, 0);
 
     // SSE: the first frame arrives before the upstream response ends.
-    const stream = await fetch(`${appOrigin}/api/gp/v1/jobs/j1/stream`, {
+    const stream = await call(env, '/api/gp/v1/jobs/j1/stream', {
         headers: { cookie, Accept: 'text/event-stream', 'Last-Event-ID': '7' }
     });
     assert.equal(stream.status, 200);
