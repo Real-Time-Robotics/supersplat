@@ -115,7 +115,7 @@ const eventData = <T>(event: Event): T | null => {
 class ReconstructionJob {
     private activeJobId: string | null = null;
     private activeEvents: EventSource | null = null;
-    private submissionPromise: Promise<string> | null = null;
+    private watchGeneration = 0;
     private cancelled = false;
     private lastStage: StageEvent | null = null;
     private lastProgress: JobProgressEvent | null = null;
@@ -133,7 +133,8 @@ class ReconstructionJob {
         private readonly view: ReconstructionView,
         private readonly billing: ReconstructionBilling,
         private readonly artifacts: ReconstructionArtifacts,
-        private readonly canStart: () => boolean
+        /** Hand the panel controls back, unless another run is mid-upload. */
+        private readonly releaseControls: () => void
     ) {
         this.view.openPrimaryButton.addEventListener('click', () => this.togglePrimaryOpen());
     }
@@ -142,7 +143,39 @@ class ReconstructionJob {
         return this.cancelled;
     }
 
-    async run(datasetId: string, pipeline: ReconstructionPipeline) {
+    /**
+     * Submit without watching
+     */
+    async submit(datasetId: string, pipeline: ReconstructionPipeline,
+        runName: string): Promise<string> {
+        const response = await fetch('/api/reconstruction/jobs', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                datasetId,
+                pipeline,
+                preset: 'standard',
+                runName,
+                idempotencyKey: crypto.randomUUID()
+            })
+        });
+        if (response.status === 409) {
+            const body = await response.json().catch(() => ({}));
+            const refusal = new Error(body.error || 'Đã đạt giới hạn số job chạy song song.') as
+                Error & { status?: number; code?: string };
+            refusal.status = 409;
+            refusal.code = body.code || '';
+            throw refusal;
+        }
+        const data = await readJson<{ jobId: string }>(response);
+        return data.jobId;
+    }
+
+    /**
+     * Watch a job that was submitted.
+     */
+    async attach(jobId: string) {
+        const generation = ++this.watchGeneration;
         this.cancelled = false;
         this.lastStage = null;
         this.lastProgress = null;
@@ -159,37 +192,16 @@ class ReconstructionJob {
         this.view.openPrimaryButton.disabled = false;
         this.view.openPrimaryButton.textContent = 'Open model now';
         this.view.cancelButton.disabled = false;
+        this.view.cancelButton.hidden = false;
         this.view.setWorkerStatus(null);
         this.view.setRetryAvailable(false);
 
-        const submission = fetch('/api/reconstruction/jobs', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                datasetId,
-                pipeline,
-                preset: 'standard',
-                idempotencyKey: crypto.randomUUID()
-            })
-        }).then(response => readJson<{ jobId: string }>(response))
-        .then(data => data.jobId);
-        this.submissionPromise = submission;
-        try {
-            this.activeJobId = await submission;
-        } finally {
-            if (this.submissionPromise === submission) this.submissionPromise = null;
-        }
-        this.view.setState(
-            'Job submitted',
-            `Job ${this.activeJobId.slice(0, 8)} · waiting for the first stage`,
-            { mode: 'indeterminate' }
-        );
-        this.followEvents(this.activeJobId);
-        await this.waitForJob(this.activeJobId);
+        this.activeJobId = jobId;
+        this.followEvents(jobId);
+        await this.waitForJob(jobId, generation);
     }
 
     async cancel(): Promise<boolean> {
-        if (this.submissionPromise) await this.submissionPromise;
         if (this.activeJobId) {
             const response = await fetch(`/api/reconstruction/jobs/${encodeURIComponent(this.activeJobId)}/cancel`, {
                 method: 'POST'
@@ -281,11 +293,11 @@ class ReconstructionJob {
         };
     }
 
-    private async waitForJob(jobId: string) {
+    private async waitForJob(jobId: string, generation: number) {
         let transientNotFound = 0;
         let artifacts: Artifact[] = [];
         for (;;) {
-            if (this.cancelled) return;
+            if (this.cancelled || generation !== this.watchGeneration) return;
             const response = await fetch(`/api/reconstruction/jobs/${encodeURIComponent(jobId)}`, { cache: 'no-store' });
             if (response.status === 404 && transientNotFound < JOB_NOT_FOUND_GRACE) {
                 transientNotFound++;
@@ -352,7 +364,7 @@ class ReconstructionJob {
             this.view.setState('Reconstruction complete · choose an artifact',
                 `${artifacts.length} artifacts are available${primary ? ` · ${primary.name} is recommended` : ''}.`,
                 { mode: 'done' });
-            this.view.setBusy(false, this.canStart());
+            this.releaseControls();
         }
     }
 

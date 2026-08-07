@@ -52,7 +52,8 @@ class ReconstructionPanel extends Container {
         const auth = new ReconstructionAuth(view, async () => {
             await Promise.all([
                 billing.refreshCredits(),
-                artifacts.refreshRecentRuns()
+                artifacts.refreshRecentRuns(),
+                workflow.restoreOpenSessions()
             ]);
         });
 

@@ -1,10 +1,21 @@
 import { ProgressVisual, ReconstructionProgress } from './reconstruction-progress';
+import type { Run, RunState } from './reconstruction-run';
 import {
     JobHeartbeatEvent,
     JobProgressEvent,
     ReconstructionPipeline,
     StageEvent
 } from './reconstruction-types';
+
+const RUN_STATE_TEXT: Record<RunState, string> = {
+    uploading: 'Đang tải lên',
+    paused: 'Đã tạm dừng',
+    quoting: 'Đang báo giá',
+    'waiting-slot': 'Đang chờ lượt',
+    running: 'Đang chạy',
+    done: 'Hoàn tất',
+    failed: 'Thất bại'
+};
 
 class ReconstructionView {
     readonly authPanel: HTMLElement;
@@ -28,6 +39,9 @@ class ReconstructionView {
     readonly customPrice: HTMLElement;
     readonly recentRuns: HTMLElement;
     readonly refreshRunsButton: HTMLButtonElement;
+    readonly runsPanel: HTMLElement;
+    readonly runList: HTMLElement;
+    readonly runsNote: HTMLElement;
     readonly artifactPanel: HTMLElement;
     readonly artifactTitle: HTMLElement;
     readonly artifactList: HTMLElement;
@@ -154,6 +168,13 @@ class ReconstructionView {
                     <button class="recon-button recon-cancel" type="button" hidden>Cancel</button>
                 </div>
             </section>
+            <section class="recon-runs" aria-label="Các luồng đang chạy" hidden>
+                <div class="recon-section-heading">
+                    <strong>Các luồng đang chạy</strong>
+                    <span class="recon-runs-note"></span>
+                </div>
+                <div class="recon-run-list"></div>
+            </section>
             <section id="recon-create-tab" class="recon-tab-panel" role="tabpanel">
                 <section class="recon-pipeline-picker" aria-labelledby="recon-pipeline-heading">
                     <div class="recon-section-heading">
@@ -240,6 +261,9 @@ class ReconstructionView {
         this.customPrice = this.query('.recon-custom-price');
         this.recentRuns = this.query('.recon-recent-list');
         this.refreshRunsButton = this.query('.recon-refresh-runs');
+        this.runsPanel = this.query('.recon-runs');
+        this.runList = this.query('.recon-run-list');
+        this.runsNote = this.query('.recon-runs-note');
         this.artifactPanel = this.query('.recon-artifacts');
         this.artifactTitle = this.query('.recon-artifact-title');
         this.artifactList = this.query('.recon-artifact-list');
@@ -276,6 +300,41 @@ class ReconstructionView {
         this.recentTabButton.setAttribute('aria-selected', String(!create));
         this.createTabPanel.hidden = !create;
         this.recentTabPanel.hidden = create;
+    }
+
+    renderRuns(runs: Run[], selectedId: string | null, onSelect: (id: string) => void) {
+        this.runList.replaceChildren();
+        for (const run of runs) {
+            const row = document.createElement('button');
+            row.type = 'button';
+            row.className = 'recon-run-row';
+            row.classList.toggle('active', run.id === selectedId);
+            row.setAttribute('aria-pressed', String(run.id === selectedId));
+
+            const label = document.createElement('span');
+            label.className = 'recon-run-label';
+            label.textContent = run.label;
+            const pipeline = document.createElement('span');
+            pipeline.className = 'recon-run-pipeline';
+            pipeline.textContent = run.pipeline === 'splat' ? '3DGS' : 'MESH';
+            const state = document.createElement('span');
+            state.className = 'recon-run-state';
+            state.dataset.state = run.state;
+            state.textContent = RUN_STATE_TEXT[run.state];
+            state.title = run.detail;
+            const percent = document.createElement('span');
+            percent.className = 'recon-run-percent';
+            percent.textContent = run.percent > 0 ? `${Math.round(run.percent)}%` : '';
+
+            row.append(label, pipeline, state, percent);
+            row.addEventListener('click', () => onSelect(run.id));
+            this.runList.appendChild(row);
+        }
+        this.runsPanel.hidden = runs.length === 0;
+    }
+
+    setRunsNote(note: string) {
+        this.runsNote.textContent = note;
     }
 
     showAuth() {

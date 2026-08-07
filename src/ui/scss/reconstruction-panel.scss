@@ -1180,3 +1180,43 @@
         transform: none;
     }
 }
+
+.recon-runs {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.recon-run-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+.recon-run-row {
+    display: grid;
+    grid-template-columns: 1fr auto auto auto;
+    gap: 0.5rem;
+    align-items: center;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid transparent;
+    border-radius: 0.375rem;
+    background: none;
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+
+    &.active {
+        border-color: currentColor;
+    }
+}
+
+.recon-run-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.recon-run-state[data-state='failed'] {
+    opacity: 0.8;
+}

@@ -1,8 +1,12 @@
 import { ReconstructionArtifacts } from './reconstruction-artifacts';
 import { ReconstructionBilling } from './reconstruction-billing';
 import { ReconstructionJob, ReconstructionJobError } from './reconstruction-job';
-import { RecentDataset, ReconstructionPipeline, UploadResponse } from './reconstruction-types';
-import { ReconstructionUpload } from './reconstruction-upload';
+import { folderFingerprint, normalizeObjectName } from './reconstruction-names';
+import type { Run } from './reconstruction-run';
+import { RunStore } from './reconstruction-run-store';
+import { JobStatus, RecentDataset, ReconstructionPipeline, UploadResponse } from './reconstruction-types';
+import { ReconstructionUpload, UploadPaused } from './reconstruction-upload';
+import type { UploadRecord } from './reconstruction-upload-records';
 import {
     IMAGE_EXTENSIONS,
     PIPELINE_KEY,
@@ -12,16 +16,27 @@ import {
 } from './reconstruction-utils';
 import { ReconstructionView } from './reconstruction-view';
 
+/** How often a run nobody is watching re-checks its job. */
+const RUN_POLL_MS = 10_000;
+
 class ReconstructionWorkflow {
     private files: File[] = [];
-    private relativePaths: string[] = [];
+    /** The picked folder as store keys, derived once at pick time. */
+    private named: { name: string; data: File }[] = [];
+    private fingerprint = '';
     private preparedDataset: (Pick<UploadResponse, 'datasetId' | 'quote'> & {
         pipeline: ReconstructionPipeline;
     }) | null = null;
     private pipeline: ReconstructionPipeline = 'splat';
     private cancelled = false;
+    private pendingResume: UploadRecord | null = null;
+    private watchGeneration = 0;
+    private monitor: number | null = null;
+    /** An upload/submit owns the panel controls; a job finishing must not steal them back. */
+    private submitting = false;
     private readonly upload: ReconstructionUpload;
     private readonly job: ReconstructionJob;
+    private readonly runs = new RunStore();
 
     constructor(
         private readonly view: ReconstructionView,
@@ -29,7 +44,7 @@ class ReconstructionWorkflow {
         artifacts: ReconstructionArtifacts
     ) {
         this.upload = new ReconstructionUpload(view);
-        this.job = new ReconstructionJob(view, billing, artifacts, () => this.canStart);
+        this.job = new ReconstructionJob(view, billing, artifacts, () => this.releaseBusy());
 
         const savedPipeline = localStorage.getItem(PIPELINE_KEY);
         if (savedPipeline === 'photogrammetry') this.pipeline = savedPipeline;
@@ -45,9 +60,15 @@ class ReconstructionWorkflow {
             });
         }
 
-        view.folderInput.addEventListener('change', () => this.selectFiles(view.folderInput.files));
-        view.imageInput.addEventListener('change', () => this.selectFiles(view.imageInput.files));
+        const pick = (list: FileList | null) => {
+            this.selectFiles(list).catch((error) => {
+                this.view.setState('Không đọc được thư mục', messageOf(error), { mode: 'failed' });
+            });
+        };
+        view.folderInput.addEventListener('change', () => pick(view.folderInput.files));
+        view.imageInput.addEventListener('change', () => pick(view.imageInput.files));
         view.startButton.addEventListener('click', () => this.reconstruct());
+        this.runs.onChange(() => this.renderRuns());
 
         ['dragenter', 'dragover'].forEach(name => view.dropzone.addEventListener(name, (event) => {
             event.preventDefault();
@@ -60,7 +81,7 @@ class ReconstructionWorkflow {
         view.dropzone.addEventListener('drop', (event) => {
             event.preventDefault();
             event.stopPropagation();
-            this.selectFiles(event.dataTransfer?.files ?? null);
+            pick(event.dataTransfer?.files ?? null);
         });
         view.dropzone.addEventListener('keydown', (event) => {
             if (event.key === 'Enter' || event.key === ' ') view.imageInput.click();
@@ -85,7 +106,9 @@ class ReconstructionWorkflow {
     async useExistingDataset(dataset: RecentDataset) {
         const datasetLabel = dataset.label || dataset.dataset_id;
         this.files = [];
-        this.relativePaths = [];
+        this.named = [];
+        this.fingerprint = '';
+        this.pendingResume = null;
         this.view.folderInput.value = '';
         this.view.imageInput.value = '';
         this.clearPreparedDataset();
@@ -128,6 +151,27 @@ class ReconstructionWorkflow {
         }
     }
 
+    async restoreOpenSessions() {
+        const records = await this.upload.openSessions().catch(() => [] as UploadRecord[]);
+        const known = new Set(this.runs.list().map(run => run.datasetId).filter(Boolean));
+        const uploading = this.submitting ? this.fingerprint : '';
+        for (const record of records) {
+            if (known.has(record.datasetId) || record.fingerprint === uploading) continue;
+            this.runs.add({
+                id: crypto.randomUUID(),
+                state: 'paused',
+                datasetId: record.datasetId,
+                pipeline: record.pipeline,
+                preset: record.preset,
+                runName: record.preset,
+                label: record.label,
+                jobId: null,
+                percent: 0,
+                detail: 'Chọn lại thư mục để tiếp tục.'
+            });
+        }
+    }
+
     async refreshPreparedQuote(): Promise<UploadResponse | null> {
         if (!this.preparedDataset) return null;
         this.preparedDataset.pipeline = this.pipeline;
@@ -152,7 +196,10 @@ class ReconstructionWorkflow {
         this.view.cancelButton.disabled = true;
         this.view.setRetryAvailable(false);
         this.view.checkoutLink.hidden = true;
-        this.upload.cancel();
+        if (this.submitting && this.runs.selected()?.state === 'uploading') {
+            this.upload.pause();
+            return;
+        }
         try {
             const accepted = await this.job.cancel();
             if (!accepted) {
@@ -268,15 +315,22 @@ class ReconstructionWorkflow {
         }
     }
 
-    private selectFiles(list: FileList | null) {
+    private async selectFiles(list: FileList | null) {
         const candidates = Array.from(list ?? []).filter(file => IMAGE_EXTENSIONS.test(file.name));
         this.view.setTab('create');
-        this.clearPreparedDataset();
         this.view.setRetryAvailable(false);
         this.files = candidates;
-        this.relativePaths = candidates.map(file => (
-            (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name
-        ));
+        this.pendingResume = null;
+        this.named = candidates.map((file, index) => ({
+            name: normalizeObjectName(
+                (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name,
+                index),
+            data: file
+        }));
+        this.fingerprint = folderFingerprint(
+            this.named.map(f => ({ name: f.name, size: f.data.size })));
+        this.clearPreparedDataset();
+
         const bytes = candidates.reduce((sum, file) => sum + file.size, 0);
         const size = bytes >= 1024 ** 3 ?
             `${(bytes / 1024 ** 3).toFixed(2)} GB` :
@@ -291,30 +345,192 @@ class ReconstructionWorkflow {
                 'A small image set may produce an unstable model; use at least 20 well-overlapping photos.' :
                 `It will upload, quote the ${this.pipeline === 'splat' ? 'Gaussian Splatting' : 'Photogrammetry'} cost, then start automatically once the balance is sufficient.`,
             { mode: 'idle' });
+
+        const open = await this.upload.openSessions().catch(() => [] as UploadRecord[]);
+        if (this.files !== candidates) return;   // a newer pick landed while we waited
+        this.pendingResume = open.find(record => record.fingerprint === this.fingerprint) ?? null;
+        if (!this.pendingResume) return;
+        this.view.fileSummary.textContent =
+            `${candidates.length.toLocaleString()} ảnh · phiên tải lên ${this.pendingResume.datasetId} đang dở`;
+        this.view.setState('Có thể tiếp tục',
+            'Thư mục này đã có phiên tải lên chưa hoàn tất. Nhấn Bắt đầu để tiếp tục — ảnh đã lên sẽ không gửi lại.',
+            { mode: 'idle' });
     }
 
     private setBusy(busy: boolean) {
         this.view.setBusy(busy, this.canStart);
     }
 
+    /** A watched job reached a terminal state and wants the controls back. */
+    private releaseBusy() {
+        if (!this.submitting) this.setBusy(false);
+    }
+
+    private renderRuns() {
+        this.view.renderRuns(this.runs.list(), this.runs.selected()?.id ?? null,
+            id => this.selectRun(id));
+        const cap = this.runs.slotCap();
+        this.view.setRunsNote(cap === null ? '' : `Tối đa ${cap} job chạy cùng lúc`);
+        this.syncMonitor();
+    }
+
+    /**
+     * Selecting a run moves the progress card
+     */
+    private selectRun(id: string) {
+        if (this.runs.selected()?.id === id) return;
+        this.runs.select(id);
+        const run = this.runs.selected();
+        if (run?.jobId && run.state === 'running') this.watchRun(run);
+    }
+
+    private async watchRun(run: Run) {
+        const generation = ++this.watchGeneration;
+        try {
+            await this.job.attach(run.jobId as string);
+            if (generation !== this.watchGeneration) return;
+            this.runs.update(run.id, { state: 'done', percent: 100, detail: '' });
+        } catch (error) {
+            if (generation !== this.watchGeneration) return;
+            this.runs.update(run.id, { state: 'failed', detail: messageOf(error) });
+            if (this.cancelled || this.job.wasCancelled) return;
+            const jobError = error instanceof ReconstructionJobError ? error : null;
+            this.view.cancelButton.hidden = true;
+            this.view.setRetryAvailable(Boolean(jobError?.retryable));
+            this.view.setState(jobError?.title || 'Reconstruction failed',
+                messageOf(error), { mode: 'failed' });
+        } finally {
+            await this.startWaitingRuns();
+        }
+    }
+
+    private syncMonitor() {
+        const live = this.runs.list().some(run => run.state === 'running');
+        if (live && this.monitor === null) {
+            this.monitor = window.setInterval(() => {
+                // A tick that fails (offline, a 502) is skipped; the next one retries.
+                this.pollUnwatchedRuns().catch((): void => undefined);
+            }, RUN_POLL_MS);
+        } else if (!live && this.monitor !== null) {
+            window.clearInterval(this.monitor);
+            this.monitor = null;
+        }
+    }
+
+    private async pollUnwatchedRuns() {
+        const selectedId = this.runs.selected()?.id ?? null;
+        const pending = this.runs.list().filter(run => (
+            run.state === 'running' && run.jobId !== null && run.id !== selectedId));
+        for (const run of pending) {
+            const response = await fetch(
+                `/api/reconstruction/jobs/${encodeURIComponent(run.jobId as string)}`,
+                { cache: 'no-store' });
+            const { job } = await readJson<{ job: JobStatus }>(response);
+            if (!job.terminal) {
+                this.runs.update(run.id, { detail: job.status });
+                continue;
+            }
+            this.runs.update(run.id, {
+                state: job.status === 'done' ? 'done' : 'failed',
+                percent: job.status === 'done' ? 100 : run.percent,
+                detail: job.status === 'done' ? '' : (job.failure?.message ?? job.status)
+            });
+            await this.startWaitingRuns();
+        }
+    }
+
+    private submitDeps() {
+        return {
+            submit: (run: Run) => this.job.submit(
+                run.datasetId as string, run.pipeline as ReconstructionPipeline, run.runName),
+            takenRunNames: (datasetId: string, pipeline: string) => this.takenRunNames(
+                datasetId, pipeline)
+        };
+    }
+
+    private trackRun(): Run {
+        const label = this.pendingResume?.label ??
+            `SuperSplat ${new Date().toLocaleString('en-US')}`;
+        const run: Run = {
+            id: crypto.randomUUID(),
+            state: 'uploading',
+            datasetId: this.pendingResume?.datasetId ?? this.preparedDataset?.datasetId ?? null,
+            pipeline: this.pipeline,
+            preset: 'standard',
+            runName: 'standard',
+            label,
+            jobId: null,
+            percent: 0,
+            detail: ''
+        };
+        this.runs.add(run);
+        return run;
+    }
+
+    /** Upload (or resume) the picked folder and return the committed dataset id. */
+    private transfer(run: Run): Promise<string> {
+        if (this.pendingResume) {
+            const record = this.pendingResume;
+            this.pendingResume = null;
+            return this.upload.resume(record, this.files);
+        }
+        return this.upload.start(this.named, this.fingerprint, this.pipeline, 'standard', run.label);
+    }
+
+    private async quoteDataset(datasetId: string): Promise<UploadResponse> {
+        const response = await fetch(
+            `/api/reconstruction/datasets/${encodeURIComponent(datasetId)}/quote` +
+            `?pipeline=${encodeURIComponent(this.pipeline)}`,
+            { cache: 'no-store' }
+        );
+        const quote = await readJson<UploadResponse['quote']>(response);
+        const creditsNeeded = Math.max(0, Math.ceil(quote.required - quote.balance));
+        return {
+            state: creditsNeeded === 0 ? 'ready' : 'checkout_required',
+            datasetId,
+            quote,
+            creditsNeeded
+        };
+    }
+
+    private async takenRunNames(datasetId: string, pipeline: string): Promise<string[]> {
+        const response = await fetch(
+            `/api/reconstruction/datasets/${encodeURIComponent(datasetId)}/runs`,
+            { cache: 'no-store' }
+        );
+        const data = await readJson<{ runs: { pipeline: string; run_name: string }[] }>(response);
+        return data.runs.filter(r => r.pipeline === pipeline).map(r => r.run_name);
+    }
+
+    /** A slot freed up, so whatever the cap made wait can go now. */
+    private async startWaitingRuns() {
+        if (!this.runs.list().some(r => r.state === 'waiting-slot')) return;
+        await this.runs.submitReady(this.submitDeps());
+    }
+
     private async reconstruct() {
-        if (!this.canStart) return;
+        if (!this.canStart || this.submitting) return;
+        if (this.billing.concurrentCap !== null) this.runs.seedSlotCap(this.billing.concurrentCap);
         this.cancelled = false;
+        this.submitting = true;
         this.view.setRetryAvailable(false);
         this.view.checkoutLink.hidden = true;
         this.setBusy(true);
         this.view.cancelButton.hidden = false;
+        const run = this.trackRun();
         try {
             let prepared = await this.refreshPreparedQuote();
             if (!prepared) {
-                prepared = await this.upload.run(this.files, this.relativePaths, this.pipeline);
+                const datasetId = await this.transfer(run);
+                prepared = await this.quoteDataset(datasetId);
                 this.preparedDataset = {
-                    datasetId: prepared.datasetId,
+                    datasetId,
                     quote: prepared.quote,
                     pipeline: this.pipeline
                 };
                 this.persistPreparedDataset();
             }
+            this.runs.update(run.id, { state: 'quoting', datasetId: prepared.datasetId });
             this.billing.setBalance(prepared.quote.balance);
             this.view.setState('Quote received',
                 `Needs ${prepared.quote.required.toLocaleString()} credits for ${prepared.quote.billable_gpx.toFixed(2)} billable Gpx.`,
@@ -334,8 +550,39 @@ class ReconstructionWorkflow {
                 return;
             }
 
-            await this.job.run(prepared.datasetId, this.pipeline);
+            await this.runs.submitReady(this.submitDeps());
+            const submitted = this.runs.list().find(r => r.id === run.id);
+            if (submitted?.state === 'waiting-slot') {
+                const cap = this.runs.slotCap();
+                this.view.setState('Đang chờ lượt',
+                    `Gói hiện tại cho phép ${cap ?? 1} job chạy cùng lúc. Luồng này sẽ tự khởi động khi có chỗ trống.`,
+                    { mode: 'indeterminate', center: 'Chờ' });
+                this.setBusy(false);
+                return;
+            }
+            if (!submitted?.jobId) {
+                this.setBusy(false);
+                this.view.cancelButton.hidden = true;
+                this.view.setState('Không gửi được job',
+                    submitted?.detail || 'Máy chủ từ chối job này.', { mode: 'failed' });
+                return;
+            }
+            this.submitting = false;
+            this.setBusy(false);
+            this.runs.select(run.id);
+            this.watchRun(submitted);
         } catch (error) {
+            if (error instanceof UploadPaused) {
+                this.runs.update(run.id, { state: 'paused' });
+                this.view.cancelButton.hidden = true;
+                this.view.cancelButton.disabled = false;
+                this.view.setState('Đã tạm dừng',
+                    'Ảnh đã tải lên vẫn được giữ. Nhấn Bắt đầu để tiếp tục.',
+                    { mode: 'idle', center: 'Dừng' });
+                this.setBusy(false);
+                return;
+            }
+            this.runs.update(run.id, { state: 'failed', detail: messageOf(error) });
             if (this.cancelled || this.job.wasCancelled) return;
             const jobError = error instanceof ReconstructionJobError ? error : null;
             this.view.cancelButton.hidden = true;
@@ -343,6 +590,8 @@ class ReconstructionWorkflow {
             this.view.setState(jobError?.title || 'Reconstruction failed', messageOf(error), { mode: 'failed' });
             this.setBusy(false);
             if (jobError && !jobError.retryable) this.view.startButton.disabled = true;
+        } finally {
+            this.submitting = false;
         }
     }
 }

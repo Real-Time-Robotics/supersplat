@@ -4,6 +4,7 @@ import { ReconstructionView } from './reconstruction-view';
 
 class ReconstructionBilling {
     private balance = 0;
+    private cap: number | null = null;
     private pricingLoaded = false;
     private checkoutPollId = 0;
 
@@ -29,11 +30,17 @@ class ReconstructionBilling {
         this.checkoutPollId++;
     }
 
+    /** The account's concurrent-job cap, as last published by the control plane. */
+    get concurrentCap() {
+        return this.cap;
+    }
+
     async refreshCredits() {
         try {
             const response = await fetch('/api/reconstruction/credits', { cache: 'no-store' });
-            const data = await readJson<{ balance: number }>(response);
+            const data = await readJson<{ balance: number; concurrent?: number }>(response);
             this.setBalance(data.balance);
+            if (typeof data.concurrent === 'number') this.cap = data.concurrent;
             return this.balance;
         } catch {
             this.view.creditValue.textContent = 'offline';
