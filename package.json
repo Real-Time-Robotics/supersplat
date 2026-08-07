@@ -19,6 +19,7 @@
         "build": "rollup -c",
         "watch": "rollup -c -w",
         "serve": "node server.mjs",
+        "test:backend": "node --import ./scripts/ts-resolve.mjs --test \"src/backend/*.test.ts\"",
         "test:ui": "node --import ./scripts/ts-resolve.mjs --test \"src/ui/*.test.ts\"",
         "test:auth-session": "node --test scripts/test-auth-session.mjs",
         "test:gateway-proxy": "node --test scripts/test-gateway-proxy.mjs",
