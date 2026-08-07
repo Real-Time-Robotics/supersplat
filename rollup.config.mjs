@@ -44,7 +44,7 @@ const application = {
     output: {
         dir: 'dist',
         format: 'esm',
-        sourcemap: true
+        sourcemap: BUILD_TYPE !== 'release'
     },
     plugins: [
         copyAndWatch({
@@ -70,7 +70,9 @@ const application = {
             }
         }),
         typescript({
-            tsconfig: './tsconfig.json'
+            tsconfig: './tsconfig.json',
+            sourceMap: BUILD_TYPE !== 'release',
+            inlineSources: BUILD_TYPE !== 'release'
         }),
         resolve(),
         image({ dom: false }),
@@ -103,12 +105,15 @@ const serviceWorker = {
     output: {
         dir: 'dist',
         format: 'esm',
-        sourcemap: true
+        sourcemap: BUILD_TYPE !== 'release'
     },
     plugins: [
         resolve(),
         json(),
-        typescript()
+        typescript({
+            sourceMap: BUILD_TYPE !== 'release',
+            inlineSources: BUILD_TYPE !== 'release'
+        })
         // BUILD_TYPE !== 'debug' && terser()
     ],
     treeshake: 'smallest',

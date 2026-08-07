@@ -11,7 +11,6 @@ const cacheUrls = [
     './index.css',
     './index.html',
     './index.js',
-    './index.js.map',
     './manifest.json',
     './static/icons/logo-192.png',
     './static/icons/logo-512.png',
