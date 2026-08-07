@@ -18,7 +18,7 @@
         "prebuild": "npm run sdk:build",
         "build": "rollup -c",
         "watch": "rollup -c -w",
-        "serve": "node server.mjs",
+        "serve": "node --import ./scripts/ts-resolve.mjs server.mjs",
         "test:backend": "node --import ./scripts/ts-resolve.mjs --test \"src/backend/*.test.ts\"",
         "test:ui": "node --import ./scripts/ts-resolve.mjs --test \"src/ui/*.test.ts\"",
         "test:auth-session": "node --import ./scripts/ts-resolve.mjs --test scripts/test-auth-session.mjs",
@@ -68,7 +68,6 @@
         "typescript": "6.0.3"
     },
     "dependencies": {
-        "express": "^5.2.1",
         "genesis-recon": "file:../reconstruction/sdk/typescript",
         "meshoptimizer": "1.2.0"
     }
