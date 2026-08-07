@@ -1,11 +1,34 @@
 import { ProgressVisual, ReconstructionProgress } from './reconstruction-progress';
-import type { Run, RunState } from './reconstruction-run';
+import { runControls, type Run, type RunAction, type RunState } from './reconstruction-run';
 import {
     JobHeartbeatEvent,
     JobProgressEvent,
     ReconstructionPipeline,
     StageEvent
 } from './reconstruction-types';
+
+type RunHandlers = {
+    onSelect(id: string): void;
+    onAction(id: string, action: RunAction): void;
+    /** Whether this run's picked folder is still in hand, which decides resume vs re-pick. */
+    hasFolder(id: string): boolean;
+};
+
+const RUN_ACTION_UI: Record<RunAction, {
+    label: string; title: string; wide?: boolean; danger?: boolean;
+}> = {
+    pause: { label: '❚❚', title: 'Tạm dừng tải lên' },
+    resume: { label: '▶', title: 'Tiếp tục tải lên' },
+    repick: { label: 'Chọn lại thư mục', title: 'Chọn lại đúng thư mục cũ để tải tiếp', wide: true },
+    cancel: { label: '✕', title: 'Huỷ luồng và xoá ảnh đã tải lên', danger: true },
+    dismiss: { label: '✕', title: 'Bỏ luồng khỏi danh sách', danger: true },
+    open: { label: 'Mở', title: 'Mở model', wide: true },
+    retry: { label: 'Thử lại', title: 'Chạy lại luồng', wide: true }
+};
+
+const runDetail = (run: Run): string => (
+    [run.percent > 0 && run.percent < 100 ? `${Math.round(run.percent)}%` : '', run.detail]
+    .filter(Boolean).join(' · '));
 
 const RUN_STATE_TEXT: Record<RunState, string> = {
     uploading: 'Đang tải lên',
@@ -141,10 +164,13 @@ class ReconstructionView {
                 <p class="recon-purchase-status" role="status"></p>
                 <a class="recon-purchase-checkout" target="reconstruction-checkout" rel="noopener" hidden>Reopen checkout ↗</a>
             </section>
-            <div class="recon-tabs" role="tablist" aria-label="Reconstruction">
-                <button class="recon-tab active" type="button" role="tab" aria-selected="true" aria-controls="recon-create-tab">Create model</button>
-                <button class="recon-tab" type="button" role="tab" aria-selected="false" aria-controls="recon-recent-tab">Recent models</button>
-            </div>
+            <section class="recon-runs" aria-label="Luồng của bạn" hidden>
+                <div class="recon-section-heading">
+                    <strong>Luồng của bạn</strong>
+                    <span class="recon-runs-note"></span>
+                </div>
+                <div class="recon-run-list"></div>
+            </section>
             <section class="recon-shared-progress">
                 <div class="recon-progress-card" data-mode="idle">
                     <div class="recon-progress-ring" role="progressbar" aria-label="Ready">
@@ -170,13 +196,10 @@ class ReconstructionView {
                     <button class="recon-button recon-cancel" type="button" hidden>Cancel</button>
                 </div>
             </section>
-            <section class="recon-runs" aria-label="Các luồng đang chạy" hidden>
-                <div class="recon-section-heading">
-                    <strong>Các luồng đang chạy</strong>
-                    <span class="recon-runs-note"></span>
-                </div>
-                <div class="recon-run-list"></div>
-            </section>
+            <div class="recon-tabs" role="tablist" aria-label="Reconstruction">
+                <button class="recon-tab active" type="button" role="tab" aria-selected="true" aria-controls="recon-create-tab">Create model</button>
+                <button class="recon-tab" type="button" role="tab" aria-selected="false" aria-controls="recon-recent-tab">Recent models</button>
+            </div>
             <section id="recon-create-tab" class="recon-tab-panel" role="tabpanel">
                 <section class="recon-pipeline-picker" aria-labelledby="recon-pipeline-heading">
                     <div class="recon-section-heading">
@@ -310,39 +333,85 @@ class ReconstructionView {
         this.recentTabPanel.hidden = create;
     }
 
-    renderRuns(runs: Run[], selectedId: string | null, onSelect: (id: string) => void) {
+    renderRuns(runs: Run[], selectedId: string | null, cap: number | null,
+        handlers: RunHandlers) {
         this.runList.replaceChildren();
         for (const run of runs) {
-            const row = document.createElement('button');
-            row.type = 'button';
+            const row = document.createElement('div');
             row.className = 'recon-run-row';
             row.classList.toggle('active', run.id === selectedId);
-            row.setAttribute('aria-pressed', String(run.id === selectedId));
 
-            const label = document.createElement('span');
-            label.className = 'recon-run-label';
-            label.textContent = run.label;
-            const pipeline = document.createElement('span');
-            pipeline.className = 'recon-run-pipeline';
-            pipeline.textContent = run.pipeline === 'splat' ? '3DGS' : 'MESH';
+            const select = document.createElement('button');
+            select.type = 'button';
+            select.className = 'recon-run-select';
+            select.setAttribute('aria-pressed', String(run.id === selectedId));
+            select.addEventListener('click', () => handlers.onSelect(run.id));
+
+            const top = document.createElement('span');
+            top.className = 'recon-run-top';
+            const name = document.createElement('span');
+            name.className = 'recon-run-name';
+            name.textContent = run.runName || run.preset;
+            const chip = document.createElement('span');
+            chip.className = 'recon-run-chip';
+            chip.textContent = run.pipeline === 'splat' ? '3DGS' : 'MESH';
+            top.append(name, chip);
+
+            const meta = document.createElement('span');
+            meta.className = 'recon-run-meta';
             const state = document.createElement('span');
             state.className = 'recon-run-state';
             state.dataset.state = run.state;
             state.textContent = RUN_STATE_TEXT[run.state];
-            state.title = run.detail;
-            const percent = document.createElement('span');
-            percent.className = 'recon-run-percent';
-            percent.textContent = run.percent > 0 ? `${Math.round(run.percent)}%` : '';
+            meta.append(state);
+            const detail = runDetail(run);
+            if (detail) {
+                const rest = document.createElement('span');
+                rest.className = 'recon-run-detail';
+                rest.textContent = detail;
+                meta.append(rest);
+            }
 
-            row.append(label, pipeline, state, percent);
-            row.addEventListener('click', () => onSelect(run.id));
+            select.append(top, meta);
+            row.append(select);
+
+            const controls = runControls(run, handlers.hasFolder(run.id));
+            if (controls.length > 0) {
+                const actions = document.createElement('div');
+                actions.className = 'recon-run-actions';
+                for (const action of controls) {
+                    const ui = RUN_ACTION_UI[action];
+                    const button = document.createElement('button');
+                    button.type = 'button';
+                    button.className = `recon-button ${ui.wide ?
+                        'recon-run-text-action' : 'recon-run-action'}`;
+                    if (ui.danger) button.classList.add('recon-run-danger');
+                    button.textContent = ui.label;
+                    button.title = ui.title;
+                    button.setAttribute('aria-label', ui.title);
+                    button.addEventListener('click', () => handlers.onAction(run.id, action));
+                    actions.append(button);
+                }
+                row.append(actions);
+            }
+
+            if (run.percent > 0 && run.percent < 100) {
+                const bar = document.createElement('div');
+                bar.className = 'recon-run-bar';
+                const fill = document.createElement('i');
+                fill.style.width = `${Math.min(100, run.percent)}%`;
+                bar.append(fill);
+                row.append(bar);
+            }
+
             this.runList.appendChild(row);
         }
+        const running = runs.filter(run => run.state === 'running').length;
+        const parked = runs.some(run => run.state === 'waiting-slot');
+        this.runsNote.textContent = parked && cap !== null ?
+            `Gói đăng ký hiện tại chỉ cho phép ${cap} luồng cùng lúc` :
+            running > 0 ? `${running} luồng đang chạy` : '';
         this.runsPanel.hidden = runs.length === 0;
-    }
-
-    setRunsNote(note: string) {
-        this.runsNote.textContent = note;
     }
 
     showAuth() {

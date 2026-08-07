@@ -33,16 +33,16 @@ const refuse = () => deps(async () => {
 /** A store with one job running and one run parked behind the 409 that taught it the cap. */
 const cappedStore = async () => {
     const store = new RunStore();
-    store.add(run('a', { state: 'running', jobId: 'j1' }));
-    store.add(run('b'));
+    store.upsert(run('a', { state: 'running', jobId: 'j1' }));
+    store.upsert(run('b'));
     await store.submitReady(refuse());
     return store;
 };
 
 test('a 409 parks the run and teaches the store the cap', async () => {
     const store = new RunStore();
-    store.add(run('a', { state: 'running', jobId: 'j1' }));
-    store.add(run('b'));
+    store.upsert(run('a', { state: 'running', jobId: 'j1' }));
+    store.upsert(run('b'));
     let submits = 0;
     await store.submitReady(deps(async () => {
         submits++;
@@ -70,7 +70,7 @@ test('a parked run is submitted once a slot frees', async () => {
 
 test('the store never exceeds a cap it already learned', async () => {
     const store = await cappedStore();
-    store.add(run('c'));
+    store.upsert(run('c'));
     let submits = 0;
     await store.submitReady(deps(async () => {
         submits++;
@@ -82,7 +82,7 @@ test('the store never exceeds a cap it already learned', async () => {
 
 test('a repeat run of one pipeline gets a fresh run name', async () => {
     const store = new RunStore();
-    store.add(run('b'));
+    store.upsert(run('b'));
     const names: string[] = [];
     await store.submitReady(deps(
         async (r) => {
@@ -96,8 +96,8 @@ test('a repeat run of one pipeline gets a fresh run name', async () => {
 
 test('two runs submitted before the listing catches up get different names', async () => {
     const store = new RunStore();
-    store.add(run('a'));
-    store.add(run('b'));
+    store.upsert(run('a'));
+    store.upsert(run('b'));
     const names: string[] = [];
     await store.submitReady(deps(async (r) => {
         names.push(r.runName);
@@ -109,8 +109,8 @@ test('two runs submitted before the listing catches up get different names', asy
 
 test('a run still uploading or paused is never submitted', async () => {
     const store = new RunStore();
-    store.add(run('b', { state: 'uploading' }));
-    store.add(run('c', { state: 'paused' }));
+    store.upsert(run('b', { state: 'uploading' }));
+    store.upsert(run('c', { state: 'paused', datasetId: 'ds2' }));
     let submits = 0;
     await store.submitReady(deps(async () => {
         submits++;
@@ -123,10 +123,10 @@ test('a run still uploading or paused is never submitted', async () => {
 
 test('one listing per dataset and pipeline, however many runs are submitted', async () => {
     const store = new RunStore();
-    store.add(run('a'));
-    store.add(run('b'));
-    store.add(run('c', { pipeline: 'photogrammetry' }));
-    store.add(run('d', { datasetId: 'ds2' }));
+    store.upsert(run('a'));
+    store.upsert(run('b'));
+    store.upsert(run('c', { pipeline: 'photogrammetry' }));
+    store.upsert(run('d', { datasetId: 'ds2' }));
     const listed: string[] = [];
     await store.submitReady(deps(
         async r => `j-${r.id}`,
@@ -140,8 +140,8 @@ test('one listing per dataset and pipeline, however many runs are submitted', as
 
 test('a failed submit records the reason and leaves the others alone', async () => {
     const store = new RunStore();
-    store.add(run('a'));
-    store.add(run('b'));
+    store.upsert(run('a'));
+    store.upsert(run('b'));
     await store.submitReady(deps(async (r) => {
         if (r.id === 'a') throw new Error('gateway exploded');
         return 'j2';
@@ -156,11 +156,11 @@ test('a failed submit records the reason and leaves the others alone', async () 
 
 test('a refusal with nothing running locally never latches the cap at zero', async () => {
     const store = new RunStore();
-    store.add(run('a'));
+    store.upsert(run('a'));
     await store.submitReady(refuse());
     assert.equal(store.slotCap(), 1);
 
-    store.add(run('b'));
+    store.upsert(run('b'));
     const submitted: string[] = [];
     await store.submitReady(deps(async (r) => {
         submitted.push(r.id);
@@ -170,9 +170,42 @@ test('a refusal with nothing running locally never latches the cap at zero', asy
     assert.deepEqual(submitted, ['a'], 'a freed slot must still be usable');
 });
 
+test('one upload session never shows up as two runs', () => {
+    const store = new RunStore();
+    store.upsert(run('a', { state: 'uploading' }));
+    store.upsert(run('b', { state: 'paused', detail: 'Chọn lại thư mục để tiếp tục' }));
+
+    assert.equal(store.list().length, 1);
+    assert.equal(store.list()[0].id, 'a', 'the row already on screen keeps its identity');
+    assert.equal(store.list()[0].detail, 'Chọn lại thư mục để tiếp tục');
+});
+
+test('an update that changes nothing does not notify', () => {
+    const store = new RunStore();
+    store.upsert(run('a', { state: 'running', jobId: 'j1', detail: 'queued' }));
+    let notifications = 0;
+    store.onChange(() => notifications++);
+
+    store.update('a', { detail: 'queued' });
+    assert.equal(notifications, 0, 'a poll tick that learned nothing must not rebuild the list');
+    store.update('a', { detail: 'running' });
+    assert.equal(notifications, 1);
+});
+
+test('a second run on the same dataset is its own row, and can be removed', () => {
+    const store = new RunStore();
+    store.upsert(run('a', { state: 'running', jobId: 'j1' }));
+    store.upsert(run('b', { state: 'running', jobId: 'j2' }));
+    assert.equal(store.list().length, 2);
+
+    store.remove('a');
+    assert.deepEqual(store.list().map(r => r.id), ['b']);
+    assert.equal(store.selected()?.id, 'b', 'removing the selected run selects another');
+});
+
 test('overlapping submitReady passes never submit one run twice', async () => {
     const store = new RunStore();
-    store.add(run('a'));
+    store.upsert(run('a'));
     const submitted: string[] = [];
     let release: () => void;
     const gate = new Promise<void>((resolve) => {

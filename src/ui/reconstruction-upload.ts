@@ -1,14 +1,20 @@
 import { Client } from 'genesis-recon';
 
 import { describeFailure } from './reconstruction-failure';
-import { normalizeObjectName } from './reconstruction-names';
 import { Transfer } from './reconstruction-transfer';
 import { UploadProgress } from './reconstruction-types';
 import { UploadRecords, type UploadRecord } from './reconstruction-upload-records';
-import { delay, formatBytes, formatDuration } from './reconstruction-utils';
+import { delay, formatBytes, formatDuration, readJson } from './reconstruction-utils';
 import { ReconstructionView } from './reconstruction-view';
 
 const gp = new Client(`${location.origin}/api/gp`, 'session-cookie');
+
+type Named = { name: string; data: File };
+
+type TransferHooks = {
+    onSession?: (record: UploadRecord) => void;
+    onPercent?: (percent: number) => void;
+};
 
 /** A transfer the user stopped. The session and its stored objects both survive. */
 class UploadPaused extends Error {
@@ -33,14 +39,22 @@ class ReconstructionUpload {
         this.transfer?.pause();
     }
 
+    // Give up on a session.
+    async discard(datasetId: string): Promise<void> {
+        const response = await fetch(
+            `/api/reconstruction/datasets/${encodeURIComponent(datasetId)}`, { method: 'DELETE' });
+        if (!response.ok) await readJson(response);
+        await this.records.remove(datasetId);
+    }
+
     /** Sessions the control plane still holds, narrowed to the ones we can resume. */
     async openSessions(): Promise<UploadRecord[]> {
         const sessions = await gp.listOpenSessions();
         return this.records.reconcile(sessions.map(session => session.dataset_id));
     }
 
-    async start(named: { name: string; data: File }[], fingerprint: string,
-        pipeline: string, preset: string, label: string): Promise<string> {
+    async start(named: Named[], fingerprint: string, pipeline: string, preset: string,
+        label: string, hooks: TransferHooks = {}): Promise<string> {
         const datasetId = await gp.createDatasetSession();
         const record: UploadRecord = {
             datasetId,
@@ -52,31 +66,29 @@ class ReconstructionUpload {
             totalBytes: named.reduce((sum, f) => sum + f.data.size, 0)
         };
         await this.records.put(record);
-        return this.drive(named, record);
+        hooks.onSession?.(record);
+        return this.drive(named, record, hooks);
     }
 
-    resume(record: UploadRecord, files: File[]): Promise<string> {
-        const byName = new Map(files.map((file, index) => [
-            normalizeObjectName((file as File & { webkitRelativePath?: string })
-            .webkitRelativePath || file.name, index),
-            file
-        ]));
+    resume(record: UploadRecord, named: Named[], hooks: TransferHooks = {}): Promise<string> {
+        const byName = new Map(named.map(file => [file.name, file.data]));
         const missing = record.names.filter(name => !byName.has(name));
         if (missing.length > 0) {
             throw new Error(`Thư mục vừa chọn thiếu ${missing.length.toLocaleString()} / ` +
                 `${record.names.length.toLocaleString()} ảnh của phiên tải lên này.`);
         }
-        const named = record.names.map(name => ({ name, data: byName.get(name) }));
-        return this.drive(named, record);
+        return this.drive(record.names.map(name => ({ name, data: byName.get(name) })),
+            record, hooks);
     }
 
-    private async drive(named: { name: string; data: File }[],
-        record: UploadRecord): Promise<string> {
+    private async drive(named: Named[], record: UploadRecord,
+        hooks: TransferHooks): Promise<string> {
         this.transfer = new Transfer(named, record, {
             uploadDataset: (files, opts) => gp.uploadDataset(files, opts),
             sleep: delay
         });
-        const outcome = await this.transfer.run(progress => this.updateStorageProgress(progress));
+        const outcome = await this.transfer.run(
+            progress => this.updateStorageProgress(progress, hooks));
         this.transfer = null;
         if (outcome.state === 'done') {
             await this.records.remove(record.datasetId);
@@ -112,7 +124,7 @@ class ReconstructionUpload {
         return transferred + estimate + suffix;
     }
 
-    private updateStorageProgress(progress: UploadProgress) {
+    private updateStorageProgress(progress: UploadProgress, hooks: TransferHooks) {
         if (progress.phase === 'presign') {
             this.view.setState('Đang chuẩn bị kho lưu trữ',
                 'Đang tạo URL tải lên an toàn.', { mode: 'indeterminate' });
@@ -120,6 +132,7 @@ class ReconstructionUpload {
         }
         if (progress.phase === 'upload') {
             const ratio = progress.total > 0 ? progress.loaded / progress.total : 0;
+            hooks.onPercent?.(ratio * 100);
             const current = progress.file ? ` · ${progress.file}` : '';
             this.view.setState('Đang tải lên kho lưu trữ',
                 this.transferDetail('object-storage-upload', progress.loaded, progress.total, current),
@@ -137,3 +150,4 @@ class ReconstructionUpload {
 }
 
 export { ReconstructionUpload, UploadPaused, gp };
+export type { Named, TransferHooks };
