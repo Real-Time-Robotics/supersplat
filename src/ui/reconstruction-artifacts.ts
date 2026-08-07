@@ -1,7 +1,9 @@
 import { Events } from '../events';
+import { type CacheScope, artifactCache } from './reconstruction-artifact-cache';
 import { ReconstructionDatasets } from './reconstruction-datasets';
 import type { ProgressVisual } from './reconstruction-progress';
 import { Artifact, ArtifactSource, RecentDataset, RecentRun } from './reconstruction-types';
+import { gp } from './reconstruction-upload';
 import {
     OPENABLE_ARTIFACT_EXTENSIONS,
     formatBytes,
@@ -21,9 +23,20 @@ type ArtifactOpenOptions = {
     report?: (title: string, detail: string, visual: ProgressVisual) => void;
 };
 
+const scopeOf = (source: ArtifactSource): CacheScope => (source.type === 'job' ?
+    { kind: 'job', jobId: source.jobId } :
+    {
+        kind: 'run',
+        datasetId: source.run.dataset_id,
+        pipeline: source.run.pipeline,
+        runName: source.run.run_name,
+        created: source.run.created
+    });
+
 class ReconstructionArtifacts {
     private activeDownload: AbortController | null = null;
     private activeDatasetId: string | null = null;
+    private activeScope: CacheScope | null = null;
     private readonly artifactLocations = new Map<string, HTMLElement>();
     private readonly datasets: ReconstructionDatasets;
 
@@ -50,6 +63,8 @@ class ReconstructionArtifacts {
             }
         );
         view.refreshRunsButton.addEventListener('click', () => this.refreshRecentRuns());
+        view.clearCacheButton.addEventListener('click', () => this.clearCache());
+        artifactCache.reconcile().then(() => this.refreshCacheUsage());
     }
 
     cancelDownload() {
@@ -192,11 +207,13 @@ class ReconstructionArtifacts {
     showArtifacts(artifacts: Artifact[], source: ArtifactSource) {
         this.view.setTab('recent');
         this.activeDatasetId = source.type === 'run' ? source.run.dataset_id : null;
+        this.activeScope = scopeOf(source);
         this.view.artifactPanel.hidden = false;
         this.view.artifactTitle.textContent = source.label;
         this.view.artifactList.textContent = '';
         this.artifactLocations.clear();
         for (const artifact of artifacts) {
+            artifact.local = artifactCache.has(this.activeScope, artifact.name);
             const row = document.createElement('div');
             row.className = `recon-artifact${artifact.primary ? ' primary' : ''}`;
             const info = document.createElement('div');
@@ -222,7 +239,12 @@ class ReconstructionArtifacts {
             action.addEventListener('click', () => this.openArtifact(artifact, source));
             const location = document.createElement('span');
             location.className = 'recon-artifact-location';
-            location.setAttribute('role', 'img');
+            location.addEventListener('click', () => this.evictArtifact(artifact));
+            location.addEventListener('keydown', (event) => {
+                if (event.key !== 'Enter' && event.key !== ' ') return;
+                event.preventDefault();
+                this.evictArtifact(artifact);
+            });
             this.artifactLocations.set(artifact.name, location);
             this.updateArtifactLocation(artifact);
             row.append(info, action, location);
@@ -247,24 +269,25 @@ class ReconstructionArtifacts {
         }
         const filename = artifact.name.split('/').pop() || 'genesis-artifact';
         try {
-            let response: Response;
-            if (source.type === 'job') {
-                const route = `/api/reconstruction/jobs/${encodeURIComponent(source.jobId)}/model` +
-                    `?name=${encodeURIComponent(artifact.name)}`;
-                response = await fetch(route, { signal: controller.signal, cache: 'no-store' });
-            } else {
-                const { run } = source;
-                const route = `/api/reconstruction/datasets/${encodeURIComponent(run.dataset_id)}` +
-                    `/runs/${encodeURIComponent(run.pipeline)}/${encodeURIComponent(run.run_name)}/model` +
-                    `?name=${encodeURIComponent(artifact.name)}&created=${encodeURIComponent(run.created)}`;
-                response = await fetch(route, { signal: controller.signal, cache: 'no-store' });
-            }
-            if (!response.ok) await readJson(response);
-            artifact.local = response.headers.get('X-Artifact-Local') === 'true';
+            const scope = scopeOf(source);
+            let response = await artifactCache.read(scope, artifact.name);
+            const cached = response !== null;
+            artifact.local = cached;
             this.updateArtifactLocation(artifact);
+            if (!response) {
+                const url = source.type === 'job' ?
+                    await gp.getArtifactUrl(source.jobId, artifact.name,
+                        { signal: controller.signal }) :
+                    await gp.getRunArtifactUrl(source.run.dataset_id, source.run.pipeline,
+                        source.run.run_name, artifact.name, { signal: controller.signal });
+                response = await fetch(url, { signal: controller.signal });
+                if (!response.ok) throw new Error(`Artifact storage returned ${response.status}`);
+            }
             const blob = await this.readDownload(response, artifact, controller.signal, report);
+            if (!cached) await artifactCache.write(scope, artifact.name, new Response(blob));
             artifact.local = true;
             this.updateArtifactLocation(artifact);
+            await this.refreshCacheUsage();
             if (OPENABLE_ARTIFACT_EXTENSIONS.test(filename)) {
                 report(
                     'Opening artifact',
@@ -352,9 +375,45 @@ class ReconstructionArtifacts {
         location.classList.toggle('local', Boolean(artifact.local));
         location.classList.toggle('remote', !artifact.local);
         location.textContent = artifact.local ? '✓' : '☁';
-        const label = artifact.local ? 'Available in local cache' : 'Stored remotely; download required';
+        const label = artifact.local ?
+            'Đã có trên máy này · bấm để xoá khỏi bộ nhớ đệm' :
+            'Chưa có trên máy này; sẽ tải từ kho lưu trữ';
         location.title = label;
         location.setAttribute('aria-label', label);
+        location.setAttribute('role', artifact.local ? 'button' : 'img');
+        if (artifact.local) location.tabIndex = 0;
+        else location.removeAttribute('tabindex');
+    }
+
+    private async evictArtifact(artifact: Artifact) {
+        if (!this.activeScope || !artifact.local) return;
+        await artifactCache.remove(this.activeScope, artifact.name);
+        artifact.local = false;
+        this.updateArtifactLocation(artifact);
+        await this.refreshCacheUsage();
+    }
+
+    async refreshCacheUsage() {
+        const { bytes, budget } = await artifactCache.usage();
+        const label = this.view.cacheUsageLabel;
+        if (!label) return;
+        label.textContent = `Bộ nhớ đệm: ${formatBytes(bytes)} / ${formatBytes(budget)}`;
+        this.view.clearCacheButton.disabled = bytes === 0;
+    }
+
+    async clearCache() {
+        await artifactCache.clear();
+        for (const location of this.artifactLocations.values()) {
+            location.classList.remove('local');
+            location.classList.add('remote');
+            location.textContent = '☁';
+            location.setAttribute('role', 'img');
+            location.removeAttribute('tabindex');
+            const label = 'Chưa có trên máy này; sẽ tải từ kho lưu trữ';
+            location.title = label;
+            location.setAttribute('aria-label', label);
+        }
+        await this.refreshCacheUsage();
     }
 
     private async readDownload(
