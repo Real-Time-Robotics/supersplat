@@ -1,7 +1,7 @@
-import { ReconstructionArtifacts } from './reconstruction-artifacts';
-import { ReconstructionBilling } from './reconstruction-billing';
+import type { ReconstructionArtifacts } from './reconstruction-artifacts';
+import type { ReconstructionBilling } from './reconstruction-billing';
 import type { ProgressVisual } from './reconstruction-progress';
-import {
+import type {
     Artifact,
     ArtifactSource,
     JobArtifactAvailableEvent,
@@ -20,7 +20,7 @@ import {
     delay,
     readJson
 } from './reconstruction-utils';
-import { ReconstructionView } from './reconstruction-view';
+import type { ReconstructionView } from './reconstruction-view';
 
 // What a queued job's card says
 const queuedState = (gpu: JobGpu | null | undefined): [string, string, ProgressVisual] => {
@@ -43,6 +43,11 @@ const queuedState = (gpu: JobGpu | null | undefined): [string, string, ProgressV
                 { mode: 'indeterminate' }];
     }
 };
+
+/**
+ * How a watch ended. `detached` means the card changed hands while the job was still running
+ */
+type WatchOutcome = 'done' | 'detached';
 
 class ReconstructionJobError extends Error {
     constructor(
@@ -201,7 +206,7 @@ class ReconstructionJob {
     /**
      * Watch a job that was submitted.
      */
-    async attach(jobId: string) {
+    attach(jobId: string): Promise<WatchOutcome> {
         const generation = ++this.watchGeneration;
         this.cancelled = false;
         this.lastStage = null;
@@ -225,12 +230,17 @@ class ReconstructionJob {
 
         this.activeJobId = jobId;
         this.followEvents(jobId);
-        await this.waitForJob(jobId, generation);
+        return this.waitForJob(jobId, generation);
     }
 
     /** The job currently writing to the shared card, if any. */
     get watching(): string | null {
         return this.activeJobId;
+    }
+
+    /** Every await hands control back, and `detach` can land in any of those gaps. */
+    private stillWatching(generation: number): boolean {
+        return generation === this.watchGeneration;
     }
 
     /**
@@ -367,12 +377,13 @@ class ReconstructionJob {
         this.applySnapshot(job);
     }
 
-    private async waitForJob(jobId: string, generation: number) {
+    private async waitForJob(jobId: string, generation: number): Promise<WatchOutcome> {
         let transientNotFound = 0;
         let artifacts: Artifact[] = [];
         for (;;) {
-            if (generation !== this.watchGeneration) return;
+            if (!this.stillWatching(generation)) return 'detached';
             const response = await fetch(`/api/reconstruction/jobs/${encodeURIComponent(jobId)}`, { cache: 'no-store' });
+            if (!this.stillWatching(generation)) return 'detached';
             if (response.status === 404 && transientNotFound < JOB_NOT_FOUND_GRACE) {
                 transientNotFound++;
                 this.view.progress.showNotice('Syncing final status and artifacts…');
@@ -405,10 +416,12 @@ class ReconstructionJob {
             await delay(this.cancelled ? 7500 : 2500);
         }
 
+        if (!this.stillWatching(generation)) return 'detached';
         if (this.primaryOpenPromise) await this.primaryOpenPromise;
         this.view.openPrimaryButton.hidden = true;
         await this.billing.refreshCredits();
         await this.artifacts.refreshRecentRuns();
+        if (!this.stillWatching(generation)) return 'detached';
         if (!artifacts.length) throw new Error('The job finished without any downloadable artifacts.');
         const source: ArtifactSource = {
             type: 'job',
@@ -424,6 +437,7 @@ class ReconstructionJob {
                 `${artifacts.length} artifacts are available${primary ? ` · ${primary.name} is recommended` : ''}.`,
                 { mode: 'done' });
         }
+        return 'done';
     }
 
     private applySnapshot(job: JobStatus) {
@@ -563,5 +577,6 @@ class ReconstructionJob {
 
 export {
     ReconstructionJob,
-    ReconstructionJobError
+    ReconstructionJobError,
+    type WatchOutcome
 };

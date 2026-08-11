@@ -764,8 +764,9 @@ class ReconstructionWorkflow {
     private async watchRun(run: Run) {
         const generation = ++this.watchGeneration;
         try {
-            await this.job.attach(run.jobId as string);
+            const outcome = await this.job.attach(run.jobId as string);
             if (generation !== this.watchGeneration) return;
+            if (outcome === 'detached') return;
             this.runs.settle(run.id, { state: 'done', percent: 100, detail: '' });
         } catch (error) {
             if (generation !== this.watchGeneration) return;
