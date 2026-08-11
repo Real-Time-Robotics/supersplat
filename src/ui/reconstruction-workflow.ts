@@ -1,6 +1,7 @@
 import { Events } from '../events';
 import { ReconstructionArtifacts } from './reconstruction-artifacts';
 import { ReconstructionBilling } from './reconstruction-billing';
+import { estimateTotalPixels, shortfallNote } from './reconstruction-estimate';
 import { ReconstructionJob, ReconstructionJobError } from './reconstruction-job';
 import { folderFingerprint, normalizeObjectName } from './reconstruction-names';
 import type { ProgressVisual } from './reconstruction-progress';
@@ -218,6 +219,11 @@ class ReconstructionWorkflow {
         if (this.runs.selected()?.id === run.id) this.view.setState(title, detail, visual);
     }
 
+    /** The same, for the run being composed: dropped once a real run owns the card. */
+    private composerCard(title: string, detail: string, visual: ProgressVisual) {
+        if (this.runs.selected() === null) this.view.setState(title, detail, visual);
+    }
+
     /**
      * Settle a run that ended because it was cancelled, and say whether it did.
      */
@@ -342,6 +348,7 @@ class ReconstructionWorkflow {
                 `${this.files.length.toLocaleString()} selected images will be processed with ${pipeline === 'splat' ? 'Gaussian Splatting' : 'Photogrammetry'}.`,
                 { mode: 'idle' }
             );
+            this.warnIfShort(this.files);   // the two pipelines do not cost the same
         }
     }
 
@@ -380,7 +387,10 @@ class ReconstructionWorkflow {
         if (this.files !== candidates) return;   // a newer pick landed while we waited
         const resume = open.find(record => record.fingerprint === this.fingerprint) ?? null;
         this.pendingResume = resume;
-        if (!resume) return;
+        if (!resume) {
+            this.warnIfShort(candidates);
+            return;
+        }
         this.view.fileSummary.textContent =
             `${candidates.length.toLocaleString()} ảnh · phiên tải lên ${resume.datasetId} đang dở`;
         this.view.setState('Có thể tiếp tục',
@@ -398,6 +408,32 @@ class ReconstructionWorkflow {
 
     private setBusy(busy: boolean) {
         this.view.setBusy(busy, this.canStart);
+    }
+
+    /**
+     * Warn when the balance looks short of what this folder will cost, before the upload
+     */
+    private async warnIfShort(files: File[]) {
+        if (this.runs.selected() !== null) return;   // a re-pick belongs to its run
+        try {
+            const pixels = await estimateTotalPixels(files);
+            if (this.files !== files) return;        // a newer pick landed while we decoded
+            const response = await fetch('/api/reconstruction/estimate', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    nImages: files.length,
+                    totalPixels: pixels ?? undefined,
+                    pipeline: this.pipeline
+                })
+            });
+            const body = await readJson<{ required: number; balance: number }>(response);
+            if (this.files !== files) return;
+            this.billing.setBalance(body.balance);
+            const note = shortfallNote(body.required, body.balance, pixels !== null);
+            if (note) this.composerCard('Có thể thiếu credit', note, { mode: 'idle', center: 'Credit' });
+        } catch {
+        }
     }
 
     /**

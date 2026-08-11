@@ -240,6 +240,16 @@ const reconRoute = async (request: Request, env: Env, pathname: string,
     if (head === 'credits' && method === 'GET') return json(await gp.getCreditBalance());
     if (head === 'pricing' && method === 'GET') return json(await gp.getPricingCatalog());
 
+    if (head === 'estimate' && method === 'POST') {
+        const body = await bodyOf(request);
+        const nImages = Number(body.nImages);
+        if (!Number.isInteger(nImages) || nImages < 1) {
+            return json({ error: 'nImages phải là số ảnh lớn hơn 0.' }, 400);
+        }
+        const totalPixels = body.totalPixels == null ? undefined : Number(body.totalPixels);
+        return json(await gp.estimate(nImages, pipelineFor(body.pipeline), { totalPixels }));
+    }
+
     if (head === 'checkout' && method === 'POST') {
         const body = await bodyOf(request);
         const packCredits = body.packCredits == null ? undefined : Number(body.packCredits);
