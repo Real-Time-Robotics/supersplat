@@ -165,9 +165,7 @@ class ReconstructionJob {
     constructor(
         private readonly view: ReconstructionView,
         private readonly billing: ReconstructionBilling,
-        private readonly artifacts: ReconstructionArtifacts,
-        /** Hand the panel controls back, unless another run is mid-upload. */
-        private readonly releaseControls: () => void
+        private readonly artifacts: ReconstructionArtifacts
     ) {
         this.view.openPrimaryButton.addEventListener('click', () => this.togglePrimaryOpen());
     }
@@ -223,7 +221,7 @@ class ReconstructionJob {
         this.view.cancelButton.disabled = false;
         this.view.cancelButton.hidden = false;
         this.view.setWorkerStatus(null);
-        this.view.setRetryAvailable(false);
+        this.view.resetStartLabel();
 
         this.activeJobId = jobId;
         this.followEvents(jobId);
@@ -244,7 +242,7 @@ class ReconstructionJob {
         this.activeEvents = null;
         this.activeJobId = null;
         this.view.setWorkerStatus(null);
-        this.view.setRetryAvailable(false);
+        this.view.resetStartLabel();
         this.view.cancelButton.hidden = true;
         this.view.openPrimaryButton.hidden = true;
     }
@@ -264,7 +262,7 @@ class ReconstructionJob {
         this.activeEvents?.close();
         this.activeEvents = null;
         this.view.setWorkerStatus(null);
-        this.view.setRetryAvailable(false);
+        this.view.resetStartLabel();
         return true;
     }
 
@@ -425,7 +423,6 @@ class ReconstructionJob {
             this.view.setState('Reconstruction complete · choose an artifact',
                 `${artifacts.length} artifacts are available${primary ? ` · ${primary.name} is recommended` : ''}.`,
                 { mode: 'done' });
-            this.releaseControls();
         }
     }
 

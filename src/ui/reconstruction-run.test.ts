@@ -4,7 +4,8 @@ import { test } from 'node:test';
 import { runCard, runControls, type Run, type RunState } from './reconstruction-run.ts';
 
 const STATES: RunState[] = [
-    'uploading', 'paused', 'quoting', 'waiting-slot', 'running', 'done', 'cancelled', 'failed'
+    'queued', 'uploading', 'paused', 'quoting', 'waiting-slot', 'running', 'done', 'cancelled',
+    'failed'
 ];
 
 const run = (state: RunState): Run => ({

@@ -3,6 +3,7 @@ import { ReconstructionArtifacts } from './reconstruction-artifacts';
 import { ReconstructionBilling } from './reconstruction-billing';
 import { ReconstructionJob, ReconstructionJobError } from './reconstruction-job';
 import { folderFingerprint, normalizeObjectName } from './reconstruction-names';
+import type { ProgressVisual } from './reconstruction-progress';
 import { runCard, type Run, type RunAction } from './reconstruction-run';
 import { RunStore } from './reconstruction-run-store';
 import {
@@ -44,9 +45,11 @@ class ReconstructionWorkflow {
     private pendingResume: UploadRecord | null = null;
     private watchGeneration = 0;
     private monitor: number | null = null;
-    /** An upload/submit owns the panel controls; a job finishing must not steal them back. */
+    /** Whether the single uploader is taken. A run started while it is parks instead. */
     private submitting = false;
     private readonly picked = new Map<string, PickedFolder>();
+    /** Runs whose images are being deleted, so their transfer ending is not a user pause. */
+    private readonly discarding = new Set<string>();
     private readonly upload: ReconstructionUpload;
     private readonly job: ReconstructionJob;
     private readonly runs = new RunStore();
@@ -57,8 +60,8 @@ class ReconstructionWorkflow {
         private readonly billing: ReconstructionBilling,
         private readonly artifacts: ReconstructionArtifacts
     ) {
-        this.upload = new ReconstructionUpload(view);
-        this.job = new ReconstructionJob(view, billing, artifacts, () => this.releaseBusy());
+        this.upload = new ReconstructionUpload();
+        this.job = new ReconstructionJob(view, billing, artifacts);
 
         const savedPipeline = localStorage.getItem(PIPELINE_KEY);
         if (savedPipeline === 'photogrammetry') this.pipeline = savedPipeline;
@@ -82,9 +85,7 @@ class ReconstructionWorkflow {
         view.folderInput.addEventListener('change', () => pick(view.folderInput.files));
         view.imageInput.addEventListener('change', () => pick(view.imageInput.files));
         view.startButton.addEventListener('click', () => this.reconstruct());
-        for (const button of view.newRunButtons) {
-            button.addEventListener('click', () => this.newRun());
-        }
+        view.newRunButton.addEventListener('click', () => this.newRun());
         this.runs.onChange(() => this.renderRuns());
 
         ['dragenter', 'dragover'].forEach(name => view.dropzone.addEventListener(name, (event) => {
@@ -130,7 +131,7 @@ class ReconstructionWorkflow {
         this.view.imageInput.value = '';
         this.clearPreparedDataset();
         this.view.setTab('create');
-        this.view.setRetryAvailable(false);
+        this.view.resetStartLabel();
         this.view.checkoutLink.hidden = true;
         this.view.fileSummary.textContent =
             `${datasetLabel} · ${dataset.image_count.toLocaleString()} existing images`;
@@ -211,23 +212,29 @@ class ReconstructionWorkflow {
     }
 
     /**
+     * Paint the shared progress card on this run's behalf.
+     */
+    private card(run: Run, title: string, detail: string, visual: ProgressVisual) {
+        if (this.runs.selected()?.id === run.id) this.view.setState(title, detail, visual);
+    }
+
+    /**
      * Settle a run that ended because it was cancelled, and say whether it did.
      */
-    private settleCancelled(error: unknown, runId: string | null): boolean {
+    private settleCancelled(error: unknown, run: Run): boolean {
         const code = error instanceof ReconstructionJobError ? error.code : '';
         if (code !== 'cancelled_by_user' && !this.cancelled) return false;
-        if (runId) this.runs.settle(runId, { state: 'cancelled', percent: 0, detail: '' });
-        this.view.setState('Đã huỷ luồng',
+        this.runs.settle(run.id, { state: 'cancelled', percent: 0, detail: '' });
+        this.card(run, 'Đã huỷ luồng',
             'Máy chủ xác nhận job đã dừng. Ảnh đã tải lên vẫn còn trong kho lưu trữ.',
             { mode: 'idle', center: 'Huỷ' });
-        this.setBusy(false);
         return true;
     }
 
     /** Stop the job the progress card is following.*/
     async cancelJob() {
         this.view.cancelButton.disabled = true;
-        this.view.setRetryAvailable(false);
+        this.view.resetStartLabel();
         this.view.checkoutLink.hidden = true;
         try {
             const accepted = await this.job.cancel();
@@ -238,7 +245,6 @@ class ReconstructionWorkflow {
             this.cancelled = true;
             this.billing.cancelPolling();
             this.view.cancelButton.hidden = true;
-            this.setBusy(false);
         } catch (error) {
             this.cancelled = false;
             this.view.cancelButton.disabled = false;
@@ -311,7 +317,7 @@ class ReconstructionWorkflow {
         this.pipeline = pipeline;
         localStorage.setItem(PIPELINE_KEY, pipeline);
         this.view.setPipeline(pipeline);
-        this.view.setRetryAvailable(false);
+        this.view.resetStartLabel();
 
         if (this.preparedDataset) {
             this.view.setBusy(true, false);
@@ -342,7 +348,7 @@ class ReconstructionWorkflow {
     private async selectFiles(list: FileList | null) {
         const candidates = Array.from(list ?? []).filter(file => IMAGE_EXTENSIONS.test(file.name));
         this.view.setTab('create');
-        this.view.setRetryAvailable(false);
+        this.view.resetStartLabel();
         this.files = candidates;
         this.pendingResume = null;
         this.named = candidates.map((file, index) => ({
@@ -394,9 +400,19 @@ class ReconstructionWorkflow {
         this.view.setBusy(busy, this.canStart);
     }
 
-    /** A watched job reached a terminal state and wants the controls back. */
-    private releaseBusy() {
-        if (!this.submitting) this.setBusy(false);
+    /**
+     * Hand the picked folder over to the run that now owns it, so the pickers cannot offer
+     * the same images to a second run.
+     */
+    private releaseComposeFolder() {
+        this.files = [];
+        this.named = [];
+        this.fingerprint = '';
+        this.pendingResume = null;
+        this.view.folderInput.value = '';
+        this.view.imageInput.value = '';
+        this.view.fileSummary.textContent = 'No images selected';
+        this.view.startButton.disabled = !this.canStart;
     }
 
     private renderRuns() {
@@ -429,6 +445,8 @@ class ReconstructionWorkflow {
         const run = this.runs.selected();
         this.view.showCompose(run);
         if (!run) {
+            // The card belongs to the composer now.
+            this.job.detach();
             this.view.setState('Ready',
                 'Chọn một bộ ảnh chụp quanh vật thể hoặc không gian.', { mode: 'idle' });
             return;
@@ -470,6 +488,7 @@ class ReconstructionWorkflow {
             case 'dismiss':
                 this.picked.delete(id);
                 this.runs.remove(id);
+                this.showSelected();
                 return;
             case 'open':
                 await this.openRun(run);
@@ -477,20 +496,33 @@ class ReconstructionWorkflow {
     }
 
     private async discardRun(run: Run) {
+        const name = run.runName || run.preset;
+        const stored = Boolean(run.datasetId);
         const answer = await this.events.invoke('showPopup', {
             type: 'yesno',
             header: 'Huỷ luồng này?',
-            message: `Huỷ “${run.runName || run.preset}” và xoá những ảnh đã tải lên?`,
+            message: stored ? `Huỷ “${name}” và xoá những ảnh đã tải lên?` : `Huỷ “${name}”?`,
             selectable: true,
-            warning: { text: 'Ảnh đã tải lên trong phiên này sẽ bị xoá khỏi kho lưu trữ.' }
+            warning: stored ?
+                { text: 'Ảnh đã tải lên trong phiên này sẽ bị xoá khỏi kho lưu trữ.' } :
+                undefined
         }) as { action?: string } | undefined;
         if (answer?.action !== 'yes') return;
 
-        if (run.state === 'uploading') this.upload.pause();
-        if (run.datasetId) await this.upload.discard(run.datasetId);
+        this.discarding.add(run.id);
+        try {
+            if (run.state === 'uploading') this.upload.pause();
+            if (run.datasetId) await this.upload.discard(run.datasetId);
+        } finally {
+            this.discarding.delete(run.id);
+        }
         this.picked.delete(run.id);
         this.runs.remove(run.id);
         if (run.datasetId) this.handleDatasetDeleted(run.datasetId);
+        this.showSelected();
+        this.view.progress.showNotice(stored ?
+            `Đã huỷ “${name}”. Ảnh của luồng này đã bị xoá khỏi kho lưu trữ.` :
+            `Đã huỷ “${name}”.`, 8000);
         await this.artifacts.refreshRecentRuns();
     }
 
@@ -559,13 +591,14 @@ class ReconstructionWorkflow {
 
     private trackRun(): Run {
         const resuming = this.pendingResume;
-        const folder = (!resuming && this.preparedDataset) || this.named.length === 0 ?
+        const folder = this.named.length === 0 ?
             null :
             { named: this.named, fingerprint: this.fingerprint, record: resuming };
         const run = this.runs.upsert({
             id: crypto.randomUUID(),
             state: folder ? 'uploading' : 'quoting',
-            datasetId: resuming?.datasetId ?? this.preparedDataset?.datasetId ?? null,
+            datasetId: resuming?.datasetId ??
+                (folder ? null : this.preparedDataset?.datasetId ?? null),
             pipeline: this.pipeline,
             preset: 'standard',
             runName: 'standard',
@@ -593,7 +626,10 @@ class ReconstructionWorkflow {
             },
             // Rounded, so the list is rebuilt at most once per percent rather than per chunk.
             onPercent: (percent: number) => this.runs.update(
-                run.id, { percent: Math.round(percent) })
+                run.id, { percent: Math.round(percent) }),
+            onCard: (title: string, detail: string, visual: ProgressVisual) => {
+                this.card(run, title, detail, visual);
+            }
         };
         return folder.record ?
             this.upload.resume(folder.record, folder.named, hooks) :
@@ -629,23 +665,36 @@ class ReconstructionWorkflow {
     }
 
     private reconstruct() {
-        if (!this.canStart || this.submitting) return;
-        this.startRun(this.trackRun()).catch((error) => {
-            this.view.setState('Reconstruction failed', messageOf(error), { mode: 'failed' });
+        if (!this.canStart) return;
+        const run = this.trackRun();
+        this.releaseComposeFolder();
+        this.startRun(run).catch((error) => {
+            this.card(run, 'Reconstruction failed', messageOf(error), { mode: 'failed' });
+        });
+    }
+
+    /** The uploader is free again, so the run that has been waiting longest can have it. */
+    private startQueuedRun() {
+        const next = this.runs.list().find(run => run.state === 'queued');
+        if (!next) return;
+        this.startRun(next).catch((error) => {
+            this.view.progress.showNotice(messageOf(error), 8000);
         });
     }
 
     private async startRun(run: Run) {
-        if (this.submitting) return;
+        if (this.submitting) {
+            this.runs.update(run.id, { state: 'queued', detail: '' });
+            this.selectRun(run.id);
+            return;
+        }
         if (this.billing.concurrentCap !== null) this.runs.seedSlotCap(this.billing.concurrentCap);
         this.cancelled = false;
         this.submitting = true;
         const transferring = this.picked.has(run.id);
         this.runs.select(run.id);
         this.runs.update(run.id, { state: transferring ? 'uploading' : 'quoting', detail: '' });
-        this.view.setRetryAvailable(false);
         this.view.checkoutLink.hidden = true;
-        this.setBusy(true);
         try {
             const datasetId = transferring ?
                 await this.transfer(run) :
@@ -653,15 +702,9 @@ class ReconstructionWorkflow {
             if (!datasetId) throw new Error('Không có dataset nào để chạy.');
             const prepared = await this.quoteDataset(datasetId);
             this.picked.delete(run.id);
-            this.preparedDataset = {
-                datasetId,
-                quote: prepared.quote,
-                pipeline: this.pipeline
-            };
-            this.persistPreparedDataset();
             this.runs.update(run.id, { state: 'quoting', datasetId });
             this.billing.setBalance(prepared.quote.balance);
-            this.view.setState('Quote received',
+            this.card(run, 'Quote received',
                 `Needs ${prepared.quote.required.toLocaleString()} credits for ${prepared.quote.billable_gpx.toFixed(2)} billable Gpx.`,
                 { mode: 'done', center: 'Ready' });
 
@@ -671,10 +714,13 @@ class ReconstructionWorkflow {
                     Math.ceil(prepared.quote.required - prepared.quote.balance)
                 );
                 await this.billing.showCreditShortfall(creditsNeeded);
-                this.view.setState('Insufficient credits',
-                    `The dataset is already on R2 and needs ${prepared.quote.required.toLocaleString()} credits. The current balance is ${prepared.quote.balance.toLocaleString()}, so ${creditsNeeded.toLocaleString()} more are needed. Buy credits and press Start again; the images will not be uploaded twice.`,
+                this.runs.update(run.id, {
+                    state: 'failed',
+                    detail: `Thiếu ${creditsNeeded.toLocaleString()} credit`
+                });
+                this.card(run, 'Insufficient credits',
+                    `This run needs ${prepared.quote.required.toLocaleString()} credits and the balance is ${prepared.quote.balance.toLocaleString()}, so ${creditsNeeded.toLocaleString()} more are needed. Buy credits, then press “Thử lại” on the run; the images will not be uploaded twice.`,
                     { mode: 'idle', center: 'Credit' });
-                this.setBusy(false);
                 return;
             }
 
@@ -682,40 +728,36 @@ class ReconstructionWorkflow {
             const submitted = this.runs.list().find(r => r.id === run.id);
             if (submitted?.state === 'waiting-slot') {
                 const cap = this.runs.slotCap();
-                this.view.setState('Đang chờ lượt',
+                this.card(run, 'Đang chờ lượt',
                     `Gói đăng ký hiện tại chỉ cho phép ${cap ?? 1} luồng cùng lúc. Luồng này sẽ tự khởi động khi có chỗ trống.`,
                     { mode: 'indeterminate', center: 'Chờ' });
-                this.setBusy(false);
                 return;
             }
             if (!submitted?.jobId) {
-                this.setBusy(false);
-                this.view.setState('Không gửi được job',
+                this.card(run, 'Không gửi được job',
                     submitted?.detail || 'Máy chủ từ chối job này.', { mode: 'failed' });
                 return;
             }
             this.submitting = false;
-            this.setBusy(false);
             this.watchRun(submitted);
         } catch (error) {
             const alive = this.runs.list().some(r => r.id === run.id);
             if (error instanceof UploadPaused) {
-                if (alive) this.runs.update(run.id, { state: 'paused' });
-                this.view.setState('Đã tạm dừng',
+                if (!alive || this.discarding.has(run.id)) return;
+                this.runs.update(run.id, { state: 'paused' });
+                this.card(run, 'Đã tạm dừng',
                     'Ảnh đã tải lên vẫn được giữ. Nhấn ▶ trên luồng để tiếp tục.',
                     { mode: 'idle', center: 'Dừng' });
-                this.setBusy(false);
                 return;
             }
-            if (this.settleCancelled(error, alive ? run.id : null)) return;
+            if (this.settleCancelled(error, run)) return;
             if (alive) this.runs.update(run.id, { state: 'failed', detail: messageOf(error) });
             const jobError = error instanceof ReconstructionJobError ? error : null;
-            this.view.setRetryAvailable(Boolean(jobError?.retryable));
-            this.view.setState(jobError?.title || 'Reconstruction failed', messageOf(error), { mode: 'failed' });
-            this.setBusy(false);
-            if (jobError && !jobError.retryable) this.view.startButton.disabled = true;
+            this.card(run, jobError?.title || 'Reconstruction failed', messageOf(error),
+                { mode: 'failed' });
         } finally {
             this.submitting = false;
+            this.startQueuedRun();
         }
     }
 
@@ -727,15 +769,14 @@ class ReconstructionWorkflow {
             this.runs.settle(run.id, { state: 'done', percent: 100, detail: '' });
         } catch (error) {
             if (generation !== this.watchGeneration) return;
-            if (this.settleCancelled(error, run.id)) return;
+            if (this.settleCancelled(error, run)) return;
             const jobError = error instanceof ReconstructionJobError ? error : null;
             // Only the server calling the job terminal spends the identity; a stream that
             // merely dropped leaves the job alive, and a retry must replay into it.
             const patch = { state: 'failed' as const, detail: messageOf(error) };
             if (jobError) this.runs.settle(run.id, patch);
             else this.runs.update(run.id, patch);
-            this.view.setRetryAvailable(Boolean(jobError?.retryable));
-            this.view.setState(jobError?.title || 'Reconstruction failed',
+            this.card(run, jobError?.title || 'Reconstruction failed',
                 messageOf(error), { mode: 'failed' });
         } finally {
             await this.startWaitingRuns();

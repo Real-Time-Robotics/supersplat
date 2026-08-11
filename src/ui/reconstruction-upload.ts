@@ -1,11 +1,11 @@
 import { Client } from 'genesis-recon';
 
 import { describeFailure } from './reconstruction-failure';
+import type { ProgressVisual } from './reconstruction-progress';
 import { Transfer } from './reconstruction-transfer';
 import { UploadProgress } from './reconstruction-types';
 import { UploadRecords, type UploadRecord } from './reconstruction-upload-records';
 import { delay, formatBytes, formatDuration, readJson } from './reconstruction-utils';
-import { ReconstructionView } from './reconstruction-view';
 
 const gp = new Client(`${location.origin}/api/gp`, 'session-cookie');
 
@@ -14,6 +14,10 @@ type Named = { name: string; data: File };
 type TransferHooks = {
     onSession?: (record: UploadRecord) => void;
     onPercent?: (percent: number) => void;
+    /**
+     * Offer the shared progress card
+     */
+    onCard?: (title: string, detail: string, visual: ProgressVisual) => void;
 };
 
 /** A transfer the user stopped. The session and its stored objects both survive. */
@@ -25,15 +29,10 @@ class UploadPaused extends Error {
 }
 
 class ReconstructionUpload {
-    private readonly view: ReconstructionView;
     private readonly records = new UploadRecords();
     private transfer: Transfer | null = null;
     private transferKey = '';
     private transferSamples: { time: number; loaded: number }[] = [];
-
-    constructor(view: ReconstructionView) {
-        this.view = view;
-    }
 
     pause() {
         this.transfer?.pause();
@@ -96,7 +95,7 @@ class ReconstructionUpload {
         }
         if (outcome.state === 'paused') throw new UploadPaused(record.datasetId);
         const described = describeFailure(outcome.error);
-        this.view.setState(described.title, described.detail, { mode: 'failed' });
+        hooks.onCard?.(described.title, described.detail, { mode: 'failed' });
         throw outcome.error;
     }
 
@@ -126,7 +125,7 @@ class ReconstructionUpload {
 
     private updateStorageProgress(progress: UploadProgress, hooks: TransferHooks) {
         if (progress.phase === 'presign') {
-            this.view.setState('Đang chuẩn bị kho lưu trữ',
+            hooks.onCard?.('Đang chuẩn bị kho lưu trữ',
                 'Đang tạo URL tải lên an toàn.', { mode: 'indeterminate' });
             return;
         }
@@ -134,17 +133,17 @@ class ReconstructionUpload {
             const ratio = progress.total > 0 ? progress.loaded / progress.total : 0;
             hooks.onPercent?.(ratio * 100);
             const current = progress.file ? ` · ${progress.file}` : '';
-            this.view.setState('Đang tải lên kho lưu trữ',
+            hooks.onCard?.('Đang tải lên kho lưu trữ',
                 this.transferDetail('object-storage-upload', progress.loaded, progress.total, current),
                 { mode: 'determinate', value: ratio * 100 });
             return;
         }
         if (progress.phase === 'finalize') {
-            this.view.setState('Đang chốt dataset',
+            hooks.onCard?.('Đang chốt dataset',
                 'Kho lưu trữ đã nhận đủ ảnh.', { mode: 'indeterminate' });
             return;
         }
-        this.view.setState('Đang xử lý dataset',
+        hooks.onCard?.('Đang xử lý dataset',
             'Máy chủ đang kiểm tra và lập chỉ mục ảnh.', { mode: 'indeterminate' });
     }
 }

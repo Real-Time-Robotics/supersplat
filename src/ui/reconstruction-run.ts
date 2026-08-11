@@ -1,6 +1,7 @@
 import type { ProgressVisual } from './reconstruction-progress';
 
 type RunState =
+    | 'queued'
     | 'uploading'
     | 'paused'
     | 'quoting'
@@ -38,6 +39,7 @@ const runKey = (run: Run): string => {
 
 const runControls = (run: Run, hasFolder: boolean): RunAction[] => {
     switch (run.state) {
+        case 'queued': return ['cancel'];
         case 'uploading': return ['pause', 'cancel'];
         case 'paused': return [hasFolder ? 'resume' : 'repick', 'cancel'];
         case 'quoting': return ['dismiss'];
@@ -55,6 +57,10 @@ const runControls = (run: Run, hasFolder: boolean): RunAction[] => {
 const runCard = (run: Run): [string, string, ProgressVisual] => {
     const name = run.runName || run.preset;
     switch (run.state) {
+        case 'queued':
+            return ['Đang chờ tải lên',
+                `${name} sẽ bắt đầu ngay khi luồng đang tải lên xong.`,
+                { mode: 'idle', center: 'Chờ' }];
         case 'uploading':
             return ['Đang tải ảnh lên', `${name}: ${run.percent}% ảnh đã lên kho.`,
                 { mode: 'determinate', value: run.percent }];

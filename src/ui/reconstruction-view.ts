@@ -33,6 +33,7 @@ const runDetail = (run: Run): string => (
     .filter(Boolean).join(' · '));
 
 const RUN_STATE_TEXT: Record<RunState, string> = {
+    queued: 'Đang chờ tải',
     uploading: 'Đang tải lên',
     paused: 'Đã tạm dừng',
     quoting: 'Đang báo giá',
@@ -68,7 +69,7 @@ class ReconstructionView {
     readonly runsPanel: HTMLElement;
     readonly runList: HTMLElement;
     readonly runsNote: HTMLElement;
-    readonly newRunButtons: HTMLButtonElement[];
+    readonly newRunButton: HTMLButtonElement;
     readonly composePanel: HTMLElement;
     readonly runFixed: HTMLElement;
     readonly runFixedTitle: HTMLElement;
@@ -171,7 +172,7 @@ class ReconstructionView {
                 <div class="recon-section-heading">
                     <strong>Luồng của bạn</strong>
                     <span class="recon-runs-note"></span>
-                    <button class="recon-button recon-new-run" type="button" title="Bắt đầu một luồng mới với dataset và pipeline khác">＋ Luồng mới</button>
+                    <button class="recon-button recon-primary recon-new-run" type="button" title="Bắt đầu một luồng mới với dataset và pipeline khác">＋ Luồng mới</button>
                 </div>
                 <div class="recon-run-list"></div>
             </section>
@@ -209,7 +210,6 @@ class ReconstructionView {
                 <div class="recon-run-fixed" hidden>
                     <strong class="recon-run-fixed-title"></strong>
                     <span class="recon-run-fixed-detail"></span>
-                    <button class="recon-button recon-primary recon-run-fixed-new" type="button">＋ Luồng mới</button>
                 </div>
                 <div class="recon-compose">
                 <section class="recon-pipeline-picker" aria-labelledby="recon-pipeline-heading">
@@ -317,8 +317,7 @@ class ReconstructionView {
         this.runsPanel = this.query('.recon-runs');
         this.runList = this.query('.recon-run-list');
         this.runsNote = this.query('.recon-runs-note');
-        this.newRunButtons = Array.from(root.querySelectorAll<HTMLButtonElement>(
-            '.recon-new-run, .recon-run-fixed-new'));
+        this.newRunButton = this.query('.recon-new-run');
         this.composePanel = this.query('.recon-compose');
         this.runFixed = this.query('.recon-run-fixed');
         this.runFixedTitle = this.query('.recon-run-fixed-title');
@@ -487,10 +486,10 @@ class ReconstructionView {
         this.progress.setWorkerStatus(heartbeat);
     }
 
-    setRetryAvailable(retryable: boolean) {
-        this.startButton.textContent = retryable ?
-            'Retry reconstruction' :
-            this.pipeline === 'splat' ? 'Create Gaussian Splat' : 'Create textured mesh';
+    resetStartLabel() {
+        this.startButton.textContent = this.pipeline === 'splat' ?
+            'Create Gaussian Splat' :
+            'Create textured mesh';
     }
 
     setPipeline(pipeline: ReconstructionPipeline) {
@@ -510,7 +509,7 @@ class ReconstructionView {
             this.pipelineNote.textContent =
                 'Credits are only held once the job starts. Completed artifacts remain available in Recent models.';
         }
-        this.setRetryAvailable(false);
+        this.resetStartLabel();
     }
 
     setBusy(busy: boolean, canStart: boolean) {
