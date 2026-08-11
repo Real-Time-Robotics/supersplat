@@ -19,13 +19,11 @@ const folderFingerprint = (files: { name: string; size: number }[]): string => {
     return `${parts.length}:${parts.join('|')}`;
 };
 
-const nextRunName = (preset: string, taken: string[]): string => {
-    const used = new Set(taken);
-    if (!used.has(preset)) return preset;
-    for (let n = 2; ; n++) {
-        const candidate = `${preset}-${n}`;
-        if (!used.has(candidate)) return candidate;
-    }
-};
+/**
+ * A run's own path segment under datasets/{id}/artifacts/{pipeline}/.
+ */
+const newRunName = (preset: string): string => (
+    `${preset}-${crypto.randomUUID().replaceAll('-', '').slice(0, 12)}`
+);
 
-export { folderFingerprint, nextRunName, normalizeObjectName };
+export { folderFingerprint, newRunName, normalizeObjectName };

@@ -37,6 +37,7 @@ const RUN_STATE_TEXT: Record<RunState, string> = {
     'waiting-slot': 'Đang chờ lượt',
     running: 'Đang chạy',
     done: 'Hoàn tất',
+    cancelled: 'Đã huỷ',
     failed: 'Thất bại'
 };
 

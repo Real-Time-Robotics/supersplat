@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { folderFingerprint, nextRunName, normalizeObjectName } from './reconstruction-names.ts';
+import { folderFingerprint, newRunName, normalizeObjectName } from './reconstruction-names.ts';
 
 test('normalizeObjectName flattens a relative path and strips unsafe characters', () => {
     assert.equal(normalizeObjectName('set a/DJI_0001.JPG', 0), 'set_a__DJI_0001.JPG');
@@ -18,11 +18,15 @@ test('folderFingerprint ignores ordering but not content', () => {
     assert.notEqual(folderFingerprint(a), folderFingerprint([...a, { name: 'c.jpg', size: 3 }]));
 });
 
-test('nextRunName takes the lowest free suffix and stays inside the server pattern', () => {
-    const pattern = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
-    assert.equal(nextRunName('standard', []), 'standard');
-    assert.equal(nextRunName('standard', ['standard']), 'standard-2');
-    assert.equal(nextRunName('standard', ['standard', 'standard-3']), 'standard-2');
-    assert.equal(nextRunName('standard', ['standard', 'standard-2']), 'standard-3');
-    assert.ok(pattern.test(nextRunName('standard', ['standard'])));
+test('newRunName stays inside the server pattern and keeps the preset readable', () => {
+    const pattern = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;   // gateway state._RUN_NAME_RE
+    const name = newRunName('standard');
+    assert.ok(pattern.test(name), name);
+    assert.ok(name.startsWith('standard-'), name);
+});
+
+test('newRunName never repeats, so a failed run cannot reserve its own retry', () => {
+    // Small: past a handful this only re-tests crypto.randomUUID
+    const names = new Set(Array.from({ length: 50 }, () => newRunName('standard')));
+    assert.equal(names.size, 50);
 });

@@ -1,11 +1,13 @@
 import { ReconstructionArtifacts } from './reconstruction-artifacts';
 import { ReconstructionBilling } from './reconstruction-billing';
+import type { ProgressVisual } from './reconstruction-progress';
 import {
     Artifact,
     ArtifactSource,
     JobArtifactAvailableEvent,
     JobDatasetAvailableEvent,
     JobFailure,
+    JobGpu,
     JobHeartbeatEvent,
     JobProgressEvent,
     JobStatus,
@@ -20,11 +22,34 @@ import {
 } from './reconstruction-utils';
 import { ReconstructionView } from './reconstruction-view';
 
+// What a queued job's card says
+const queuedState = (gpu: JobGpu | null | undefined): [string, string, ProgressVisual] => {
+    switch (gpu?.state) {
+        case 'creating':
+            return ['Đang thuê GPU',
+                `Fleet đã hết chỗ nên hệ thống đang đặt một máy GPU trên ${gpu.provider}.`,
+                { mode: 'indeterminate', center: '1/3' }];
+        case 'loading':
+            return ['Đang khởi tạo GPU',
+                'Máy đã đặt xong và đang tải image pipeline. Bước này thường mất vài phút.',
+                { mode: 'indeterminate', center: '2/3' }];
+        case 'running':
+            return ['GPU đã sẵn sàng',
+                'Đang bàn giao job cho máy vừa thuê.',
+                { mode: 'indeterminate', center: '3/3' }];
+        default:
+            return ['Đang chờ máy trống',
+                'Job đã vào hàng đợi và sẽ tự khởi động khi có máy trống.',
+                { mode: 'indeterminate' }];
+    }
+};
+
 class ReconstructionJobError extends Error {
     constructor(
         readonly title: string,
         message: string,
-        readonly retryable: boolean
+        readonly retryable: boolean,
+        readonly code: string = ''
     ) {
         super(message);
         this.name = 'ReconstructionJobError';
@@ -55,49 +80,57 @@ const terminalError = (job: JobStatus) => {
             return new ReconstructionJobError(
                 'GPU connection was lost',
                 `The GPU worker stopped responding before the model was complete. ${retryHint}`,
-                failure.retryable
+                failure.retryable,
+                failure.code
             );
         case 'stage_failed':
             return new ReconstructionJobError(
                 `${stage} failed`,
                 `That reconstruction step stopped unexpectedly. ${retryHint}`,
-                failure.retryable
+                failure.retryable,
+                failure.code
             );
         case 'stage_killed':
             return new ReconstructionJobError(
                 `${stage} ran out of resources`,
                 'The GPU stopped this step, usually because it ran out of memory. Try fewer or lower-resolution photos.',
-                failure.retryable
+                failure.retryable,
+                failure.code
             );
         case 'budget_exceeded':
             return new ReconstructionJobError(
                 'Processing limit reached',
                 'The job reached its GPU-time limit. Reduce the dataset size before trying again.',
-                failure.retryable
+                failure.retryable,
+                failure.code
             );
         case 'invalid_config':
             return new ReconstructionJobError(
                 'Dataset could not be processed',
                 'The images or reconstruction settings failed validation. Re-select supported, overlapping photos and try again.',
-                failure.retryable
+                failure.retryable,
+                failure.code
             );
         case 'cancelled_by_user':
             return new ReconstructionJobError(
                 'Reconstruction cancelled',
                 'The job was cancelled before the model was complete.',
-                failure.retryable
+                failure.retryable,
+                failure.code
             );
         case 'platform_error':
             return new ReconstructionJobError(
                 'Reconstruction service error',
                 `The service hit an internal error. ${retryHint}`,
-                failure.retryable
+                failure.retryable,
+                failure.code
             );
         default:
             return new ReconstructionJobError(
                 'Reconstruction did not complete',
                 `${failure.message}${retryHint ? ` ${retryHint}` : ''}`,
-                failure.retryable
+                failure.retryable,
+                failure.code
             );
     }
 };
@@ -139,15 +172,11 @@ class ReconstructionJob {
         this.view.openPrimaryButton.addEventListener('click', () => this.togglePrimaryOpen());
     }
 
-    get wasCancelled() {
-        return this.cancelled;
-    }
-
     /**
      * Submit without watching
      */
     async submit(datasetId: string, pipeline: ReconstructionPipeline,
-        runName: string): Promise<string> {
+        runName: string, idempotencyKey: string): Promise<string> {
         const response = await fetch('/api/reconstruction/jobs', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -156,7 +185,7 @@ class ReconstructionJob {
                 pipeline,
                 preset: 'standard',
                 runName,
-                idempotencyKey: crypto.randomUUID()
+                idempotencyKey
             })
         });
         if (response.status === 409) {
@@ -217,7 +246,6 @@ class ReconstructionJob {
         this.activeEvents = null;
         this.view.setWorkerStatus(null);
         this.view.setRetryAvailable(false);
-        this.activeJobId = null;
         return true;
     }
 
@@ -293,11 +321,40 @@ class ReconstructionJob {
         };
     }
 
+    /** The card for a job that has not settled yet. */
+    private renderPending(job: JobStatus, artifacts: Artifact[]) {
+        if (this.cancelled) {
+            // Cancelling is a state of the watch, not an interruption of it
+            this.view.setState('Đang huỷ luồng',
+                'Đã gửi yêu cầu dừng. Đang chờ máy chủ xác nhận job đã kết thúc.',
+                { mode: 'indeterminate', center: 'Huỷ' });
+            return;
+        }
+        for (const artifact of artifacts) this.offerPrimary(artifact);
+        const hasProgressSnapshot = Boolean(job.current_stage || job.progress);
+        if (this.eventStreamUnavailable && !hasProgressSnapshot) {
+            this.view.setState(
+                'Reconnecting progress stream',
+                `Job status is still “${job.status}”; final status is checked separately.`,
+                { mode: 'reconnecting' }
+            );
+        } else if (!hasProgressSnapshot && (!this.lastStage || this.lastStage.phase === 'end')) {
+            if (job.status === 'queued') {
+                this.view.setState(...queuedState(job.gpu));
+            } else {
+                this.view.setState(`Job: ${job.status}`,
+                    'The pipeline is active; waiting for the next stage event.',
+                    { mode: 'indeterminate' });
+            }
+        }
+        this.applySnapshot(job);
+    }
+
     private async waitForJob(jobId: string, generation: number) {
         let transientNotFound = 0;
         let artifacts: Artifact[] = [];
         for (;;) {
-            if (this.cancelled || generation !== this.watchGeneration) return;
+            if (generation !== this.watchGeneration) return;
             const response = await fetch(`/api/reconstruction/jobs/${encodeURIComponent(jobId)}`, { cache: 'no-store' });
             if (response.status === 404 && transientNotFound < JOB_NOT_FOUND_GRACE) {
                 transientNotFound++;
@@ -327,23 +384,8 @@ class ReconstructionJob {
                 }
                 break;
             }
-            for (const artifact of data.artifacts ?? []) this.offerPrimary(artifact);
-            const hasProgressSnapshot = Boolean(job.current_stage || job.progress);
-            if (this.eventStreamUnavailable && !hasProgressSnapshot) {
-                this.view.setState(
-                    'Reconnecting progress stream',
-                    `Job status is still “${job.status}”; final status is checked separately.`,
-                    { mode: 'reconnecting' }
-                );
-            } else if (!hasProgressSnapshot && (!this.lastStage || this.lastStage.phase === 'end')) {
-                const title = job.status === 'queued' ? 'Waiting for GPU' : `Job: ${job.status}`;
-                const detail = job.status === 'queued' ?
-                    'The job is queued and will start automatically.' :
-                    'The pipeline is active; waiting for the next stage event.';
-                this.view.setState(title, detail, { mode: 'indeterminate' });
-            }
-            this.applySnapshot(job);
-            await delay(2500);
+            this.renderPending(job, data.artifacts ?? []);
+            await delay(this.cancelled ? 7500 : 2500);
         }
 
         if (this.primaryOpenPromise) await this.primaryOpenPromise;

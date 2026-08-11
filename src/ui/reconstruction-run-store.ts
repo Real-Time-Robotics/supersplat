@@ -1,10 +1,5 @@
-import { nextRunName } from './reconstruction-names';
+import { newRunName } from './reconstruction-names';
 import { runKey, type Run } from './reconstruction-run';
-
-type SubmitDeps = {
-    submit(run: Run): Promise<string>;
-    takenRunNames(datasetId: string, pipeline: string): Promise<string[]>;
-};
 
 const isQuotaRefusal = (error: unknown): boolean => (
     (error as { status?: number })?.status === 409 &&
@@ -74,6 +69,15 @@ class RunStore {
     }
 
     /**
+     * Retire a run whose job the server has called terminal.
+     */
+    settle(id: string, patch: Partial<Run>) {
+        const run = this.runs.find(other => other.id === id);
+        if (!run) return;
+        this.update(id, { ...patch, runName: run.preset, submitKey: null });
+    }
+
+    /**
      * Drop any other row that has become the same run as `id`.
      */
     private fold(id: string) {
@@ -102,38 +106,32 @@ class RunStore {
     /**
      * Submit every run that is ready, oldest first, stopping at the learned cap.
      */
-    async submitReady(deps: SubmitDeps): Promise<void> {
+    async submitReady(submit: (run: Run) => Promise<string>): Promise<void> {
         if (this.submitting) return;
         this.submitting = true;
         try {
-            await this.submitReadyOnce(deps);
+            await this.submitReadyOnce(submit);
         } finally {
             this.submitting = false;
         }
     }
 
-    private async submitReadyOnce(deps: SubmitDeps): Promise<void> {
+    private async submitReadyOnce(submit: (run: Run) => Promise<string>): Promise<void> {
         const ready = this.runs.filter(run => (
             run.state === 'quoting' || run.state === 'waiting-slot'));
-        const listed = new Map<string, string[]>();
         for (const run of ready) {
             if (this.cap !== null && this.activeCount() >= this.cap) {
                 if (run.state !== 'waiting-slot') this.update(run.id, { state: 'waiting-slot' });
                 continue;
             }
-            const datasetId = run.datasetId as string;
-            const key = `${datasetId} ${run.pipeline}`;
-            if (!listed.has(key)) {
-                listed.set(key, await deps.takenRunNames(datasetId, run.pipeline));
-            }
-            const local = this.runs
-            .filter(other => other.id !== run.id && other.jobId !== null &&
-                other.datasetId === datasetId && other.pipeline === run.pipeline)
-            .map(other => other.runName);
-            const runName = nextRunName(run.preset, [...listed.get(key), ...local]);
+            // Minted once, then reused by every later attempt: a fresh name and key per
+            // attempt is what turned a lost 502 reply into a second job on a second box.
+            const minted = run.submitKey ? null :
+                { runName: newRunName(run.preset), submitKey: crypto.randomUUID() };
+            if (minted) this.update(run.id, minted);
             try {
-                const jobId = await deps.submit({ ...run, runName });
-                this.update(run.id, { state: 'running', jobId, runName });
+                const jobId = await submit({ ...run, ...minted });
+                this.update(run.id, { state: 'running', jobId });
             } catch (error) {
                 if (!isQuotaRefusal(error)) {
                     this.update(run.id, { state: 'failed', detail: String((error as Error).message) });
@@ -147,4 +145,3 @@ class RunStore {
 }
 
 export { RunStore };
-export type { SubmitDeps };

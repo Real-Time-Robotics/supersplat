@@ -5,6 +5,7 @@ type RunState =
     | 'waiting-slot'
     | 'running'
     | 'done'
+    | 'cancelled'
     | 'failed';
 
 type Run = {
@@ -14,8 +15,9 @@ type Run = {
     datasetId: string | null;
     pipeline: string;
     preset: string;
-    /** Chosen at submit time from the names the dataset already uses. */
+    /** Seeded to the preset, replaced by the minted name at submit time (newRunName). */
     runName: string;
+    submitKey: string | null;
     label: string;
     jobId: string | null;
     percent: number;
@@ -40,6 +42,7 @@ const runControls = (run: Run, hasFolder: boolean): RunAction[] => {
         case 'waiting-slot': return ['dismiss'];
         case 'running': return [];
         case 'done': return ['open', 'dismiss'];
+        case 'cancelled': return ['retry', 'dismiss'];
         case 'failed': return ['retry', 'dismiss'];
     }
 };

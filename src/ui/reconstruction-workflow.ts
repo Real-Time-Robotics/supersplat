@@ -178,6 +178,7 @@ class ReconstructionWorkflow {
                 pipeline: record.pipeline,
                 preset: record.preset,
                 runName: record.preset,
+                submitKey: null,
                 label: record.label,
                 jobId: null,
                 percent: 0,
@@ -206,6 +207,20 @@ class ReconstructionWorkflow {
         }
     }
 
+    /**
+     * Settle a run that ended because it was cancelled, and say whether it did.
+     */
+    private settleCancelled(error: unknown, runId: string | null): boolean {
+        const code = error instanceof ReconstructionJobError ? error.code : '';
+        if (code !== 'cancelled_by_user' && !this.cancelled) return false;
+        if (runId) this.runs.settle(runId, { state: 'cancelled', percent: 0, detail: '' });
+        this.view.setState('Đã huỷ luồng',
+            'Máy chủ xác nhận job đã dừng. Ảnh đã tải lên vẫn còn trong kho lưu trữ.',
+            { mode: 'idle', center: 'Huỷ' });
+        this.setBusy(false);
+        return true;
+    }
+
     /** Stop the job the progress card is following.*/
     async cancelJob() {
         this.view.cancelButton.disabled = true;
@@ -220,11 +235,6 @@ class ReconstructionWorkflow {
             this.cancelled = true;
             this.billing.cancelPolling();
             this.view.cancelButton.hidden = true;
-            this.view.setState(
-                'Cancellation requested',
-                'The job will stop at the next safe checkpoint.',
-                { mode: 'indeterminate', center: 'Stop' }
-            );
             this.setBusy(false);
         } catch (error) {
             this.cancelled = false;
@@ -505,22 +515,19 @@ class ReconstructionWorkflow {
                 this.runs.update(run.id, { detail: job.status });
                 continue;
             }
-            this.runs.update(run.id, {
-                state: job.status === 'done' ? 'done' : 'failed',
-                percent: job.status === 'done' ? 100 : run.percent,
-                detail: job.status === 'done' ? '' : (job.failure?.message ?? job.status)
-            });
+            if (job.status === 'done') {
+                this.runs.settle(run.id, { state: 'done', percent: 100, detail: '' });
+            } else if (job.failure?.code === 'cancelled_by_user') {
+                this.runs.settle(run.id, { state: 'cancelled', percent: 0, detail: '' });
+            } else {
+                this.runs.settle(run.id, {
+                    state: 'failed',
+                    percent: run.percent,
+                    detail: job.failure?.message ?? job.status
+                });
+            }
         }
         await this.startWaitingRuns();
-    }
-
-    private submitDeps() {
-        return {
-            submit: (run: Run) => this.job.submit(
-                run.datasetId as string, run.pipeline as ReconstructionPipeline, run.runName),
-            takenRunNames: (datasetId: string, pipeline: string) => this.takenRunNames(
-                datasetId, pipeline)
-        };
     }
 
     private trackRun(): Run {
@@ -535,6 +542,7 @@ class ReconstructionWorkflow {
             pipeline: this.pipeline,
             preset: 'standard',
             runName: 'standard',
+            submitKey: null,
             label: resuming?.label ?? `SuperSplat ${new Date().toLocaleString('en-US')}`,
             jobId: null,
             percent: 0,
@@ -582,19 +590,15 @@ class ReconstructionWorkflow {
         };
     }
 
-    private async takenRunNames(datasetId: string, pipeline: string): Promise<string[]> {
-        const response = await fetch(
-            `/api/reconstruction/datasets/${encodeURIComponent(datasetId)}/runs`,
-            { cache: 'no-store' }
-        );
-        const data = await readJson<{ runs: { pipeline: string; run_name: string }[] }>(response);
-        return data.runs.filter(r => r.pipeline === pipeline).map(r => r.run_name);
+    private submitRun(run: Run): Promise<string> {
+        return this.job.submit(run.datasetId as string,
+            run.pipeline as ReconstructionPipeline, run.runName, run.submitKey as string);
     }
 
     /** A slot freed up, so whatever the cap made wait can go now. */
     private async startWaitingRuns() {
         if (!this.runs.list().some(r => r.state === 'waiting-slot')) return;
-        await this.runs.submitReady(this.submitDeps());
+        await this.runs.submitReady(run => this.submitRun(run));
     }
 
     private reconstruct() {
@@ -647,7 +651,7 @@ class ReconstructionWorkflow {
                 return;
             }
 
-            await this.runs.submitReady(this.submitDeps());
+            await this.runs.submitReady(other => this.submitRun(other));
             const submitted = this.runs.list().find(r => r.id === run.id);
             if (submitted?.state === 'waiting-slot') {
                 const cap = this.runs.slotCap();
@@ -676,8 +680,8 @@ class ReconstructionWorkflow {
                 this.setBusy(false);
                 return;
             }
+            if (this.settleCancelled(error, alive ? run.id : null)) return;
             if (alive) this.runs.update(run.id, { state: 'failed', detail: messageOf(error) });
-            if (this.cancelled || this.job.wasCancelled) return;
             const jobError = error instanceof ReconstructionJobError ? error : null;
             this.view.setRetryAvailable(Boolean(jobError?.retryable));
             this.view.setState(jobError?.title || 'Reconstruction failed', messageOf(error), { mode: 'failed' });
@@ -693,12 +697,16 @@ class ReconstructionWorkflow {
         try {
             await this.job.attach(run.jobId as string);
             if (generation !== this.watchGeneration) return;
-            this.runs.update(run.id, { state: 'done', percent: 100, detail: '' });
+            this.runs.settle(run.id, { state: 'done', percent: 100, detail: '' });
         } catch (error) {
             if (generation !== this.watchGeneration) return;
-            this.runs.update(run.id, { state: 'failed', detail: messageOf(error) });
-            if (this.cancelled || this.job.wasCancelled) return;
+            if (this.settleCancelled(error, run.id)) return;
             const jobError = error instanceof ReconstructionJobError ? error : null;
+            // Only the server calling the job terminal spends the identity; a stream that
+            // merely dropped leaves the job alive, and a retry must replay into it.
+            const patch = { state: 'failed' as const, detail: messageOf(error) };
+            if (jobError) this.runs.settle(run.id, patch);
+            else this.runs.update(run.id, patch);
             this.view.setRetryAvailable(Boolean(jobError?.retryable));
             this.view.setState(jobError?.title || 'Reconstruction failed',
                 messageOf(error), { mode: 'failed' });

@@ -75,9 +75,17 @@ type JobFailure = {
     retryable: boolean;
 };
 
+/** The rented box a job is waiting on. Absent while it waits on the owned fleet. */
+type JobGpu = {
+    state: 'creating' | 'loading' | 'running';
+    provider: string;
+    since: string;
+};
+
 type JobStatus = {
     terminal: boolean;
     status: string;
+    gpu?: JobGpu | null;
     worker_alive?: boolean | null;
     heartbeat_at?: string | null;
     current_stage?: StageEvent | null;
@@ -134,6 +142,7 @@ export {
     JobArtifactAvailableEvent,
     JobDatasetAvailableEvent,
     JobFailure,
+    JobGpu,
     JobHeartbeatEvent,
     JobProgressEvent,
     JobStatus,
