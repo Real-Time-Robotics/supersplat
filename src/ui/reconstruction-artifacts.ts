@@ -127,14 +127,14 @@ class ReconstructionArtifacts {
                 heading.append(info, actions);
                 const models = document.createElement('div');
                 models.className = 'recon-dataset-models';
-                const total = Object.values(dataset.run_counts || {})
+                const total = Object.values(dataset.model_counts || {})
                 .reduce((sum, count) => sum + count, 0);
                 const expand = document.createElement('button');
                 expand.type = 'button';
                 expand.className = 'recon-button recon-expand-dataset';
                 expand.textContent = total ?
-                    `Xem ${total} lần chạy` :
-                    'Chưa có lần chạy nào';
+                    `Xem ${total} mô hình` :
+                    'Chưa có mô hình nào';
                 expand.disabled = total === 0;
                 expand.addEventListener(
                     'click',

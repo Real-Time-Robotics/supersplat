@@ -99,7 +99,10 @@ type RecentDataset = {
     image_count: number;
     bytes: number;
     created: number;
+    /** Attempts per pipeline, failed and live ones included. */
     run_counts: Record<string, number>;
+    /** Attempts that produced something openable */
+    model_counts: Record<string, number>;
 };
 
 type RecentRun = {

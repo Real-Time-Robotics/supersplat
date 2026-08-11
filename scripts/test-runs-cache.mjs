@@ -13,7 +13,8 @@ test('the runs aggregate is lazy and cached, and the upload route is gone', asyn
                 total: 1,
                 datasets: [{
                     dataset_id: 'ds1', label: 'set', image_count: 3, bytes: 30,
-                    created: 1, runs: { splat: 1, photogrammetry: 0 }
+                    created: 1, runs: { splat: 2, photogrammetry: 0 },
+                    models: { splat: 1, photogrammetry: 0 }
                 }]
             });
             return;
@@ -45,7 +46,8 @@ test('the runs aggregate is lazy and cached, and the upload route is gone', asyn
     assert.equal(listed.status, 200);
     const body = await listed.json();
     assert.equal(body.datasets[0].dataset_id, 'ds1');
-    assert.deepEqual(body.datasets[0].run_counts, { splat: 1, photogrammetry: 0 });
+    assert.deepEqual(body.datasets[0].run_counts, { splat: 2, photogrammetry: 0 });
+    assert.deepEqual(body.datasets[0].model_counts, { splat: 1, photogrammetry: 0 });
     assert.equal(runCalls.length, 0, 'listing datasets must not list runs');
 
     const first = await call(env, '/api/reconstruction/datasets/ds1/runs', { headers: { cookie } });
