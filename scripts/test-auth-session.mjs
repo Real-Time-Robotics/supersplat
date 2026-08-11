@@ -85,7 +85,7 @@ test('auth sessions and photogrammetry proxy flow remain isolated and typed', as
         body: JSON.stringify({ email: 'user@example.com', password: 'secret' })
     });
     assert.equal(login.status, 200);
-    assert.equal((await login.json()).apiKey, 'gp_live_created_for_test');
+    assert.equal((await login.json()).apiKey, undefined);
     const cookie = login.headers.get('set-cookie');
     assert.match(cookie, /HttpOnly/);
     assert.match(cookie, /SameSite=Strict/);
@@ -94,6 +94,14 @@ test('auth sessions and photogrammetry proxy flow remain isolated and typed', as
     const session = await call(env, '/api/reconstruction/session', { headers: { Cookie: cookie } });
     assert.equal(session.status, 200);
     assert.equal((await session.json()).account.label, 'user@example.com');
+
+    const key = await call(env, '/api/reconstruction/session/api-key', {
+        headers: { Cookie: cookie }
+    });
+    assert.equal(key.status, 200);
+    assert.equal((await key.json()).apiKey, 'gp_live_created_for_test');
+    assert.equal((await call(env, '/api/reconstruction/session/api-key')).status, 401,
+        'the key is the session, so it is never served without one');
 
     const logout = await call(env, '/api/reconstruction/session', {
         method: 'DELETE',
@@ -157,7 +165,8 @@ test('auth sessions and photogrammetry proxy flow remain isolated and typed', as
         image_count: 42,
         bytes: 123456,
         created: 1700000000,
-        run_counts: {}
+        run_counts: {},
+        model_counts: {}
     }]);
 
     const quote = await call(env, '/api/reconstruction/datasets/dataset-1/quote?pipeline=photogrammetry', {

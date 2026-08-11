@@ -69,7 +69,7 @@ const loginAndEstablish = async (request: Request, env: Env, email: string, pass
     status: number): Promise<Response> => {
     const accessToken = await passwordLogin(env.GENESIS_BASE_URL, email, password);
     const { apiKey, customerId } = await createSuperSplatKey(env.GENESIS_BASE_URL, accessToken);
-    return establish(request, env, { apiKey, label: email, customerId }, status, { apiKey });
+    return establish(request, env, { apiKey, label: email, customerId }, status);
 };
 
 const bodyOf = async (request: Request): Promise<any> => await request.json().catch(() => ({})) ?? {};
@@ -89,6 +89,10 @@ const sessionRoute = async (request: Request, env: Env, rest: string): Promise<R
                 })
             }
         });
+    }
+    if (rest === '/api-key' && request.method === 'GET') {
+        const session = await requireSession(request, env);
+        return json({ apiKey: session.apiKey });
     }
     if (rest === '/api-key' && request.method === 'POST') {
         const apiKey = String((await bodyOf(request)).apiKey || '').trim();
@@ -261,7 +265,8 @@ const reconRoute = async (request: Request, env: Env, pathname: string,
                 image_count: dataset.image_count,
                 bytes: dataset.bytes,
                 created: dataset.created,
-                run_counts: dataset.runs
+                run_counts: dataset.runs,
+                model_counts: dataset.models || {}
             }))
         });
     }

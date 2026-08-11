@@ -8,7 +8,6 @@ type Account = {
 type SessionResponse = {
     authenticated: true;
     account: Account;
-    apiKey?: string;
 };
 
 type AuthValues = Record<string, string>;
@@ -39,7 +38,7 @@ const validate = (mode: string, values: AuthValues): string | null => {
 
 class ReconstructionAuth {
     private account: Account | null = null;
-    private pendingApiKey = '';
+    private apiKey = '';
     private requestInFlight = false;
 
     constructor(
@@ -72,17 +71,13 @@ class ReconstructionAuth {
             button.textContent = reveal ? 'Hide' : 'Show';
             button.setAttribute('aria-label', `${reveal ? 'Hide' : 'Show'} API key`);
         });
-        view.query<HTMLButtonElement>('.recon-copy-key').addEventListener('click', () => this.copyApiKey());
-        view.query<HTMLButtonElement>('.recon-auth-continue').addEventListener('click', () => this.activate());
+        view.apiRevealButton.addEventListener('click', () => this.revealApiKey());
+        view.copyKeyButton.addEventListener('click', () => this.copyApiKey());
         view.query<HTMLButtonElement>('.recon-sign-out').addEventListener('click', () => this.signOut());
     }
 
     async ensure() {
         if (this.account) {
-            if (this.pendingApiKey) {
-                this.view.showAuth();
-                return;
-            }
             this.view.showApp(this.account.label);
             return;
         }
@@ -104,8 +99,6 @@ class ReconstructionAuth {
 
     private setTab(mode: string) {
         if (this.requestInFlight) return;
-        this.pendingApiKey = '';
-        this.view.query<HTMLElement>('.recon-auth-created').hidden = true;
         this.view.authPanel.querySelectorAll<HTMLButtonElement>('.recon-auth-tab').forEach((tab) => {
             const selected = tab.dataset.authTab === mode;
             tab.classList.toggle('active', selected);
@@ -147,11 +140,7 @@ class ReconstructionAuth {
             const session = await this.readResponse(response);
             this.account = session.account;
             form.reset();
-            if (session.apiKey) {
-                this.showCreatedKey(session.apiKey);
-            } else {
-                await this.activate();
-            }
+            await this.activate();
         } catch (error) {
             this.setStatus(error instanceof Error ? error.message : String(error), true);
         } finally {
@@ -165,30 +154,47 @@ class ReconstructionAuth {
         return payload as SessionResponse;
     }
 
-    private showCreatedKey(apiKey: string) {
-        this.pendingApiKey = apiKey;
-        this.view.authPanel.querySelectorAll<HTMLFormElement>('.recon-auth-form').forEach((form) => {
-            form.hidden = true;
-        });
-        const created = this.view.query<HTMLElement>('.recon-auth-created');
-        created.querySelector('code')!.textContent = apiKey;
-        created.hidden = false;
-        this.setStatus('Account ready. Save the key, then continue.');
+    /**
+     * The session's key, fetched only when asked for
+     */
+    private async loadApiKey(): Promise<string> {
+        if (this.apiKey) return this.apiKey;
+        const response = await fetch('/api/reconstruction/session/api-key', { cache: 'no-store' });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(payload.error || `Request failed (${response.status}).`);
+        this.apiKey = String(payload.apiKey || '');
+        return this.apiKey;
+    }
+
+    private async revealApiKey() {
+        const shown = this.view.apiKeyLabel.dataset.shown === 'yes';
+        if (shown) {
+            this.view.apiKeyLabel.textContent = '••••••••••••••••';
+            delete this.view.apiKeyLabel.dataset.shown;
+            this.view.apiRevealButton.textContent = 'Hiện';
+            return;
+        }
+        try {
+            this.view.apiKeyLabel.textContent = await this.loadApiKey();
+            this.view.apiKeyLabel.dataset.shown = 'yes';
+            this.view.apiRevealButton.textContent = 'Ẩn';
+            this.setApiStatus('Giữ kín khoá này -- nó gọi được mọi thứ tài khoản bạn gọi được.');
+        } catch (error) {
+            this.setApiStatus(error instanceof Error ? error.message : String(error), true);
+        }
     }
 
     private async copyApiKey() {
-        if (!this.pendingApiKey) return;
         try {
-            await navigator.clipboard.writeText(this.pendingApiKey);
-            this.setStatus('API key copied.');
+            await navigator.clipboard.writeText(await this.loadApiKey());
+            this.setApiStatus('Đã sao chép API key.');
         } catch {
-            this.setStatus('Copy was blocked. Select the key above and copy it manually.', true);
+            this.setApiStatus('Trình duyệt chặn sao chép. Nhấn “Hiện” rồi chép thủ công.', true);
         }
     }
 
     private async activate() {
         if (!this.account) return;
-        this.pendingApiKey = '';
         this.view.showApp(this.account.label);
         await this.onAuthenticated();
     }
@@ -198,7 +204,9 @@ class ReconstructionAuth {
             await fetch('/api/reconstruction/session', { method: 'DELETE' });
         } finally {
             this.account = null;
-            this.pendingApiKey = '';
+            this.apiKey = '';
+            this.view.apiKeyLabel.textContent = '••••••••••••••••';
+            delete this.view.apiKeyLabel.dataset.shown;
             this.view.showAuth();
             this.setTab('login');
         }
@@ -210,6 +218,11 @@ class ReconstructionAuth {
         .forEach((control) => {
             control.disabled = busy;
         });
+    }
+
+    private setApiStatus(message: string, error = false) {
+        this.view.apiStatus.textContent = message;
+        this.view.apiStatus.classList.toggle('error', error);
     }
 
     private setStatus(message: string, error = false) {
