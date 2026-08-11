@@ -45,7 +45,6 @@ class RunStore {
         this.runs = existing ?
             this.runs.map(other => (other.id === existing.id ? merged : other)) :
             [...this.runs, merged];
-        if (this.selectedId === null) this.selectedId = merged.id;
         this.fold(merged.id);
         this.emit();
         return merged;
@@ -85,7 +84,9 @@ class RunStore {
         if (!kept) return;
         const key = runKey(kept);
         this.runs = this.runs.filter(run => run.id === id || runKey(run) !== key);
-        if (!this.runs.some(run => run.id === this.selectedId)) this.selectedId = id;
+        if (this.selectedId !== null && !this.runs.some(run => run.id === this.selectedId)) {
+            this.selectedId = id;   // the selected row was absorbed; follow it
+        }
     }
 
     slotCap(): number | null {

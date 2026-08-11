@@ -219,11 +219,35 @@ test('a second run on the same dataset is its own row, and can be removed', () =
     const store = new RunStore();
     store.upsert(run('a', { state: 'running', jobId: 'j1' }));
     store.upsert(run('b', { state: 'running', jobId: 'j2' }));
+    store.select('a');
     assert.equal(store.list().length, 2);
 
     store.remove('a');
     assert.deepEqual(store.list().map(r => r.id), ['b']);
     assert.equal(store.selected()?.id, 'b', 'removing the selected run selects another');
+});
+
+test('composing a new run outlives another run reporting progress', () => {
+    const store = new RunStore();
+    store.upsert(run('a', { state: 'uploading' }));
+    store.select(null);            // the user pressed "Luồng mới"
+
+    store.update('a', { percent: 12 });
+
+    assert.equal(store.selected(), null,
+        'an upload tick must not pull the panel back to the run doing the uploading');
+});
+
+test('a row folded away hands its selection to the row that absorbed it', () => {
+    const store = new RunStore();
+    store.upsert(run('a', { state: 'uploading', datasetId: 'ds1' }));
+    store.upsert(run('b', { state: 'quoting', datasetId: 'ds2' }));
+    store.select('a');
+
+    store.update('b', { state: 'uploading', datasetId: 'ds1' });
+
+    assert.deepEqual(store.list().map(r => r.id), ['b']);
+    assert.equal(store.selected()?.id, 'b');
 });
 
 test('overlapping submitReady passes never submit one run twice', async () => {
