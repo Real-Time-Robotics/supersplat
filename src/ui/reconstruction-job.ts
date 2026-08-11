@@ -230,6 +230,25 @@ class ReconstructionJob {
         await this.waitForJob(jobId, generation);
     }
 
+    /** The job currently writing to the shared card, if any. */
+    get watching(): string | null {
+        return this.activeJobId;
+    }
+
+    /**
+     * Let go of the shared card without touching the job.
+     */
+    detach() {
+        this.watchGeneration++;
+        this.activeEvents?.close();
+        this.activeEvents = null;
+        this.activeJobId = null;
+        this.view.setWorkerStatus(null);
+        this.view.setRetryAvailable(false);
+        this.view.cancelButton.hidden = true;
+        this.view.openPrimaryButton.hidden = true;
+    }
+
     async cancel(): Promise<boolean> {
         if (this.activeJobId) {
             const response = await fetch(`/api/reconstruction/jobs/${encodeURIComponent(this.activeJobId)}/cancel`, {

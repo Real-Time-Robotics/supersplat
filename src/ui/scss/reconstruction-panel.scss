@@ -1189,6 +1189,64 @@
     margin-bottom: 10px;
 }
 
+// This heading carries the new-run button, so it stops being a plain block here.
+.recon-runs > .recon-section-heading {
+    display: grid;
+    align-items: baseline;
+    grid-template-columns: auto 1fr auto;
+    gap: 6px;
+}
+
+.recon-new-run {
+    justify-self: end;
+    padding: 2px 8px;
+    white-space: nowrap;
+}
+
+// Stands in for the pickers once the selected run has committed to a dataset + pipeline.
+.recon-run-fixed {
+    display: grid;
+    gap: 4px;
+    margin-bottom: 10px;
+    padding: 10px;
+    background-color: $bcg-dark;
+    border-radius: 2px;
+
+    > .recon-run-fixed-detail {
+        color: $text-secondary;
+    }
+
+    > .recon-run-fixed-new {
+        justify-self: start;
+        margin-top: 4px;
+    }
+}
+
+.recon-api-key-row {
+    display: grid;
+    align-items: center;
+    grid-template-columns: 1fr auto auto;
+    gap: 6px;
+
+    > .recon-api-key {
+        padding: 6px 8px;
+        overflow-wrap: anywhere;
+        background-color: $bcg-darkest;
+        border-radius: 2px;
+    }
+}
+
+.recon-api-status {
+    min-height: 16px;
+    margin: 8px 0 0;
+    color: $text-secondary;
+    line-height: 1.4;
+
+    &.error {
+        color: $error;
+    }
+}
+
 .recon-run-list {
     display: flex;
     max-height: 232px;

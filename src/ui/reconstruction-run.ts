@@ -1,3 +1,5 @@
+import type { ProgressVisual } from './reconstruction-progress';
+
 type RunState =
     | 'uploading'
     | 'paused'
@@ -47,5 +49,38 @@ const runControls = (run: Run, hasFolder: boolean): RunAction[] => {
     }
 };
 
-export { runControls, runKey };
+/**
+ * The shared progress card for a run nothing is streaming. One card serves every run.
+ */
+const runCard = (run: Run): [string, string, ProgressVisual] => {
+    const name = run.runName || run.preset;
+    switch (run.state) {
+        case 'uploading':
+            return ['Đang tải ảnh lên', `${name}: ${run.percent}% ảnh đã lên kho.`,
+                { mode: 'determinate', value: run.percent }];
+        case 'paused':
+            return ['Đã tạm dừng',
+                'Ảnh đã tải lên vẫn được giữ. Nhấn ▶ trên luồng để tiếp tục.',
+                { mode: 'idle', center: 'Dừng' }];
+        case 'quoting':
+            return ['Đang báo giá', `Đang tính chi phí cho ${name}.`, { mode: 'indeterminate' }];
+        case 'waiting-slot':
+            return ['Đang chờ lượt',
+                'Đã đạt số luồng chạy song song tối đa của gói. Luồng này tự bắt đầu khi có chỗ.',
+                { mode: 'idle', center: 'Chờ' }];
+        case 'running':
+            return ['Đang chạy', run.detail || `${name} đang chạy trên GPU.`,
+                { mode: 'indeterminate' }];
+        case 'done':
+            return ['Hoàn tất', `${name} đã xong. Nhấn “Mở” trên luồng để xem mô hình.`,
+                { mode: 'done', center: '100%' }];
+        case 'cancelled':
+            return ['Đã huỷ', run.detail || `${name} đã được huỷ.`, { mode: 'failed' }];
+        case 'failed':
+            return ['Thất bại', run.detail || `${name} đã dừng trước khi hoàn tất.`,
+                { mode: 'failed' }];
+    }
+};
+
+export { runCard, runControls, runKey };
 export type { Run, RunAction, RunState };

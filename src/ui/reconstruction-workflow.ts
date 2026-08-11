@@ -3,7 +3,7 @@ import { ReconstructionArtifacts } from './reconstruction-artifacts';
 import { ReconstructionBilling } from './reconstruction-billing';
 import { ReconstructionJob, ReconstructionJobError } from './reconstruction-job';
 import { folderFingerprint, normalizeObjectName } from './reconstruction-names';
-import type { Run, RunAction } from './reconstruction-run';
+import { runCard, type Run, type RunAction } from './reconstruction-run';
 import { RunStore } from './reconstruction-run-store';
 import {
     Artifact,
@@ -82,6 +82,9 @@ class ReconstructionWorkflow {
         view.folderInput.addEventListener('change', () => pick(view.folderInput.files));
         view.imageInput.addEventListener('change', () => pick(view.imageInput.files));
         view.startButton.addEventListener('click', () => this.reconstruct());
+        for (const button of view.newRunButtons) {
+            button.addEventListener('click', () => this.newRun());
+        }
         this.runs.onChange(() => this.renderRuns());
 
         ['dragenter', 'dragover'].forEach(name => view.dropzone.addEventListener(name, (event) => {
@@ -409,17 +412,41 @@ class ReconstructionWorkflow {
             },
             hasFolder: id => this.picked.has(id)
         });
+        this.view.showCompose(this.runs.selected());
         this.syncMonitor();
     }
 
     /**
-     * Selecting a run moves the progress card
+     * Selecting a run moves the progress card. Repainted even when the selection did not
+     * change
      */
     private selectRun(id: string) {
-        if (this.runs.selected()?.id === id) return;
         this.runs.select(id);
+        this.showSelected();
+    }
+
+    private showSelected() {
         const run = this.runs.selected();
-        if (run?.jobId && run.state === 'running') this.watchRun(run);
+        this.view.showCompose(run);
+        if (!run) {
+            this.view.setState('Ready',
+                'Chọn một bộ ảnh chụp quanh vật thể hoặc không gian.', { mode: 'idle' });
+            return;
+        }
+        if (run.state === 'running' && run.jobId) {
+            // Re-attaching the stream we are already on would only restart it.
+            if (this.job.watching !== run.jobId) this.watchRun(run);
+            return;
+        }
+        this.job.detach();
+        this.view.setState(...runCard(run));
+    }
+
+    /** Clear the selection so the pickers come back for a run that does not exist yet. */
+    private newRun() {
+        this.runs.select(null);       // emits, so the list and the pickers re-render
+        this.view.setTab('create');
+        this.showSelected();
     }
 
     private async runAction(id: string, action: RunAction) {

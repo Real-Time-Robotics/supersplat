@@ -7,6 +7,8 @@ import {
     StageEvent
 } from './reconstruction-types';
 
+type PanelTab = 'create' | 'recent' | 'api';
+
 type RunHandlers = {
     onSelect(id: string): void;
     onAction(id: string, action: RunAction): void;
@@ -66,15 +68,21 @@ class ReconstructionView {
     readonly runsPanel: HTMLElement;
     readonly runList: HTMLElement;
     readonly runsNote: HTMLElement;
+    readonly newRunButtons: HTMLButtonElement[];
+    readonly composePanel: HTMLElement;
+    readonly runFixed: HTMLElement;
+    readonly runFixedTitle: HTMLElement;
+    readonly runFixedDetail: HTMLElement;
     readonly artifactPanel: HTMLElement;
     readonly artifactTitle: HTMLElement;
     readonly artifactList: HTMLElement;
     readonly cacheUsageLabel: HTMLElement;
     readonly clearCacheButton: HTMLButtonElement;
-    readonly createTabButton: HTMLButtonElement;
-    readonly recentTabButton: HTMLButtonElement;
-    readonly createTabPanel: HTMLElement;
-    readonly recentTabPanel: HTMLElement;
+    readonly tabButtons: HTMLButtonElement[];
+    readonly apiKeyLabel: HTMLElement;
+    readonly apiRevealButton: HTMLButtonElement;
+    readonly copyKeyButton: HTMLButtonElement;
+    readonly apiStatus: HTMLElement;
     readonly dropzone: HTMLDivElement;
     readonly pipelineButtons: HTMLButtonElement[];
     readonly pipelineDescription: HTMLElement;
@@ -124,12 +132,6 @@ class ReconstructionView {
                         <p>Use an existing key without logging in. It stays in this server session and is never saved in the browser.</p>
                         <button class="recon-button recon-primary" type="submit">Continue with API key</button>
                     </form>
-                    <div class="recon-auth-created" hidden>
-                        <strong>Your SuperSplat API key</strong>
-                        <p>This key is shown once. Copy it before continuing.</p>
-                        <div><code></code><button class="recon-button recon-copy-key" type="button">Copy</button></div>
-                        <button class="recon-button recon-primary recon-auth-continue" type="button">Continue</button>
-                    </div>
                 </div>
                 <p class="recon-auth-status" role="status"></p>
             </section>
@@ -169,6 +171,7 @@ class ReconstructionView {
                 <div class="recon-section-heading">
                     <strong>Luồng của bạn</strong>
                     <span class="recon-runs-note"></span>
+                    <button class="recon-button recon-new-run" type="button" title="Bắt đầu một luồng mới với dataset và pipeline khác">＋ Luồng mới</button>
                 </div>
                 <div class="recon-run-list"></div>
             </section>
@@ -198,10 +201,17 @@ class ReconstructionView {
                 </div>
             </section>
             <div class="recon-tabs" role="tablist" aria-label="Reconstruction">
-                <button class="recon-tab active" type="button" role="tab" aria-selected="true" aria-controls="recon-create-tab">Create model</button>
-                <button class="recon-tab" type="button" role="tab" aria-selected="false" aria-controls="recon-recent-tab">Recent models</button>
+                <button class="recon-tab active" type="button" role="tab" aria-selected="true" data-tab="create" aria-controls="recon-create-tab">Create model</button>
+                <button class="recon-tab" type="button" role="tab" aria-selected="false" data-tab="recent" aria-controls="recon-recent-tab">Recent models</button>
+                <button class="recon-tab" type="button" role="tab" aria-selected="false" data-tab="api" aria-controls="recon-api-tab">API</button>
             </div>
             <section id="recon-create-tab" class="recon-tab-panel" role="tabpanel">
+                <div class="recon-run-fixed" hidden>
+                    <strong class="recon-run-fixed-title"></strong>
+                    <span class="recon-run-fixed-detail"></span>
+                    <button class="recon-button recon-primary recon-run-fixed-new" type="button">＋ Luồng mới</button>
+                </div>
+                <div class="recon-compose">
                 <section class="recon-pipeline-picker" aria-labelledby="recon-pipeline-heading">
                     <div class="recon-section-heading">
                         <strong id="recon-pipeline-heading">Choose a reconstruction pipeline</strong>
@@ -242,6 +252,7 @@ class ReconstructionView {
                     <button class="recon-button recon-primary recon-start" type="button" disabled>Create Gaussian Splat</button>
                 </footer>
                 <p class="recon-note">Credits are only held once the job starts. Completed artifacts remain available in Recent models.</p>
+                </div>
             </section>
             <section id="recon-recent-tab" class="recon-tab-panel" role="tabpanel" hidden>
                 <section class="recon-recent">
@@ -265,6 +276,18 @@ class ReconstructionView {
                         <button type="button" class="recon-cache-clear" disabled>Xoá tất cả</button>
                     </div>
                 </section>
+            </section>
+            <section id="recon-api-tab" class="recon-tab-panel" role="tabpanel" hidden>
+                <div class="recon-section-heading">
+                    <strong>API key</strong>
+                    <span>Dùng để gọi Genesis Point từ SDK hoặc curl. Giữ kín như mật khẩu.</span>
+                </div>
+                <div class="recon-api-key-row">
+                    <code class="recon-api-key">••••••••••••••••</code>
+                    <button class="recon-button recon-api-reveal" type="button">Hiện</button>
+                    <button class="recon-button recon-copy-key" type="button">Sao chép</button>
+                </div>
+                <p class="recon-api-status" role="status"></p>
             </section>
             </div>`;
         root.appendChild(body);
@@ -294,6 +317,12 @@ class ReconstructionView {
         this.runsPanel = this.query('.recon-runs');
         this.runList = this.query('.recon-run-list');
         this.runsNote = this.query('.recon-runs-note');
+        this.newRunButtons = Array.from(root.querySelectorAll<HTMLButtonElement>(
+            '.recon-new-run, .recon-run-fixed-new'));
+        this.composePanel = this.query('.recon-compose');
+        this.runFixed = this.query('.recon-run-fixed');
+        this.runFixedTitle = this.query('.recon-run-fixed-title');
+        this.runFixedDetail = this.query('.recon-run-fixed-detail');
         this.artifactPanel = this.query('.recon-artifacts');
         this.artifactTitle = this.query('.recon-artifact-title');
         this.artifactList = this.query('.recon-artifact-list');
@@ -303,17 +332,20 @@ class ReconstructionView {
         this.pipelineButtons = Array.from(root.querySelectorAll<HTMLButtonElement>('.recon-pipeline-card'));
         this.pipelineDescription = this.query('.recon-pipeline-description');
         this.pipelineNote = this.query('.recon-note');
-        const tabs = root.querySelectorAll<HTMLButtonElement>('.recon-tabs > .recon-tab');
-        this.createTabButton = tabs[0];
-        this.recentTabButton = tabs[1];
-        this.createTabPanel = this.query('#recon-create-tab');
-        this.recentTabPanel = this.query('#recon-recent-tab');
+        this.tabButtons = Array.from(
+            root.querySelectorAll<HTMLButtonElement>('.recon-tabs > .recon-tab'));
+        this.apiKeyLabel = this.query('.recon-api-key');
+        this.apiRevealButton = this.query('.recon-api-reveal');
+        this.copyKeyButton = this.query('.recon-copy-key');
+        this.apiStatus = this.query('.recon-api-status');
         this.folderInput.setAttribute('webkitdirectory', '');
 
         this.query('.recon-folder-button').addEventListener('click', () => this.folderInput.click());
         this.query('.recon-images-button').addEventListener('click', () => this.imageInput.click());
-        this.createTabButton.addEventListener('click', () => this.setTab('create'));
-        this.recentTabButton.addEventListener('click', () => this.setTab('recent'));
+        for (const button of this.tabButtons) {
+            button.addEventListener('click',
+                () => this.setTab(button.dataset.tab as PanelTab));
+        }
 
         ['pointerdown', 'pointerup', 'pointermove', 'wheel', 'dblclick'].forEach((eventName) => {
             root.addEventListener(eventName, (event: Event) => event.stopPropagation());
@@ -324,14 +356,27 @@ class ReconstructionView {
         return this.root.querySelector(selector) as T;
     }
 
-    setTab(tab: 'create' | 'recent') {
-        const create = tab === 'create';
-        this.createTabButton.classList.toggle('active', create);
-        this.recentTabButton.classList.toggle('active', !create);
-        this.createTabButton.setAttribute('aria-selected', String(create));
-        this.recentTabButton.setAttribute('aria-selected', String(!create));
-        this.createTabPanel.hidden = !create;
-        this.recentTabPanel.hidden = create;
+    /**
+     * Show either the pickers for a new run, or what the selected one already committed to.
+     */
+    showCompose(run: Run | null) {
+        this.composePanel.hidden = run !== null;
+        this.runFixed.hidden = run === null;
+        if (!run) return;
+        this.runFixedTitle.textContent = run.runName || run.preset;
+        this.runFixedDetail.textContent = [
+            run.pipeline === 'splat' ? '3D Gaussian Splatting' : 'Photogrammetry',
+            run.datasetId ? `dataset ${run.datasetId}` : 'chưa có dataset'
+        ].join(' · ');
+    }
+
+    setTab(tab: PanelTab) {
+        for (const button of this.tabButtons) {
+            const selected = button.dataset.tab === tab;
+            button.classList.toggle('active', selected);
+            button.setAttribute('aria-selected', String(selected));
+            this.query(`#recon-${button.dataset.tab}-tab`).hidden = !selected;
+        }
     }
 
     renderRuns(runs: Run[], selectedId: string | null, cap: number | null,
@@ -481,3 +526,4 @@ class ReconstructionView {
 }
 
 export { ReconstructionView };
+export type { PanelTab };
