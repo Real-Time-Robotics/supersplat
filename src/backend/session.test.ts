@@ -19,8 +19,9 @@ test('a token sealed under another secret does not open', async () => {
 
 test('a tampered token does not open', async () => {
     const token = await sealSession(DATA, SECRET, NOW);
-    // Flip the final payload character
-    const tampered = `${token.slice(0, -1)}${token.at(-1) === 'A' ? 'B' : 'A'}`;
+    const at = token.length - 2;
+    const tampered =
+        `${token.slice(0, at)}${token[at] === 'A' ? 'B' : 'A'}${token.slice(at + 1)}`;
     assert.equal(await openSession(tampered, SECRET, NOW), null);
 });
 
