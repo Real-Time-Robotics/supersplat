@@ -38,7 +38,9 @@ class RunStore {
     upsert(run: Run): Run {
         const key = runKey(run);
         const existing = this.runs.find(other => runKey(other) === key);
-        const merged = existing ? { ...existing, ...run, id: existing.id } : run;
+        // Existing states change only through RunCoordinator.
+        const merged = existing ?
+            { ...existing, ...run, id: existing.id, state: existing.state } : run;
         this.runs = existing ?
             this.runs.map(other => (other.id === existing.id ? merged : other)) :
             [...this.runs, merged];

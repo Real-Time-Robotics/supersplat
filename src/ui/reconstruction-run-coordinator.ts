@@ -219,11 +219,4 @@ class RunCoordinator {
     }
 }
 
-export {
-    ALLOWED,
-    RUN_POLL_MS,
-    RunCoordinator,
-    WAIT_MAX_MS,
-    WAIT_MIN_MS,
-    canTransition
-};
+export { RunCoordinator, canTransition };

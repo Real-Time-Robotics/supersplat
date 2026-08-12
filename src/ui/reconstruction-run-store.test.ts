@@ -28,6 +28,17 @@ test('one upload session never shows up as two runs', () => {
     assert.equal(store.list()[0].detail, 'Chọn lại thư mục để tiếp tục');
 });
 
+test('upsert merges into an existing row without moving its state', () => {
+    const store = new RunStore();
+    store.upsert(run('a', { state: 'uploading' }));
+
+    store.upsert(run('b', { state: 'paused', label: 'renamed' }));
+
+    assert.equal(store.list()[0].state, 'uploading',
+        'a state jump has to go through RunCoordinator.transition()');
+    assert.equal(store.list()[0].label, 'renamed', 'everything else still merges');
+});
+
 test('an update that changes nothing does not notify', () => {
     const store = new RunStore();
     store.upsert(run('a', { state: 'running', jobId: 'j1', detail: 'queued' }));

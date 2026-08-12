@@ -201,7 +201,8 @@ class ReconstructionWorkflow {
         const uploading = this.submitting ? this.fingerprint : '';
         for (const record of records) {
             if (known.has(record.datasetId) || record.fingerprint === uploading) continue;
-            this.runs.upsert({
+            const detail = 'Chọn lại thư mục để tiếp tục';
+            const run = this.runs.upsert({
                 id: crypto.randomUUID(),
                 state: 'paused',
                 datasetId: record.datasetId,
@@ -212,8 +213,9 @@ class ReconstructionWorkflow {
                 label: record.label,
                 jobId: null,
                 percent: 0,
-                detail: 'Chọn lại thư mục để tiếp tục'
+                detail
             });
+            this.coordinator.transition(run.id, 'paused', { detail });
         }
     }
 
