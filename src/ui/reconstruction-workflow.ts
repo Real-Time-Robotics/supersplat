@@ -2,11 +2,12 @@ import { Events } from '../events';
 import { ReconstructionArtifacts } from './reconstruction-artifacts';
 import { ReconstructionBilling } from './reconstruction-billing';
 import { estimateTotalPixels, shortfallNote } from './reconstruction-estimate';
-import { reconFetch } from './reconstruction-http';
+import { onSessionEnded, reconFetch } from './reconstruction-http';
 import { ReconstructionJob, ReconstructionJobError } from './reconstruction-job';
 import { folderFingerprint, normalizeObjectName } from './reconstruction-names';
 import type { ProgressVisual } from './reconstruction-progress';
 import { runCard, type Run, type RunAction } from './reconstruction-run';
+import { RunCoordinator } from './reconstruction-run-coordinator';
 import { RunStore } from './reconstruction-run-store';
 import {
     Artifact,
@@ -27,9 +28,6 @@ import {
 } from './reconstruction-utils';
 import { ReconstructionView } from './reconstruction-view';
 
-/** How often a run nobody is watching re-checks its job. */
-const RUN_POLL_MS = 10_000;
-
 // The picked folder, kept per run so a paused upload continues without picking it again.
 // `record` is the open session it belongs to, once one exists.
 type PickedFolder = { named: Named[]; fingerprint: string; record: UploadRecord | null };
@@ -46,7 +44,6 @@ class ReconstructionWorkflow {
     private cancelled = false;
     private pendingResume: UploadRecord | null = null;
     private watchGeneration = 0;
-    private monitor: number | null = null;
     /** Whether the single uploader is taken. A run started while it is parks instead. */
     private submitting = false;
     private readonly picked = new Map<string, PickedFolder>();
@@ -55,6 +52,7 @@ class ReconstructionWorkflow {
     private readonly upload: ReconstructionUpload;
     private readonly job: ReconstructionJob;
     private readonly runs = new RunStore();
+    private readonly coordinator: RunCoordinator;
 
     constructor(
         private readonly events: Events,
@@ -64,6 +62,16 @@ class ReconstructionWorkflow {
     ) {
         this.upload = new ReconstructionUpload();
         this.job = new ReconstructionJob(view, billing, artifacts);
+        this.coordinator = new RunCoordinator(this.runs, {
+            submit: run => this.submitRun(run),
+            fetchJob: jobId => this.readJob(jobId)
+        });
+        // A session that ended takes every watcher and the submit loop with it, so the
+        // panel cannot keep polling against a credential that is gone.
+        onSessionEnded(() => {
+            this.coordinator.stop();
+            this.job.detach();
+        });
 
         const savedPipeline = localStorage.getItem(PIPELINE_KEY);
         if (savedPipeline === 'photogrammetry') this.pipeline = savedPipeline;
@@ -171,6 +179,14 @@ class ReconstructionWorkflow {
         }
     }
 
+    /**
+     * A session has just begun. The scheduler an ended session stopped runs again, under
+     * the cap this account actually has -- the previous one's is not carried over.
+     */
+    beginSession() {
+        this.coordinator.beginSession(this.billing.concurrentCap);
+    }
+
     async restoreOpenSessions() {
         const records = await this.upload.openSessions().catch(() => [] as UploadRecord[]);
         const known = new Set(this.runs.list().map(run => run.datasetId).filter(Boolean));
@@ -231,7 +247,7 @@ class ReconstructionWorkflow {
     private settleCancelled(error: unknown, run: Run): boolean {
         const code = error instanceof ReconstructionJobError ? error.code : '';
         if (code !== 'cancelled_by_user' && !this.cancelled) return false;
-        this.runs.settle(run.id, { state: 'cancelled', percent: 0, detail: '' });
+        this.coordinator.settle(run.id, 'cancelled', { percent: 0, detail: '' });
         this.card(run, 'Đã huỷ luồng',
             'Máy chủ xác nhận job đã dừng. Ảnh đã tải lên vẫn còn trong kho lưu trữ.',
             { mode: 'idle', center: 'Huỷ' });
@@ -456,7 +472,7 @@ class ReconstructionWorkflow {
         const runs = this.runs.list();
         const live = new Set(runs.map(run => run.id));
         for (const id of this.picked.keys()) if (!live.has(id)) this.picked.delete(id);
-        this.view.renderRuns(runs, this.runs.selected()?.id ?? null, this.runs.slotCap(), {
+        this.view.renderRuns(runs, this.runs.selected()?.id ?? null, this.coordinator.slotCap(), {
             onSelect: id => this.selectRun(id),
             onAction: (id, action) => {
                 this.runAction(id, action).catch((error) => {
@@ -466,7 +482,7 @@ class ReconstructionWorkflow {
             hasFolder: id => this.picked.has(id)
         });
         this.view.showCompose(this.runs.selected());
-        this.syncMonitor();
+        this.coordinator.sync();
     }
 
     /**
@@ -582,48 +598,10 @@ class ReconstructionWorkflow {
         if (artifacts.length === 1) await this.artifacts.openArtifact(artifacts[0], source);
     }
 
-    private syncMonitor() {
-        const live = this.runs.list().some(run => run.state === 'running');
-        if (live && this.monitor === null) {
-            this.monitor = window.setInterval(() => {
-                // A tick that fails (offline, a 502) is skipped; the next one retries.
-                this.pollUnwatchedRuns().catch((): void => undefined);
-            }, RUN_POLL_MS);
-        } else if (!live && this.monitor !== null) {
-            window.clearInterval(this.monitor);
-            this.monitor = null;
-        }
-    }
-
-    private async pollUnwatchedRuns() {
-        const selectedId = this.runs.selected()?.id ?? null;
-        const pending = this.runs.list().filter(run => (
-            run.state === 'running' && run.jobId !== null && run.id !== selectedId));
-        if (pending.length === 0) return;
-        const snapshots = await Promise.all(pending.map(async (run) => {
-            const response = await reconFetch(
-                `/api/reconstruction/jobs/${encodeURIComponent(run.jobId as string)}`,
-                { cache: 'no-store' });
-            return { run, job: (await readJson<{ job: JobStatus }>(response)).job };
-        }));
-        for (const { run, job } of snapshots) {
-            if (!job.terminal) {
-                this.runs.update(run.id, { detail: job.status });
-                continue;
-            }
-            if (job.status === 'done') {
-                this.runs.settle(run.id, { state: 'done', percent: 100, detail: '' });
-            } else if (job.failure?.code === 'cancelled_by_user') {
-                this.runs.settle(run.id, { state: 'cancelled', percent: 0, detail: '' });
-            } else {
-                this.runs.settle(run.id, {
-                    state: 'failed',
-                    percent: run.percent,
-                    detail: job.failure?.message ?? job.status
-                });
-            }
-        }
-        await this.startWaitingRuns();
+    private async readJob(jobId: string): Promise<JobStatus> {
+        const response = await reconFetch(
+            `/api/reconstruction/jobs/${encodeURIComponent(jobId)}`, { cache: 'no-store' });
+        return (await readJson<{ job: JobStatus }>(response)).job;
     }
 
     private trackRun(): Run {
@@ -674,10 +652,16 @@ class ReconstructionWorkflow {
                 run.label, hooks);
     }
 
-    private async quoteDataset(datasetId: string): Promise<UploadResponse> {
+    /**
+     * Invariant: the pipeline is the RUN's, never the picker's. Reading the global here
+     * meant flipping the toggle while a run was quoting priced it as one pipeline and
+     * submitted it as the other.
+     */
+    private async quoteDataset(datasetId: string,
+        pipeline: ReconstructionPipeline): Promise<UploadResponse> {
         const response = await reconFetch(
             `/api/reconstruction/datasets/${encodeURIComponent(datasetId)}/quote` +
-            `?pipeline=${encodeURIComponent(this.pipeline)}`,
+            `?pipeline=${encodeURIComponent(pipeline)}`,
             { cache: 'no-store' }
         );
         const quote = await readJson<UploadResponse['quote']>(response);
@@ -695,11 +679,6 @@ class ReconstructionWorkflow {
             run.pipeline as ReconstructionPipeline, run.runName, run.submitKey as string);
     }
 
-    /** A slot freed up, so whatever the cap made wait can go now. */
-    private async startWaitingRuns() {
-        if (!this.runs.list().some(r => r.state === 'waiting-slot')) return;
-        await this.runs.submitReady(run => this.submitRun(run));
-    }
 
     private reconstruct() {
         if (!this.canStart) return;
@@ -721,25 +700,29 @@ class ReconstructionWorkflow {
 
     private async startRun(run: Run) {
         if (this.submitting) {
-            this.runs.update(run.id, { state: 'queued', detail: '' });
+            this.coordinator.transition(run.id, 'queued', { detail: '' });
             this.selectRun(run.id);
             return;
         }
-        if (this.billing.concurrentCap !== null) this.runs.seedSlotCap(this.billing.concurrentCap);
+        this.coordinator.setSlotCap(this.billing.concurrentCap);
         this.cancelled = false;
         this.submitting = true;
         const transferring = this.picked.has(run.id);
         this.runs.select(run.id);
-        this.runs.update(run.id, { state: transferring ? 'uploading' : 'quoting', detail: '' });
+        if (!this.coordinator.transition(run.id, transferring ? 'uploading' : 'quoting',
+            { detail: '' })) {
+            this.submitting = false;
+            throw new Error('Luồng này không ở trạng thái có thể bắt đầu lại.');
+        }
         this.view.checkoutLink.hidden = true;
         try {
             const datasetId = transferring ?
                 await this.transfer(run) :
                 run.datasetId ?? this.preparedDataset?.datasetId;
             if (!datasetId) throw new Error('Không có dataset nào để chạy.');
-            const prepared = await this.quoteDataset(datasetId);
+            const prepared = await this.quoteDataset(datasetId, run.pipeline as ReconstructionPipeline);
             this.picked.delete(run.id);
-            this.runs.update(run.id, { state: 'quoting', datasetId });
+            this.coordinator.transition(run.id, 'quoting', { datasetId });
             this.billing.setBalance(prepared.quote.balance);
             this.card(run, 'Quote received',
                 `Needs ${prepared.quote.required.toLocaleString()} credits for ${prepared.quote.billable_gpx.toFixed(2)} billable Gpx.`,
@@ -751,8 +734,7 @@ class ReconstructionWorkflow {
                     Math.ceil(prepared.quote.required - prepared.quote.balance)
                 );
                 await this.billing.showCreditShortfall(creditsNeeded);
-                this.runs.update(run.id, {
-                    state: 'failed',
+                this.coordinator.transition(run.id, 'failed', {
                     detail: `Thiếu ${creditsNeeded.toLocaleString()} credit`
                 });
                 this.card(run, 'Insufficient credits',
@@ -761,12 +743,12 @@ class ReconstructionWorkflow {
                 return;
             }
 
-            await this.runs.submitReady(other => this.submitRun(other));
+            await this.coordinator.submitReady();
             const submitted = this.runs.list().find(r => r.id === run.id);
             if (submitted?.state === 'waiting-slot') {
-                const cap = this.runs.slotCap();
+                const cap = this.coordinator.slotCap();
                 this.card(run, 'Đang chờ lượt',
-                    `Gói đăng ký hiện tại chỉ cho phép ${cap ?? 1} luồng cùng lúc. Luồng này sẽ tự khởi động khi có chỗ trống.`,
+                    `${cap === null ? 'Gói đăng ký hiện tại đã dùng hết số luồng chạy cùng lúc' : `Gói đăng ký hiện tại chỉ cho phép ${cap} luồng cùng lúc`}. Luồng này sẽ tự khởi động khi có chỗ trống — kể cả khi chỗ đó được giải phóng ở tab khác.`,
                     { mode: 'indeterminate', center: 'Chờ' });
                 return;
             }
@@ -781,14 +763,14 @@ class ReconstructionWorkflow {
             const alive = this.runs.list().some(r => r.id === run.id);
             if (error instanceof UploadPaused) {
                 if (!alive || this.discarding.has(run.id)) return;
-                this.runs.update(run.id, { state: 'paused' });
+                this.coordinator.transition(run.id, 'paused');
                 this.card(run, 'Đã tạm dừng',
                     'Ảnh đã tải lên vẫn được giữ. Nhấn ▶ trên luồng để tiếp tục.',
                     { mode: 'idle', center: 'Dừng' });
                 return;
             }
             if (this.settleCancelled(error, run)) return;
-            if (alive) this.runs.update(run.id, { state: 'failed', detail: messageOf(error) });
+            if (alive) this.coordinator.transition(run.id, 'failed', { detail: messageOf(error) });
             const jobError = error instanceof ReconstructionJobError ? error : null;
             this.card(run, jobError?.title || 'Reconstruction failed', messageOf(error),
                 { mode: 'failed' });
@@ -804,20 +786,19 @@ class ReconstructionWorkflow {
             const outcome = await this.job.attach(run.jobId as string);
             if (generation !== this.watchGeneration) return;
             if (outcome === 'detached') return;
-            this.runs.settle(run.id, { state: 'done', percent: 100, detail: '' });
+            this.coordinator.settle(run.id, 'done', { percent: 100, detail: '' });
         } catch (error) {
             if (generation !== this.watchGeneration) return;
             if (this.settleCancelled(error, run)) return;
             const jobError = error instanceof ReconstructionJobError ? error : null;
             // Only the server calling the job terminal spends the identity; a stream that
             // merely dropped leaves the job alive, and a retry must replay into it.
-            const patch = { state: 'failed' as const, detail: messageOf(error) };
-            if (jobError) this.runs.settle(run.id, patch);
-            else this.runs.update(run.id, patch);
+            if (jobError) this.coordinator.settle(run.id, 'failed', { detail: messageOf(error) });
+            else this.coordinator.transition(run.id, 'failed', { detail: messageOf(error) });
             this.card(run, jobError?.title || 'Reconstruction failed',
                 messageOf(error), { mode: 'failed' });
         } finally {
-            await this.startWaitingRuns();
+            await this.coordinator.submitReady();
         }
     }
 }

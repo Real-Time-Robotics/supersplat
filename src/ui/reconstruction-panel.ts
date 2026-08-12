@@ -55,6 +55,9 @@ class ReconstructionPanel extends Container {
                 artifacts.refreshRecentRuns(),
                 workflow.restoreOpenSessions()
             ]);
+            // After the credits call, so the scheduler starts on this plan's cap rather
+            // than the one the previous session was signed in under.
+            workflow.beginSession();
         });
 
         view.cancelButton.addEventListener('click', () => {

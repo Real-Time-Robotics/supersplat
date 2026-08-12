@@ -1,16 +1,15 @@
-import { newRunName } from './reconstruction-names';
-import { runKey, type Run } from './reconstruction-run';
+import { runKey, type Run, type RunState } from './reconstruction-run';
 
-const isQuotaRefusal = (error: unknown): boolean => (
-    (error as { status?: number })?.status === 409 &&
-    (error as { code?: string })?.code === 'concurrent_job_quota_exceeded'
-);
+/** Everything about a run except where it is in its lifecycle. */
+type RunPatch = Partial<Omit<Run, 'id' | 'state'>>;
 
+/**
+ * The run list and which of them the panel is showing. Nothing here decides when a run
+ * moves -- that is RunCoordinator's, so the schedule has one owner.
+ */
 class RunStore {
     private runs: Run[] = [];
     private selectedId: string | null = null;
-    private cap: number | null = null;
-    private submitting = false;
     private listeners: (() => void)[] = [];
 
     onChange(fn: () => void) {
@@ -56,7 +55,33 @@ class RunStore {
         this.emit();
     }
 
-    update(id: string, patch: Partial<Run>) {
+    /**
+     * Everything but the state. Refusing `state` here is what keeps the lifecycle to one
+     * owner: a caller that writes it directly has skipped the transition table, and that
+     * is a bug however reasonable the move looks from where it stands.
+     */
+    update(id: string, patch: RunPatch) {
+        if ('state' in patch) {
+            throw new Error('run state belongs to RunCoordinator; use transition()');
+        }
+        this.write(id, patch);
+    }
+
+    /** The coordinator's own writer: the one path a run's state changes through. */
+    place(id: string, state: RunState, patch: RunPatch = {}) {
+        this.write(id, { ...patch, state });
+    }
+
+    /**
+     * Retire a run whose job the server has called terminal.
+     */
+    settle(id: string, state: RunState, patch: RunPatch = {}) {
+        const run = this.runs.find(other => other.id === id);
+        if (!run) return;
+        this.place(id, state, { ...patch, runName: run.preset, submitKey: null });
+    }
+
+    private write(id: string, patch: Partial<Run>) {
         const before = this.runs.find(run => run.id === id);
         if (!before) return;
         if (Object.entries(patch).every(([key, value]) => before[key as keyof Run] === value)) {
@@ -65,15 +90,6 @@ class RunStore {
         this.runs = this.runs.map(run => (run.id === id ? { ...run, ...patch } : run));
         this.fold(id);
         this.emit();
-    }
-
-    /**
-     * Retire a run whose job the server has called terminal.
-     */
-    settle(id: string, patch: Partial<Run>) {
-        const run = this.runs.find(other => other.id === id);
-        if (!run) return;
-        this.update(id, { ...patch, runName: run.preset, submitKey: null });
     }
 
     /**
@@ -88,61 +104,6 @@ class RunStore {
             this.selectedId = id;   // the selected row was absorbed; follow it
         }
     }
-
-    slotCap(): number | null {
-        return this.cap;
-    }
-
-    /**
-     * The account's published cap.
-     */
-    seedSlotCap(cap: number) {
-        if (this.cap === null && Number.isFinite(cap) && cap >= 1) this.cap = cap;
-    }
-
-    private activeCount(): number {
-        return this.runs.filter(run => run.state === 'running').length;
-    }
-
-    /**
-     * Submit every run that is ready, oldest first, stopping at the learned cap.
-     */
-    async submitReady(submit: (run: Run) => Promise<string>): Promise<void> {
-        if (this.submitting) return;
-        this.submitting = true;
-        try {
-            await this.submitReadyOnce(submit);
-        } finally {
-            this.submitting = false;
-        }
-    }
-
-    private async submitReadyOnce(submit: (run: Run) => Promise<string>): Promise<void> {
-        const ready = this.runs.filter(run => (
-            run.state === 'quoting' || run.state === 'waiting-slot'));
-        for (const run of ready) {
-            if (this.cap !== null && this.activeCount() >= this.cap) {
-                if (run.state !== 'waiting-slot') this.update(run.id, { state: 'waiting-slot' });
-                continue;
-            }
-            // Minted once, then reused by every later attempt: a fresh name and key per
-            // attempt is what turned a lost 502 reply into a second job on a second box.
-            const minted = run.submitKey ? null :
-                { runName: newRunName(run.preset), submitKey: crypto.randomUUID() };
-            if (minted) this.update(run.id, minted);
-            try {
-                const jobId = await submit({ ...run, ...minted });
-                this.update(run.id, { state: 'running', jobId });
-            } catch (error) {
-                if (!isQuotaRefusal(error)) {
-                    this.update(run.id, { state: 'failed', detail: String((error as Error).message) });
-                    continue;
-                }
-                this.cap = Math.max(1, this.activeCount());
-                this.update(run.id, { state: 'waiting-slot' });
-            }
-        }
-    }
 }
 
-export { RunStore };
+export { RunStore, type RunPatch };

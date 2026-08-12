@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 
 import { RunStore } from './reconstruction-run-store.ts';
@@ -16,181 +17,6 @@ const run = (id: string, patch = {}) => ({
     percent: 0,
     detail: '',
     ...patch
-});
-
-const quotaError = () => {
-    const error = new Error('concurrent job quota exceeded') as Error & { status?: number; code?: string };
-    error.status = 409;
-    error.code = 'concurrent_job_quota_exceeded';
-    return error;
-};
-
-const refuse = () => async () => {
-    throw quotaError();
-};
-
-/** A store with one job running and one run parked behind the 409 that taught it the cap. */
-const cappedStore = async () => {
-    const store = new RunStore();
-    store.upsert(run('a', { state: 'running', jobId: 'j1' }));
-    store.upsert(run('b'));
-    await store.submitReady(refuse());
-    return store;
-};
-
-test('a 409 parks the run and teaches the store the cap', async () => {
-    const store = new RunStore();
-    store.upsert(run('a', { state: 'running', jobId: 'j1' }));
-    store.upsert(run('b'));
-    let submits = 0;
-    await store.submitReady(async () => {
-        submits++;
-        throw quotaError();
-    });
-
-    assert.equal(submits, 1);
-    assert.equal(store.list().find(r => r.id === 'b').state, 'waiting-slot');
-    assert.equal(store.slotCap(), 1);
-});
-
-test('a parked run is submitted once a slot frees', async () => {
-    const store = await cappedStore();
-    store.update('a', { state: 'done' });
-    const submitted: string[] = [];
-    await store.submitReady(async (r) => {
-        submitted.push(r.id);
-        return 'j2';
-    });
-
-    assert.deepEqual(submitted, ['b']);
-    assert.equal(store.list().find(r => r.id === 'b').state, 'running');
-    assert.equal(store.list().find(r => r.id === 'b').jobId, 'j2');
-});
-
-test('the store never exceeds a cap it already learned', async () => {
-    const store = await cappedStore();
-    store.upsert(run('c'));
-    let submits = 0;
-    await store.submitReady(async () => {
-        submits++;
-        return 'j3';
-    });
-
-    assert.equal(submits, 0, 'one job is active and the learned cap is 1');
-});
-
-test('a repeat run of one pipeline gets a fresh run name', async () => {
-    const store = new RunStore();
-    store.upsert(run('b', { preset: 'standard', runName: 'standard' }));
-    const names: string[] = [];
-    await store.submitReady(async (r) => {
-        names.push(r.runName);
-        return 'j1';
-    });
-
-    assert.equal(names.length, 1);
-    assert.notEqual(names[0], 'standard');
-    assert.ok(names[0].startsWith('standard-'), names[0]);
-});
-
-test('a retry after a lost reply resubmits under the same name and key', async () => {
-    const store = new RunStore();
-    store.upsert(run('a'));
-    const attempts: { runName: string; submitKey: string }[] = [];
-    await store.submitReady(async (r) => {
-        attempts.push({ runName: r.runName, submitKey: r.submitKey });
-        throw new Error('502 Bad Gateway');
-    });
-    assert.equal(store.list()[0].state, 'failed');
-
-    store.update('a', { state: 'quoting' });
-    await store.submitReady(async (r) => {
-        attempts.push({ runName: r.runName, submitKey: r.submitKey });
-        return 'j1';
-    });
-
-    assert.equal(attempts.length, 2);
-    assert.deepEqual(attempts[0], attempts[1], 'the retry must replay, not duplicate');
-    assert.ok(attempts[0].submitKey);
-});
-
-test('a retry after the job ended carries a new name and key', async () => {
-    const store = new RunStore();
-    store.upsert(run('a'));
-    const attempts: { runName: string; submitKey: string }[] = [];
-    const record = async (r) => {
-        attempts.push({ runName: r.runName, submitKey: r.submitKey });
-        return 'j1';
-    };
-    await store.submitReady(record);
-    store.settle('a', { state: 'failed', detail: 'stage_failed' });
-
-    store.update('a', { state: 'quoting' });
-    await store.submitReady(record);
-
-    assert.notEqual(attempts[0].submitKey, attempts[1].submitKey);
-    assert.notEqual(attempts[0].runName, attempts[1].runName,
-        'the finished job still owns its run directory');
-});
-
-test('two runs on one dataset never claim the same name', async () => {
-    const store = new RunStore();
-    store.upsert(run('a'));
-    store.upsert(run('b'));
-    const names: string[] = [];
-    await store.submitReady(async (r) => {
-        names.push(r.runName);
-        return `j-${r.id}`;
-    });
-
-    assert.equal(new Set(names).size, 2);
-    assert.ok(names.every(name => name.startsWith('standard-')), names.join(' '));
-});
-
-test('a run still uploading or paused is never submitted', async () => {
-    const store = new RunStore();
-    store.upsert(run('b', { state: 'uploading' }));
-    store.upsert(run('c', { state: 'paused', datasetId: 'ds2' }));
-    let submits = 0;
-    await store.submitReady(async () => {
-        submits++;
-        return 'j1';
-    });
-
-    assert.equal(submits, 0);
-    assert.deepEqual(store.list().map(r => r.state), ['uploading', 'paused']);
-});
-
-test('a failed submit records the reason and leaves the others alone', async () => {
-    const store = new RunStore();
-    store.upsert(run('a'));
-    store.upsert(run('b'));
-    await store.submitReady(async (r) => {
-        if (r.id === 'a') throw new Error('gateway exploded');
-        return 'j2';
-    });
-
-    const [a, b] = store.list();
-    assert.equal(a.state, 'failed');
-    assert.match(a.detail, /gateway exploded/);
-    assert.equal(b.state, 'running');
-    assert.equal(b.jobId, 'j2');
-});
-
-test('a refusal with nothing running locally never latches the cap at zero', async () => {
-    const store = new RunStore();
-    store.upsert(run('a'));
-    await store.submitReady(refuse());
-    assert.equal(store.slotCap(), 1);
-
-    store.upsert(run('b'));
-    const submitted: string[] = [];
-    await store.submitReady(async (r) => {
-        submitted.push(r.id);
-        return 'j1';
-    });
-
-    assert.deepEqual(submitted, ['a'], 'a freed slot must still be usable');
 });
 
 test('one upload session never shows up as two runs', () => {
@@ -244,30 +70,29 @@ test('a row folded away hands its selection to the row that absorbed it', () => 
     store.upsert(run('b', { state: 'quoting', datasetId: 'ds2' }));
     store.select('a');
 
-    store.update('b', { state: 'uploading', datasetId: 'ds1' });
+    store.place('b', 'uploading', { datasetId: 'ds1' });
 
     assert.deepEqual(store.list().map(r => r.id), ['b']);
     assert.equal(store.selected()?.id, 'b');
 });
 
-test('overlapping submitReady passes never submit one run twice', async () => {
+test('the store refuses to write a run state on anybody else\'s behalf', () => {
+    // The lifecycle has one owner. A caller reaching past the transition table is a bug
+    // however sensible the move looks from where it stands, so it is refused loudly
+    // rather than written and discovered later as a run in an impossible state.
     const store = new RunStore();
-    store.upsert(run('a'));
-    const submitted: string[] = [];
-    let release: () => void;
-    const gate = new Promise<void>((resolve) => {
-        release = resolve;
-    });
-    const slow = async (r) => {
-        submitted.push(r.id);
-        await gate;
-        return 'j1';
-    };
+    store.upsert(run('a', { state: 'running', jobId: 'j1' }));
 
-    const first = store.submitReady(slow);
-    const second = store.submitReady(slow);
-    release();
-    await Promise.all([first, second]);
+    assert.throws(() => store.update('a', { state: 'done' } as any), /RunCoordinator/);
+    assert.equal(store.list()[0].state, 'running');
+});
 
-    assert.deepEqual(submitted, ['a']);
+test('nothing outside the coordinator reaches for the store\'s state writer', () => {
+    // `place` and `settle` are the coordinator's; the workflow goes through transition().
+    const workflow = readFileSync(
+        new URL('./reconstruction-workflow.ts', import.meta.url), 'utf8');
+    for (const forbidden of [/this\.runs\.place\(/, /this\.runs\.settle\(/,
+        /this\.runs\.update\([^)]*state:/]) {
+        assert.equal(forbidden.test(workflow), false, `workflow uses ${forbidden}`);
+    }
 });
