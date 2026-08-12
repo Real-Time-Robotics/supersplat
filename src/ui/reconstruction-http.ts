@@ -1,27 +1,21 @@
 type Listener = () => void;
-// `RequestInit` is not in the lint config's global set; this is the same type.
+type FetchInput = Parameters<typeof fetch>[0];
 type FetchInit = Parameters<typeof fetch>[1];
 
 const listeners = new Set<Listener>();
 let ended = false;
 
-/**
- * Called once when the backend says the session is over. Everything holding live state --
- * the account label, the pollers, the SSE streams, the submission loop -- listens here, so
- * an expired session cannot leave the app looking signed in.
- */
 const onSessionEnded = (listener: Listener): (() => void) => {
     listeners.add(listener);
     return () => listeners.delete(listener);
 };
 
 const endSession = (): void => {
-    if (ended) return;      // one announcement per expiry, however many calls saw the 401
+    if (ended) return;
     ended = true;
     for (const listener of [...listeners]) listener();
 };
 
-/** A fresh sign-in re-arms the guard. */
 const sessionRestored = (): void => {
     ended = false;
 };
@@ -38,18 +32,29 @@ const isSessionRefusal = async (response: Response): Promise<boolean> => {
     }
 };
 
-/**
- * The one way the client talks to /api/reconstruction. A 401 means the session is gone --
- * retrying it can only fail the same way, so it is announced instead.
- */
-const reconFetch = async (path: string, init: FetchInit = {}): Promise<Response> => {
-    const response = await fetch(path, init);
-    if (await isSessionRefusal(response)) endSession();
+const apiPath = (input: FetchInput): string | null => {
+    const raw = input instanceof Request ? input.url : String(input);
+    try {
+        const base = globalThis.location?.origin ?? 'https://local.invalid';
+        const url = new URL(raw, base);
+        if (!raw.startsWith('/') && globalThis.location && url.origin !== location.origin) return null;
+        return url.pathname;
+    } catch {
+        return null;
+    }
+};
+
+const reconFetch = async (input: FetchInput, init: FetchInit = {}): Promise<Response> => {
+    const response = await fetch(input, init);
+    const path = apiPath(input);
+    const internal = path?.startsWith('/api/reconstruction') || path?.startsWith('/api/gp');
+    if (internal && await isSessionRefusal(response)) endSession();
+    const method = init.method ?? (input instanceof Request ? input.method : 'GET');
+    if (path === '/api/reconstruction/session' && method.toUpperCase() === 'DELETE') endSession();
     return response;
 };
 
-/** reconFetch plus the JSON unwrap every caller was doing by hand. */
-const reconJson = async <T>(path: string, init: FetchInit = {}): Promise<T> => {
+const reconJson = async <T>(path: FetchInput, init: FetchInit = {}): Promise<T> => {
     const response = await reconFetch(path, init);
     const payload = await response.json().catch(() => ({})) as any;
     if (!response.ok) throw new Error(payload.error || `Request failed (${response.status}).`);

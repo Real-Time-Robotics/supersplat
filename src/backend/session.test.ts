@@ -6,6 +6,8 @@ import {
     SessionState,
     type SessionRecord,
     type SessionStorage,
+    type TokenSet,
+    isSessionId,
     newSessionId,
     readCookie,
     sessionCookieHeader
@@ -19,8 +21,16 @@ const memory = (): SessionStorage & { record: SessionRecord | null } => ({
     write(record: SessionRecord) {
         this.record = record;
     },
-    clear() {
+    writeIfVersion(record: SessionRecord, version: number) {
+        if (this.record?.version !== version) return false;
+        this.record = record;
+        return true;
+    },
+    clear(version?: number) {
+        if (version !== undefined && this.record?.version !== version) return false;
+        const existed = this.record !== null;
         this.record = null;
+        return existed;
     }
 });
 
@@ -52,7 +62,11 @@ const stateFor = (deps: {
 test('a session id is opaque and does not repeat', () => {
     const ids = new Set(Array.from({ length: 64 }, newSessionId));
     assert.equal(ids.size, 64);
-    for (const id of ids) assert.ok(id.length >= 40, 'at least 32 bytes of entropy');
+    for (const id of ids) {
+        assert.equal(id.length, 43);
+        assert.equal(isSessionId(id), true);
+    }
+    assert.equal(isSessionId('made-up-id'), false);
 });
 
 test('an api-key session hands back the key without ever touching a token endpoint', async () => {
@@ -125,6 +139,29 @@ test('concurrent requests through an expiring token refresh exactly once', async
 
     assert.equal(refreshes, 1, 'a refresh storm is what the coalescing is for');
     assert.deepEqual(answers.map(answer => answer?.token), ['a2', 'a2', 'a2']);
+});
+
+test('a refresh cannot restore a session destroyed while the token endpoint is pending', async () => {
+    let release: (value: TokenSet) => void = () => {};
+    const gate = new Promise<TokenSet>((resolve) => {
+        release = resolve;
+    });
+    const { session, storage } = stateFor({ refreshTokens: async () => gate });
+    session.create({
+        kind: 'oidc',
+        accessToken: 'a1',
+        refreshToken: 'r1',
+        expiresIn: 1,
+        label: 'me',
+        customerId: 'c1'
+    });
+
+    const refreshing = session.credential();
+    session.destroy();
+    release({ accessToken: 'a2', refreshToken: 'r2', expiresIn: 300 });
+
+    assert.equal(await refreshing, null);
+    assert.equal(storage.record, null);
 });
 
 test('a refresh that fails ends the session rather than falling back', async () => {

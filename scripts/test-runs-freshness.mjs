@@ -55,8 +55,6 @@ test('the runs aggregate is lazy and always fresh, and the upload route is gone'
     assert.equal(firstBody.runs.length, 1);
     assert.equal(first.headers.get('cache-control'), 'no-store');
 
-    // An isolate-local Map was only ever right for whichever isolate happened to answer,
-    // so a run finishing on one left the others serving a stale list for up to a minute.
     await call(env, '/api/reconstruction/datasets/ds1/runs', { headers: { cookie } });
     assert.equal(runCalls.length, 2, 'every open asks upstream');
 

@@ -8,20 +8,16 @@ import { UploadProgress } from './reconstruction-types';
 import { UploadRecords, type UploadRecord } from './reconstruction-upload-records';
 import { delay, formatBytes, formatDuration, readJson } from './reconstruction-utils';
 
-const gp = new Client(`${location.origin}/api/gp`, 'session-cookie');
+const gp = new Client(`${location.origin}/api/gp`, 'session-cookie', { fetch: reconFetch });
 
 type Named = { name: string; data: File };
 
 type TransferHooks = {
     onSession?: (record: UploadRecord) => void;
     onPercent?: (percent: number) => void;
-    /**
-     * Offer the shared progress card
-     */
     onCard?: (title: string, detail: string, visual: ProgressVisual) => void;
 };
 
-/** A transfer the user stopped. The session and its stored objects both survive. */
 class UploadPaused extends Error {
     constructor(readonly datasetId: string) {
         super('Đã tạm dừng tải lên.');
@@ -39,7 +35,6 @@ class ReconstructionUpload {
         this.transfer?.pause();
     }
 
-    // Give up on a session.
     async discard(datasetId: string): Promise<void> {
         const response = await reconFetch(
             `/api/reconstruction/datasets/${encodeURIComponent(datasetId)}`, { method: 'DELETE' });
@@ -47,7 +42,6 @@ class ReconstructionUpload {
         await this.records.remove(datasetId);
     }
 
-    /** Sessions the control plane still holds, narrowed to the ones we can resume. */
     async openSessions(): Promise<UploadRecord[]> {
         const sessions = await gp.listOpenSessions();
         return this.records.reconcile(sessions.map(session => session.dataset_id));

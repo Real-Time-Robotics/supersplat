@@ -28,13 +28,10 @@ import {
 } from './reconstruction-utils';
 import { ReconstructionView } from './reconstruction-view';
 
-// The picked folder, kept per run so a paused upload continues without picking it again.
-// `record` is the open session it belongs to, once one exists.
 type PickedFolder = { named: Named[]; fingerprint: string; record: UploadRecord | null };
 
 class ReconstructionWorkflow {
     private files: File[] = [];
-    /** The picked folder as store keys, derived once at pick time. */
     private named: { name: string; data: File }[] = [];
     private fingerprint = '';
     private preparedDataset: (Pick<UploadResponse, 'datasetId' | 'quote'> & {
@@ -44,10 +41,9 @@ class ReconstructionWorkflow {
     private cancelled = false;
     private pendingResume: UploadRecord | null = null;
     private watchGeneration = 0;
-    /** Whether the single uploader is taken. A run started while it is parks instead. */
+    private sessionGeneration = 0;
     private submitting = false;
     private readonly picked = new Map<string, PickedFolder>();
-    /** Runs whose images are being deleted, so their transfer ending is not a user pause. */
     private readonly discarding = new Set<string>();
     private readonly upload: ReconstructionUpload;
     private readonly job: ReconstructionJob;
@@ -66,12 +62,7 @@ class ReconstructionWorkflow {
             submit: run => this.submitRun(run),
             fetchJob: jobId => this.readJob(jobId)
         });
-        // A session that ended takes every watcher and the submit loop with it, so the
-        // panel cannot keep polling against a credential that is gone.
-        onSessionEnded(() => {
-            this.coordinator.stop();
-            this.job.detach();
-        });
+        onSessionEnded(() => this.endSession());
 
         const savedPipeline = localStorage.getItem(PIPELINE_KEY);
         if (savedPipeline === 'photogrammetry') this.pipeline = savedPipeline;
@@ -179,16 +170,33 @@ class ReconstructionWorkflow {
         }
     }
 
-    /**
-     * A session has just begun. The scheduler an ended session stopped runs again, under
-     * the cap this account actually has -- the previous one's is not carried over.
-     */
     beginSession() {
+        this.sessionGeneration++;
         this.coordinator.beginSession(this.billing.concurrentCap);
     }
 
+    private endSession() {
+        this.sessionGeneration++;
+        this.watchGeneration++;
+        this.coordinator.stop();
+        this.upload.pause();
+        this.job.detach();
+        this.artifacts.cancelDownload();
+        this.billing.endSession();
+        this.runs.clear();
+        this.picked.clear();
+        this.discarding.clear();
+        this.clearPreparedDataset();
+        this.releaseComposeFolder();
+        this.cancelled = false;
+        this.submitting = false;
+        this.view.checkoutLink.hidden = true;
+    }
+
     async restoreOpenSessions() {
+        const generation = this.sessionGeneration;
         const records = await this.upload.openSessions().catch(() => [] as UploadRecord[]);
+        if (generation !== this.sessionGeneration) return;
         const known = new Set(this.runs.list().map(run => run.datasetId).filter(Boolean));
         const uploading = this.submitting ? this.fingerprint : '';
         for (const record of records) {
@@ -229,21 +237,14 @@ class ReconstructionWorkflow {
         }
     }
 
-    /**
-     * Paint the shared progress card on this run's behalf.
-     */
     private card(run: Run, title: string, detail: string, visual: ProgressVisual) {
         if (this.runs.selected()?.id === run.id) this.view.setState(title, detail, visual);
     }
 
-    /** The same, for the run being composed: dropped once a real run owns the card. */
     private composerCard(title: string, detail: string, visual: ProgressVisual) {
         if (this.runs.selected() === null) this.view.setState(title, detail, visual);
     }
 
-    /**
-     * Settle a run that ended because it was cancelled, and say whether it did.
-     */
     private settleCancelled(error: unknown, run: Run): boolean {
         const code = error instanceof ReconstructionJobError ? error.code : '';
         if (code !== 'cancelled_by_user' && !this.cancelled) return false;
@@ -254,7 +255,6 @@ class ReconstructionWorkflow {
         return true;
     }
 
-    /** Stop the job the progress card is following.*/
     async cancelJob() {
         this.view.cancelButton.disabled = true;
         this.view.resetStartLabel();
@@ -427,9 +427,6 @@ class ReconstructionWorkflow {
         this.view.setBusy(busy, this.canStart);
     }
 
-    /**
-     * Warn when the balance looks short of what this folder will cost, before the upload
-     */
     private async warnIfShort(files: File[]) {
         if (this.runs.selected() !== null) return;   // a re-pick belongs to its run
         try {
@@ -453,10 +450,6 @@ class ReconstructionWorkflow {
         }
     }
 
-    /**
-     * Hand the picked folder over to the run that now owns it, so the pickers cannot offer
-     * the same images to a second run.
-     */
     private releaseComposeFolder() {
         this.files = [];
         this.named = [];
@@ -485,10 +478,6 @@ class ReconstructionWorkflow {
         this.coordinator.sync();
     }
 
-    /**
-     * Selecting a run moves the progress card. Repainted even when the selection did not
-     * change
-     */
     private selectRun(id: string) {
         this.runs.select(id);
         this.showSelected();
@@ -498,14 +487,12 @@ class ReconstructionWorkflow {
         const run = this.runs.selected();
         this.view.showCompose(run);
         if (!run) {
-            // The card belongs to the composer now.
             this.job.detach();
             this.view.setState('Ready',
                 'Chọn một bộ ảnh chụp quanh vật thể hoặc không gian.', { mode: 'idle' });
             return;
         }
         if (run.state === 'running' && run.jobId) {
-            // Re-attaching the stream we are already on would only restart it.
             if (this.job.watching !== run.jobId) this.watchRun(run);
             return;
         }
@@ -513,7 +500,6 @@ class ReconstructionWorkflow {
         this.view.setState(...runCard(run));
     }
 
-    /** Clear the selection so the pickers come back for a run that does not exist yet. */
     private newRun() {
         this.runs.select(null);       // emits, so the list and the pickers re-render
         this.view.setTab('create');
@@ -627,7 +613,6 @@ class ReconstructionWorkflow {
         return run;
     }
 
-    /** Upload (or resume) this run's folder and return the committed dataset id. */
     private transfer(run: Run): Promise<string> {
         const folder = this.picked.get(run.id);
         if (!folder) {
@@ -639,7 +624,6 @@ class ReconstructionWorkflow {
                 folder.record = record;
                 this.runs.update(run.id, { datasetId: record.datasetId });
             },
-            // Rounded, so the list is rebuilt at most once per percent rather than per chunk.
             onPercent: (percent: number) => this.runs.update(
                 run.id, { percent: Math.round(percent) }),
             onCard: (title: string, detail: string, visual: ProgressVisual) => {
@@ -652,11 +636,7 @@ class ReconstructionWorkflow {
                 run.label, hooks);
     }
 
-    /**
-     * Invariant: the pipeline is the RUN's, never the picker's. Reading the global here
-     * meant flipping the toggle while a run was quoting priced it as one pipeline and
-     * submitted it as the other.
-     */
+    /** Invariant: use the run's pipeline, never the current picker value. */
     private async quoteDataset(datasetId: string,
         pipeline: ReconstructionPipeline): Promise<UploadResponse> {
         const response = await reconFetch(
@@ -689,7 +669,6 @@ class ReconstructionWorkflow {
         });
     }
 
-    /** The uploader is free again, so the run that has been waiting longest can have it. */
     private startQueuedRun() {
         const next = this.runs.list().find(run => run.state === 'queued');
         if (!next) return;
@@ -699,6 +678,7 @@ class ReconstructionWorkflow {
     }
 
     private async startRun(run: Run) {
+        const generation = this.sessionGeneration;
         if (this.submitting) {
             this.coordinator.transition(run.id, 'queued', { detail: '' });
             this.selectRun(run.id);
@@ -719,8 +699,10 @@ class ReconstructionWorkflow {
             const datasetId = transferring ?
                 await this.transfer(run) :
                 run.datasetId ?? this.preparedDataset?.datasetId;
+            if (generation !== this.sessionGeneration) return;
             if (!datasetId) throw new Error('Không có dataset nào để chạy.');
             const prepared = await this.quoteDataset(datasetId, run.pipeline as ReconstructionPipeline);
+            if (generation !== this.sessionGeneration) return;
             this.picked.delete(run.id);
             this.coordinator.transition(run.id, 'quoting', { datasetId });
             this.billing.setBalance(prepared.quote.balance);
@@ -734,6 +716,7 @@ class ReconstructionWorkflow {
                     Math.ceil(prepared.quote.required - prepared.quote.balance)
                 );
                 await this.billing.showCreditShortfall(creditsNeeded);
+                if (generation !== this.sessionGeneration) return;
                 this.coordinator.transition(run.id, 'failed', {
                     detail: `Thiếu ${creditsNeeded.toLocaleString()} credit`
                 });
@@ -744,6 +727,7 @@ class ReconstructionWorkflow {
             }
 
             await this.coordinator.submitReady();
+            if (generation !== this.sessionGeneration) return;
             const submitted = this.runs.list().find(r => r.id === run.id);
             if (submitted?.state === 'waiting-slot') {
                 const cap = this.coordinator.slotCap();
@@ -760,6 +744,7 @@ class ReconstructionWorkflow {
             this.submitting = false;
             this.watchRun(submitted);
         } catch (error) {
+            if (generation !== this.sessionGeneration) return;
             const alive = this.runs.list().some(r => r.id === run.id);
             if (error instanceof UploadPaused) {
                 if (!alive || this.discarding.has(run.id)) return;
@@ -775,8 +760,10 @@ class ReconstructionWorkflow {
             this.card(run, jobError?.title || 'Reconstruction failed', messageOf(error),
                 { mode: 'failed' });
         } finally {
-            this.submitting = false;
-            this.startQueuedRun();
+            if (generation === this.sessionGeneration) {
+                this.submitting = false;
+                this.startQueuedRun();
+            }
         }
     }
 
@@ -791,8 +778,7 @@ class ReconstructionWorkflow {
             if (generation !== this.watchGeneration) return;
             if (this.settleCancelled(error, run)) return;
             const jobError = error instanceof ReconstructionJobError ? error : null;
-            // Only the server calling the job terminal spends the identity; a stream that
-            // merely dropped leaves the job alive, and a retry must replay into it.
+            // A dropped stream is not a terminal job result.
             if (jobError) this.coordinator.settle(run.id, 'failed', { detail: messageOf(error) });
             else this.coordinator.transition(run.id, 'failed', { detail: messageOf(error) });
             this.card(run, jobError?.title || 'Reconstruction failed',

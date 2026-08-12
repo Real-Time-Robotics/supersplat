@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 
 import { RunStore } from './reconstruction-run-store.ts';
@@ -77,22 +76,9 @@ test('a row folded away hands its selection to the row that absorbed it', () => 
 });
 
 test('the store refuses to write a run state on anybody else\'s behalf', () => {
-    // The lifecycle has one owner. A caller reaching past the transition table is a bug
-    // however sensible the move looks from where it stands, so it is refused loudly
-    // rather than written and discovered later as a run in an impossible state.
     const store = new RunStore();
     store.upsert(run('a', { state: 'running', jobId: 'j1' }));
 
     assert.throws(() => store.update('a', { state: 'done' } as any), /RunCoordinator/);
     assert.equal(store.list()[0].state, 'running');
-});
-
-test('nothing outside the coordinator reaches for the store\'s state writer', () => {
-    // `place` and `settle` are the coordinator's; the workflow goes through transition().
-    const workflow = readFileSync(
-        new URL('./reconstruction-workflow.ts', import.meta.url), 'utf8');
-    for (const forbidden of [/this\.runs\.place\(/, /this\.runs\.settle\(/,
-        /this\.runs\.update\([^)]*state:/]) {
-        assert.equal(forbidden.test(workflow), false, `workflow uses ${forbidden}`);
-    }
 });

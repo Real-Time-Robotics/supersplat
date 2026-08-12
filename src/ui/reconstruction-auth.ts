@@ -1,4 +1,4 @@
-import { onSessionEnded, reconFetch, sessionRestored } from './reconstruction-http';
+import { endSession, onSessionEnded, reconFetch, sessionRestored } from './reconstruction-http';
 import { ReconstructionView } from './reconstruction-view';
 
 type Account = {
@@ -166,15 +166,10 @@ class ReconstructionAuth {
         try {
             await reconFetch('/api/reconstruction/session', { method: 'DELETE' });
         } finally {
-            this.forgetSession('');
+            endSession();
         }
     }
 
-    /**
-     * Back to the login screen with nothing of the old session left in memory. Called both
-     * by an explicit sign-out and by the backend telling us the session is over -- the app
-     * must never keep looking signed in after a 401.
-     */
     private forgetSession(message: string) {
         this.account = null;
         this.view.showAuth();

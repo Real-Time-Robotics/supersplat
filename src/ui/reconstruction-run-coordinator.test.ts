@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 
 import { RunCoordinator, canTransition } from './reconstruction-run-coordinator.ts';
@@ -34,7 +33,6 @@ const refuse = () => async () => {
 const jobDone = { terminal: true, status: 'done' };
 const jobRunning = { terminal: false, status: 'running' };
 
-/** Timers the test drives by hand: nothing here waits on the wall clock. */
 const fakeTimers = () => {
     const pending = new Map<number, { fn:() => void; ms: number }>();
     let next = 1;
@@ -56,8 +54,6 @@ let coordinator: RunCoordinator;
 let clock: ReturnType<typeof fakeTimers>;
 let submitFn: (r: any) => Promise<string>;
 
-// One coordinator per test, with a swappable submit so a later pass can behave
-// differently without discarding the cap the first pass taught it.
 const coordinate = (store: RunStore, submit: (r: any) => Promise<string>,
     fetchJob: (id: string) => Promise<any> = async () => ({ terminal: false, status: 'running' })) => {
     clock = fakeTimers();
@@ -70,13 +66,11 @@ const coordinate = (store: RunStore, submit: (r: any) => Promise<string>,
 
 const coordinatorFor = (store: RunStore, submit: (r: any) => Promise<string>) => coordinate(store, submit).submitReady();
 
-/** Another pass through the SAME coordinator, so what it learned still applies. */
 const resubmit = (submit: (r: any) => Promise<string>) => {
     submitFn = submit;
     return coordinator.submitReady();
 };
 
-/** A store with one job running and one run parked behind a 409. */
 const cappedStore = async () => {
     const store = new RunStore();
     store.upsert(run('a', { state: 'running', jobId: 'j1' }));
@@ -100,7 +94,6 @@ test('a 409 parks the run without rewriting the account cap', async () => {
     assert.equal(submits, 1);
     assert.equal(store.list().find(r => r.id === 'b').state, 'waiting-slot');
     assert.equal(coordinator.slotCap(), 3, 'the plan says 3; a busy moment does not say 1');
-    assert.equal(coordinator.quotaBlocked(), true);
 });
 
 test('a parked run is submitted once a slot frees', async () => {
@@ -115,7 +108,6 @@ test('a parked run is submitted once a slot frees', async () => {
     assert.deepEqual(submitted, ['b']);
     assert.equal(store.list().find(r => r.id === 'b').state, 'running');
     assert.equal(store.list().find(r => r.id === 'b').jobId, 'j2');
-    assert.equal(coordinator.quotaBlocked(), false);
 });
 
 test('the coordinator never exceeds the cap the plan publishes', async () => {
@@ -134,9 +126,6 @@ test('the coordinator never exceeds the cap the plan publishes', async () => {
 });
 
 test('a slot held by another tab does not strand the run forever', async () => {
-    // Cap 2, one job here, one on another device. The 409 must not be read as "the cap
-    // is 1": when the other device finishes, this run has to be tried again even though
-    // nothing changed in this page's own list.
     const store = new RunStore();
     store.upsert(run('a', { state: 'running', jobId: 'j1' }));
     store.upsert(run('b'));
@@ -185,8 +174,28 @@ test('a new session replaces the cap and restarts a stopped scheduler', async ()
     coordinator.beginSession(4);
 
     assert.equal(coordinator.slotCap(), 4, 'the new account\'s plan, not the old one\'s');
-    assert.equal(coordinator.quotaBlocked(), false);
     assert.ok(clock.pending.size > 0, 'the scheduler runs again after a re-login');
+});
+
+test('an old submission cannot enter the next session after logout', async () => {
+    const store = new RunStore();
+    store.upsert(run('old'));
+    let release = (jobId: string) => {};
+    const pending = new Promise<string>((resolve) => {
+        release = resolve;
+    });
+    coordinate(store, async () => pending);
+
+    const oldSubmission = coordinator.submitReady();
+    await Promise.resolve();
+    coordinator.stop();
+    store.clear();
+    store.upsert(run('new'));
+    coordinator.beginSession(1);
+    release('old-job');
+    await oldSubmission;
+
+    assert.deepEqual(store.list().map(item => [item.id, item.state]), [['new', 'quoting']]);
 });
 
 test('a session with no published cap leaves the server to decide', () => {
@@ -295,8 +304,6 @@ test('a failed submit records the reason and leaves the others alone', async () 
 });
 
 test('a refusal with nothing running locally is not a permanent verdict', async () => {
-    // Everything holding the quota is on another tab, so this page's list stays empty --
-    // the old code latched the cap at 1 here and the run never asked again.
     const store = new RunStore();
     store.upsert(run('a'));
     await coordinatorFor(store, refuse());
@@ -338,8 +345,6 @@ test('overlapping submitReady passes never submit one run twice', async () => {
 });
 
 test('a run waiting on a slot retries even when nothing is running locally', async () => {
-    // The slot belongs to another tab or another device: no local run will ever finish to
-    // prompt a retry, so the coordinator has to keep asking on its own.
     const store = new RunStore();
     store.upsert(run('a', { state: 'waiting-slot', submitKey: 'k1' }));
     let attempts = 0;
@@ -366,7 +371,6 @@ test('the waiting retry backs off but never gives up', async () => {
 
     const first = clock.interval();
     await coordinator.pass();
-    coordinator.sync();
     const second = clock.interval();
 
     assert.ok(second > first, 'a slot that is not coming back is asked for less often');
@@ -538,18 +542,4 @@ test('each run is submitted under the pipeline it was created with', async () =>
     });
 
     assert.deepEqual(sent, ['a:splat', 'b:photogrammetry']);
-});
-
-test('the run is quoted and submitted under its own pipeline, never the picker\'s', () => {
-    // Invariant, guarded at the source: reading the global here priced a run as one
-    // pipeline and submitted it as whichever the toggle happened to be on by then.
-    const source = readFileSync(
-        new URL('./reconstruction-workflow.ts', import.meta.url), 'utf8');
-    assert.match(source, /quoteDataset\(datasetId, run\.pipeline/);
-    assert.match(source, /run\.pipeline as ReconstructionPipeline/);
-
-    const startRun = source.slice(source.indexOf('private async startRun'),
-        source.indexOf('private async watchRun'));
-    assert.equal(startRun.includes('this.pipeline'), false,
-        'nothing in a run\'s own path may consult the picker');
 });

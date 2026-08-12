@@ -89,11 +89,8 @@ test('auth sessions and photogrammetry proxy flow remain isolated and typed', as
     const cookie = login.headers.get('set-cookie');
     assert.match(cookie, /HttpOnly/);
     assert.match(cookie, /SameSite=Strict/);
-    // Signing in is not a reason to hand out a long-lived credential, and it is certainly
-    // not a reason to revoke one another device is still using.
     assert.deepEqual(keyCalls, []);
     assert.deepEqual(revoked, []);
-    // The cookie is an opaque id: no key, no access token, no refresh token.
     for (const secret of ['gp_live_', 'human-token', 'human-refresh']) {
         assert.ok(!cookie.includes(secret), `the cookie leaked ${secret}`);
     }
@@ -102,7 +99,6 @@ test('auth sessions and photogrammetry proxy flow remain isolated and typed', as
     assert.equal(session.status, 200);
     assert.equal((await session.json()).account.label, 'user@example.com');
 
-    // There is no way to read a credential back out of a session, for anyone.
     const reveal = await call(env, '/api/reconstruction/session/api-key', {
         headers: { Cookie: cookie }
     });

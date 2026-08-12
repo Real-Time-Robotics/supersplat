@@ -5,20 +5,15 @@ type CacheScope =
 type IndexEntry = { size: number; seq: number };
 
 const CACHE_NAME = 'genesis-artifacts-v1';
-// Stamped on every entry we write so a lost index can be rebuilt without reading the
-// bodies back. Entries written before it existed are measured once, on reconcile.
+// Track sizes without reading cached bodies.
 const SIZE_HEADER = 'x-genesis-cached-bytes';
 const INDEX_KEY = 'genesis.artifact-cache.index';
 const DEFAULT_CEILING_BYTES = 4 * 1024 ** 3;
-// Leave the browser headroom: at 100% of the reported quota a write fails outright, and
-// the quota is an estimate rather than a promise.
+// Reserve headroom because browser quotas are approximate.
 const QUOTA_SHARE = 0.8;
 
 const part = (value: string | number) => encodeURIComponent(String(value));
 
-/**
- * A synthetic key, never fetched.
- */
 const cacheKeyFor = (scope: CacheScope, name: string): string => {
     const tail = scope.kind === 'job' ?
         `job/${part(scope.jobId)}` :
@@ -58,8 +53,6 @@ class ArtifactCache {
         return caches.open(CACHE_NAME);
     }
 
-    // The entry's real byte count. Free for anything we wrote; a legacy entry costs one
-    // read of its body, and content-length is absent often enough not to be relied on.
     private async sizeOf(response: Response): Promise<number> {
         for (const header of [SIZE_HEADER, 'content-length']) {
             const declared = Number(response.headers.get(header));
@@ -77,7 +70,6 @@ class ArtifactCache {
             const quota = (await navigator.storage.estimate()).quota ?? 0;
             if (quota > 0) return Math.floor(Math.min(this.ceiling, quota * QUOTA_SHARE));
         } catch {
-            // No Storage API: fall back to our own ceiling.
         }
         return this.ceiling;
     }
@@ -143,12 +135,6 @@ class ArtifactCache {
         this.writeIndex({});
     }
 
-    /**
-     * Make the index agree with what the cache actually holds: a body whose index entry
-     * was lost is measured and kept, an index entry whose body is gone is dropped.
-     * Sizing them at 0 made them free to hold and invisible to eviction, so the cache
-     * grew past its budget and never shrank.
-     */
     async reconcile(): Promise<void> {
         const index = this.readIndex();
         const cache = await this.open();

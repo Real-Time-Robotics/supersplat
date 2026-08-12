@@ -23,7 +23,6 @@ import {
 } from './reconstruction-utils';
 import type { ReconstructionView } from './reconstruction-view';
 
-// What a queued job's card says
 const queuedState = (gpu: JobGpu | null | undefined): [string, string, ProgressVisual] => {
     switch (gpu?.state) {
         case 'creating':
@@ -45,9 +44,6 @@ const queuedState = (gpu: JobGpu | null | undefined): [string, string, ProgressV
     }
 };
 
-/**
- * How a watch ended. `detached` means the card changed hands while the job was still running
- */
 type WatchOutcome = 'done' | 'detached';
 
 class ReconstructionJobError extends Error {
@@ -176,9 +172,6 @@ class ReconstructionJob {
         this.view.openPrimaryButton.addEventListener('click', () => this.togglePrimaryOpen());
     }
 
-    /**
-     * Submit without watching
-     */
     async submit(datasetId: string, pipeline: ReconstructionPipeline,
         runName: string, idempotencyKey: string): Promise<string> {
         const response = await reconFetch('/api/reconstruction/jobs', {
@@ -204,9 +197,6 @@ class ReconstructionJob {
         return data.jobId;
     }
 
-    /**
-     * Watch a job that was submitted.
-     */
     attach(jobId: string): Promise<WatchOutcome> {
         const generation = ++this.watchGeneration;
         this.cancelled = false;
@@ -234,19 +224,14 @@ class ReconstructionJob {
         return this.waitForJob(jobId, generation);
     }
 
-    /** The job currently writing to the shared card, if any. */
     get watching(): string | null {
         return this.activeJobId;
     }
 
-    /** Every await hands control back, and `detach` can land in any of those gaps. */
     private stillWatching(generation: number): boolean {
         return generation === this.watchGeneration;
     }
 
-    /**
-     * Let go of the shared card without touching the job.
-     */
     detach() {
         this.watchGeneration++;
         this.activeEvents?.close();
@@ -349,10 +334,8 @@ class ReconstructionJob {
         };
     }
 
-    /** The card for a job that has not settled yet. */
     private renderPending(job: JobStatus, artifacts: Artifact[]) {
         if (this.cancelled) {
-            // Cancelling is a state of the watch, not an interruption of it
             this.view.setState('Đang huỷ luồng',
                 'Đã gửi yêu cầu dừng. Đang chờ máy chủ xác nhận job đã kết thúc.',
                 { mode: 'indeterminate', center: 'Huỷ' });

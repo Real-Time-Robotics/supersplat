@@ -1,7 +1,7 @@
 import { Events } from '../events';
 import { type CacheScope, artifactCache } from './reconstruction-artifact-cache';
 import { ReconstructionDatasets } from './reconstruction-datasets';
-import { reconFetch } from './reconstruction-http';
+import { onSessionEnded, reconFetch } from './reconstruction-http';
 import type { ProgressVisual } from './reconstruction-progress';
 import { Artifact, ArtifactSource, RecentDataset, RecentRun } from './reconstruction-types';
 import { gp } from './reconstruction-upload';
@@ -38,6 +38,7 @@ class ReconstructionArtifacts {
     private activeDownload: AbortController | null = null;
     private activeDatasetId: string | null = null;
     private activeScope: CacheScope | null = null;
+    private sessionGeneration = 0;
     private readonly artifactLocations = new Map<string, HTMLElement>();
     private readonly datasets: ReconstructionDatasets;
 
@@ -65,7 +66,24 @@ class ReconstructionArtifacts {
         );
         view.refreshRunsButton.addEventListener('click', () => this.refreshRecentRuns());
         view.clearCacheButton.addEventListener('click', () => this.clearCache());
+        onSessionEnded(() => this.endSession());
         artifactCache.reconcile().then(() => this.refreshCacheUsage());
+    }
+
+    beginSession() {
+        this.sessionGeneration++;
+    }
+
+    private endSession() {
+        this.sessionGeneration++;
+        this.cancelDownload();
+        this.activeDatasetId = null;
+        this.activeScope = null;
+        this.artifactLocations.clear();
+        this.view.recentRuns.textContent = '';
+        this.view.artifactList.textContent = '';
+        this.view.artifactPanel.hidden = true;
+        this.view.refreshRunsButton.disabled = false;
     }
 
     cancelDownload() {
@@ -77,10 +95,12 @@ class ReconstructionArtifacts {
     }
 
     async refreshRecentRuns() {
+        const generation = this.sessionGeneration;
         this.view.refreshRunsButton.disabled = true;
         try {
             const response = await reconFetch('/api/reconstruction/runs?limit=12', { cache: 'no-store' });
             const data = await readJson<{ datasets: RecentDataset[] }>(response);
+            if (generation !== this.sessionGeneration) return;
             this.view.recentRuns.textContent = '';
             if (!data.datasets.length) {
                 const empty = document.createElement('span');
@@ -146,9 +166,10 @@ class ReconstructionArtifacts {
                 this.view.recentRuns.appendChild(card);
             }
         } catch (error) {
+            if (generation !== this.sessionGeneration) return;
             this.view.recentRuns.textContent = `Could not load datasets: ${messageOf(error)}`;
         } finally {
-            this.view.refreshRunsButton.disabled = false;
+            if (generation === this.sessionGeneration) this.view.refreshRunsButton.disabled = false;
         }
     }
 
@@ -157,6 +178,7 @@ class ReconstructionArtifacts {
         container: HTMLElement,
         trigger: HTMLButtonElement
     ) {
+        const generation = this.sessionGeneration;
         trigger.disabled = true;
         trigger.textContent = 'Đang tải…';
         try {
@@ -165,6 +187,7 @@ class ReconstructionArtifacts {
                 { cache: 'no-store' }
             );
             const data = await readJson<{ runs: RecentRun[] }>(response);
+            if (generation !== this.sessionGeneration) return;
             const models = data.runs
             .filter(run => run.status === 'done' && run.artifact_count > 0 && run.primary)
             .sort((a, b) => b.created - a.created)
@@ -200,6 +223,7 @@ class ReconstructionArtifacts {
                 container.appendChild(button);
             }
         } catch (error) {
+            if (generation !== this.sessionGeneration) return;
             trigger.disabled = false;
             trigger.textContent = `Không tải được: ${messageOf(error)}`;
         }
@@ -349,7 +373,7 @@ class ReconstructionArtifacts {
                 `/runs/${encodeURIComponent(run.pipeline)}/${encodeURIComponent(run.run_name)}/artifacts` +
                 `?created=${encodeURIComponent(run.created)}`;
             const data = await readJson<{ artifacts: Artifact[] }>(
-                await fetch(route, { cache: 'no-store' })
+                await reconFetch(route, { cache: 'no-store' })
             );
             const artifacts = Array.isArray(data.artifacts) ? data.artifacts : [];
             if (!artifacts.length) throw new Error('This run does not contain any downloadable artifacts.');

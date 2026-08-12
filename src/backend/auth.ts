@@ -88,8 +88,6 @@ const tokenRequest = async (issuer: string, body: URLSearchParams,
     }
     return {
         accessToken: String(payload.access_token),
-        // Keycloak may decline to issue one. The session then lives exactly as long as
-        // the access token, and logs out honestly rather than being propped up.
         refreshToken: String(payload.refresh_token || ''),
         expiresIn: Number(payload.expires_in) || 0
     };

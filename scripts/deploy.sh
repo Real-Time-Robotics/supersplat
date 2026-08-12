@@ -31,8 +31,7 @@ fi
 
 step() { echo; echo "==== $* ===="; }
 
-# Gate BEFORE the build, and before the version bump: a failed gate must not leave a
-#    bumped package.json behind for someone to undo by hand.
+# Gate before mutating package.json.
 step "typecheck"
 npx tsc --noEmit -p tsconfig.json
 step "lint"
@@ -46,17 +45,14 @@ npm run test:gateway-proxy
 npm run test:runs-freshness
 npm run test:model-import
 
-# `npm run build` runs prebuild, which builds the genesis TypeScript SDK from
-#    ../reconstruction (a symlink to the genesis repo) -- so an uncommitted SDK change
-#    there ships in this bundle. Check that tree is the one you mean before shipping.
+# prebuild bundles the linked Genesis SDK.
 if [ "$BUMP" = 1 ]; then
     step "bump patch"
     npm version patch --no-git-tag-version
 fi
 version="$(node -p 'require("./package.json").version')"
 
-# Deploying is not fatal on its own: wrangler exits 1 when the script uploaded fine but the
-#    token cannot update the route, and the smoke below is the honest test of what is live.
+# Smoke decides success because route updates can fail after upload.
 step "deploy $version"
 set +e
 npm run deploy

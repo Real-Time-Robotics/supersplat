@@ -25,12 +25,8 @@ let localEnv = {};
 try {
     localEnv = parseEnv(await readFile(path.join(rootDir, '.env.local'), 'utf8'));
 } catch {
-    // Environment variables are also supported, so a local file is optional.
 }
 
-// The Durable Object namespace, in this one process and over in-memory SQLite. Cloudflare
-// gives the deployed worker the real thing; here the objects live and die with the server,
-// which is the right lifetime for a dev session anyway.
 const sessionNamespace = (env) => {
     const objects = new Map();
     const sql = () => {

@@ -4,7 +4,14 @@ import { test } from 'node:test';
 
 import { call, envFor, listenOnRandomPort, sendJson, signInWithApiKey } from './test-support.mjs';
 
-/** A gateway that counts what the session layer asks of it. */
+const deferred = () => {
+    let resolve = () => {};
+    const promise = new Promise(done => {
+        resolve = done;
+    });
+    return { promise, resolve };
+};
+
 const gatewayFor = (state) => createServer(async (req, res) => {
     const url = new URL(req.url, state.issuer);
     if (req.method === 'GET' && url.pathname === '/v1/config') {
@@ -14,6 +21,10 @@ const gatewayFor = (state) => createServer(async (req, res) => {
         for await (const chunk of req) body += chunk;
         const grant = new URLSearchParams(body).get('grant_type');
         state.grants.push(grant);
+        if (grant === 'refresh_token' && state.refreshGate) {
+            state.refreshGate.started.resolve();
+            await state.refreshGate.release.promise;
+        }
         if (grant === 'refresh_token' && state.refuseRefresh) {
             sendJson(res, 400, { error: 'invalid_grant' });
             return;
@@ -80,8 +91,6 @@ test('a second login leaves the first device signed in', async (context) => {
 });
 
 test('an upstream rejection is retried once against a renewed token', async (context) => {
-    // The first access token is refused; the session renews and replays, and the second
-    // attempt is the one the browser sees.
     const { state, env } = await worldFor(context, { rejectUntil: 'access-2' });
     const cookie = await signIn(env);
 
@@ -89,8 +98,6 @@ test('an upstream rejection is retried once against a renewed token', async (con
 
     assert.equal(answer.status, 200);
     assert.deepEqual(state.grants, ['password', 'refresh_token']);
-    // The first entry is the login's own credits lookup; the route then presents
-    // access-1 once, is refused, and replays exactly once with the renewed token.
     assert.deepEqual(state.presented, ['access-1', 'access-1', 'access-2']);
 });
 
@@ -122,10 +129,12 @@ test('a refresh Keycloak refuses logs the session out', async (context) => {
 
 test('a session id nobody minted buys nothing', async (context) => {
     const { env } = await worldFor(context);
+    const before = env.RECON_SESSIONS.count();
     const answer = await call(env, '/api/reconstruction/session', {
         headers: { Cookie: 'genesis_reconstruction_session=made-up-id' }
     });
     assert.equal(answer.status, 401);
+    assert.equal(env.RECON_SESSIONS.count(), before);
 });
 
 test('an api-key login works, and the key is never readable afterwards', async (context) => {
@@ -144,8 +153,6 @@ test('an api-key login works, and the key is never readable afterwards', async (
 });
 
 test('the object still answers after a logout wiped its database', async (context) => {
-    // deleteAll() on a SQLite-backed object drops the tables, and the object stays in
-    // memory: the request right after a logout used to meet "no such table: session".
     const { env } = await worldFor(context);
     const cookie = await signIn(env);
 
@@ -153,12 +160,13 @@ test('the object still answers after a logout wiped its database', async (contex
         method: 'DELETE', headers: { Cookie: cookie }
     });
     assert.equal(out.status, 204);
+    assert.deepEqual(env.RECON_SESSIONS.storageOf(
+        decodeURIComponent(cookie.split('=').slice(1).join('='))).tableNames(), []);
 
     const replay = await call(env, '/api/reconstruction/session', { headers: { Cookie: cookie } });
     assert.equal(replay.status, 401, 'refused, not crashed');
     assert.equal((await replay.json()).code, 'session_expired');
 
-    // And the id is reusable as a fresh object rather than poisoned for good.
     const again = await signIn(env);
     const answer = await call(env, '/api/reconstruction/session', { headers: { Cookie: again } });
     assert.equal(answer.status, 200);
@@ -176,6 +184,7 @@ test('a session gets an alarm to clear itself out even if nobody returns', async
     await env.RECON_SESSIONS.get(id).alarm();
 
     assert.equal(await storage.getAlarm(), null);
+    assert.deepEqual(storage.tableNames(), []);
     const replay = await call(env, '/api/reconstruction/session', { headers: { Cookie: cookie } });
     assert.equal(replay.status, 401, 'the refresh token did not outlive the session');
 });
@@ -190,6 +199,27 @@ test('logout leaves no alarm behind for an object that no longer exists', async 
     assert.equal(await env.RECON_SESSIONS.storageOf(id).getAlarm(), null);
 });
 
+test('logout wins when an access-token refresh is already in flight', async (context) => {
+    const refreshGate = { started: deferred(), release: deferred() };
+    const { env } = await worldFor(context, { expiresIn: 1, refreshGate });
+    const cookie = await signIn(env);
+    const id = decodeURIComponent(cookie.split('=').slice(1).join('='));
+
+    const refreshing = call(env, '/api/reconstruction/session', { headers: { Cookie: cookie } });
+    await refreshGate.started.promise;
+    const logout = await call(env, '/api/reconstruction/session', {
+        method: 'DELETE', headers: { Cookie: cookie }
+    });
+    assert.equal(logout.status, 204);
+    assert.deepEqual(env.RECON_SESSIONS.storageOf(id).tableNames(), []);
+
+    refreshGate.release.resolve();
+    assert.equal((await refreshing).status, 401);
+    const replay = await call(env, '/api/reconstruction/session', { headers: { Cookie: cookie } });
+    assert.equal(replay.status, 401);
+    assert.deepEqual(env.RECON_SESSIONS.storageOf(id).tableNames(), []);
+});
+
 test('a missing Durable Object binding fails closed', async (context) => {
     const { env } = await worldFor(context);
     const cookie = await signIn(env);
@@ -199,8 +229,6 @@ test('a missing Durable Object binding fails closed', async (context) => {
         headers: { Cookie: cookie }
     });
 
-    // 503, never 200: with no session storage nothing can be authenticated, and a 401
-    // would be indistinguishable from a working app that is merely logged out.
     assert.equal(answer.status, 503);
     assert.equal((await answer.json()).code, 'sessions_unavailable');
 });

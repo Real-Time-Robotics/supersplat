@@ -26,7 +26,6 @@ class FakeCache {
         this.store.set(key, { body, headers });
     }
 
-    /** Seed an entry the way a build before the size header wrote it. */
     seedLegacy(key: string, size: number, headers: Record<string, string> = {}) {
         this.store.set(key, { body: new Uint8Array(size), headers });
     }
@@ -51,7 +50,6 @@ const install = () => {
         setItem: (key: string, value: string) => values.set(key, value),
         removeItem: (key: string) => values.delete(key)
     };
-    // Node exposes `navigator` as a getter-only accessor, so it cannot be assigned.
     Object.defineProperty(globalThis, 'navigator', {
         configurable: true,
         value: { storage: { estimate: async () => ({ quota: 1024 * 1024 }) } }

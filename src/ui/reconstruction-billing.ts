@@ -1,13 +1,14 @@
 import { reconFetch } from './reconstruction-http';
-import { CheckoutStatus, PricingCatalog } from './reconstruction-types';
+import type { CheckoutStatus, PricingCatalog } from './reconstruction-types';
 import { delay, messageOf, readJson } from './reconstruction-utils';
-import { ReconstructionView } from './reconstruction-view';
+import type { ReconstructionView } from './reconstruction-view';
 
 class ReconstructionBilling {
     private balance = 0;
     private cap: number | null = null;
     private pricingLoaded = false;
     private checkoutPollId = 0;
+    private sessionGeneration = 0;
 
     constructor(
         private readonly view: ReconstructionView,
@@ -31,19 +32,34 @@ class ReconstructionBilling {
         this.checkoutPollId++;
     }
 
-    /** The account's concurrent-job cap, as last published by the control plane. */
+    beginSession() {
+        this.sessionGeneration++;
+    }
+
+    endSession() {
+        this.sessionGeneration++;
+        this.cancelPolling();
+        this.cap = null;
+        this.setBalance(0);
+        this.view.purchaseCheckoutLink.hidden = true;
+        this.view.purchaseStatus.textContent = '';
+    }
+
     get concurrentCap() {
         return this.cap;
     }
 
     async refreshCredits() {
+        const generation = this.sessionGeneration;
         try {
             const response = await reconFetch('/api/reconstruction/credits', { cache: 'no-store' });
             const data = await readJson<{ balance: number; concurrent?: number }>(response);
+            if (generation !== this.sessionGeneration) return null;
             this.setBalance(data.balance);
             if (typeof data.concurrent === 'number') this.cap = data.concurrent;
             return this.balance;
         } catch {
+            if (generation !== this.sessionGeneration) return null;
             this.view.creditValue.textContent = 'offline';
             return null;
         }
@@ -130,15 +146,17 @@ class ReconstructionBilling {
             this.view.purchaseCheckoutLink.hidden = false;
             if (popup) popup.location.href = checkout.url;
             this.view.purchaseStatus.textContent = `Waiting for ${expectedCredits.toLocaleString()} credits…`;
-            await this.waitForCheckout(checkout.id, balanceBefore, popup);
-            await this.onCheckoutComplete();
+            if (await this.waitForCheckout(checkout.id, balanceBefore, popup)) {
+                await this.onCheckoutComplete();
+            }
         } catch (error) {
             popup?.close();
             this.view.purchaseStatus.textContent = messageOf(error);
         }
     }
 
-    private async waitForCheckout(checkoutId: string, balanceBefore: number, popup: Window | null) {
+    private async waitForCheckout(checkoutId: string, balanceBefore: number,
+        popup: Window | null): Promise<boolean> {
         const pollId = ++this.checkoutPollId;
         let paymentConfirmed = false;
         for (let attempt = 0; attempt < 150 && pollId === this.checkoutPollId; attempt++) {
@@ -149,7 +167,7 @@ class ReconstructionBilling {
                 });
                 checkout = await readJson<CheckoutStatus>(response);
             } catch {
-                // Balance remains a reliable fallback if checkout status is temporarily unavailable.
+                // Checkout and balance are independent signals.
             }
             const balance = await this.refreshCredits();
             paymentConfirmed ||= checkout?.status === 'paid';
@@ -158,7 +176,7 @@ class ReconstructionBilling {
                 const received = balance - balanceBefore;
                 this.view.purchaseStatus.textContent = `Received ${received.toLocaleString()} credits.`;
                 this.view.purchaseCheckoutLink.hidden = true;
-                return;
+                return true;
             }
             if (paymentConfirmed) {
                 this.view.purchaseStatus.textContent = 'Payment confirmed. Waiting for the credit balance to update…';
@@ -171,6 +189,7 @@ class ReconstructionBilling {
         if (pollId === this.checkoutPollId) {
             throw new Error('Checkout is still not complete. You can reopen the checkout or check your balance later.');
         }
+        return false;
     }
 }
 

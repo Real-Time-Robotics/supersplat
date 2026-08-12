@@ -4,19 +4,13 @@ import { DatabaseSync } from 'node:sqlite';
 import { handle } from '../src/backend/router.ts';
 import { ReconstructionSession } from '../src/backend/session-object.ts';
 
-/**
- * The shape Cloudflare hands a Durable Object as `ctx.storage`, over real SQLite -- so the
- * schema and every statement in session-object.ts are exercised, not stubbed. `deleteAll`
- * drops the tables, which is what it does to a SQLite-backed object: a no-op here hid a
- * "no such table: session" that every request after a logout would have hit.
- */
 const doStorage = () => {
     const db = new DatabaseSync(':memory:');
     const state = { alarm: null };
     const sql = {
         exec: (query, ...bindings) => {
             const statement = db.prepare(query);
-            const reads = /^\s*SELECT/i.test(query);
+            const reads = /^\s*(SELECT|PRAGMA)/i.test(query) || /\bRETURNING\b/i.test(query);
             const rows = reads ? statement.all(...bindings) : (statement.run(...bindings), []);
             return { toArray: () => rows };
         }
@@ -30,6 +24,8 @@ const doStorage = () => {
             state.alarm = null;
         },
         getAlarm: async () => state.alarm,
+        tableNames: () => db.prepare(
+            "SELECT name FROM sqlite_master WHERE type = 'table'").all().map(row => row.name),
         deleteAll: async () => {
             for (const { name } of db.prepare(
                 "SELECT name FROM sqlite_master WHERE type = 'table'").all()) {
@@ -42,7 +38,6 @@ const doStorage = () => {
 
 const sqlStorage = () => doStorage().sql;
 
-/** A stand-in for the DO namespace binding: one live object per session id. */
 const sessionNamespace = (env) => {
     const objects = new Map();
     const storages = new Map();
@@ -56,9 +51,9 @@ const sessionNamespace = (env) => {
             }
             return objects.get(id);
         },
-        // Tests reach in to drive what only the runtime would: eviction, and the alarm.
         forget: id => objects.delete(id),
-        storageOf: id => storages.get(id)
+        storageOf: id => storages.get(id),
+        count: () => objects.size
     };
 };
 
@@ -79,11 +74,9 @@ const envFor = (gatewayPort) => {
     return env;
 };
 
-/** Call the backend the way a browser would. `path` is origin-relative. */
 const call = (env, path, init = {}) =>
     handle(new Request(`https://editor.test${path}`, init), env);
 
-/** Sign in with an api key and return the cookie pair for subsequent requests. */
 const signInWithApiKey = async (env, apiKey = 'gp_live_test') => {
     const response = await call(env, '/api/reconstruction/session/api-key', {
         method: 'POST',

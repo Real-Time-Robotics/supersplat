@@ -15,6 +15,7 @@ import {
     SESSION_LIFETIME_MS,
     type Account,
     type Credential,
+    isSessionId,
     newSessionId,
     readCookie,
     sessionCookieHeader
@@ -37,13 +38,11 @@ const json = (payload: unknown, status = 200, headers: Record<string, string> = 
     }
 );
 
-/** The object holding this browser's session, or null when it presented no cookie. */
 const objectFor = (request: Request, env: Env) => {
     const id = readCookie(request, SESSION_COOKIE);
-    if (!id) return null;
+    if (!id || !isSessionId(id)) return null;
     if (!env.RECON_SESSIONS) {
-        // Fail closed: without the binding nothing can be authenticated, and treating
-        // that as "no session" would be indistinguishable from a working logged-out app.
+        // Security: missing storage must not look like a logged-out session.
         throw new HttpError(503, 'Session storage is unavailable.', 'sessions_unavailable');
     }
     return env.RECON_SESSIONS.get(env.RECON_SESSIONS.idFromName(id));
@@ -60,13 +59,6 @@ const askSession = (object: { fetch: (request: Request) => Promise<Response> },
             body: JSON.stringify(body)
         }
 ));
-
-const sessionOf = async (request: Request, env: Env): Promise<Credential | null> => {
-    const object = objectFor(request, env);
-    if (!object) return null;
-    const answer = await askSession(object, '/credential');
-    return answer.ok ? await answer.json() as Credential : null;
-};
 
 const expired = () => new HttpError(401,
     'Your session has ended. Sign in again to continue.', 'session_expired');
@@ -87,10 +79,6 @@ const secureFor = (request: Request): boolean => {
     return forwarded === 'https' || new URL(request.url).protocol === 'https:';
 };
 
-/**
- * Mint a fresh id and hand the credentials to its object. A new login is always a new
- * session id, so a cookie from before it can never name this one.
- */
 const establish = async (request: Request, env: Env, record: Record<string, unknown>,
     status = 200): Promise<Response> => {
     if (!env.RECON_SESSIONS) {
@@ -131,8 +119,7 @@ const sessionRoute = async (request: Request, env: Env, rest: string): Promise<R
         return json({ authenticated: true, account: session.account });
     }
     if (rest === '' && request.method === 'DELETE') {
-        // Idempotent, and the object's state goes before the cookie is cleared: a
-        // replayed cookie must find nothing, not a session it can still spend.
+        // Security: delete server state before clearing the cookie.
         const object = objectFor(request, env);
         if (object) await askSession(object, '/destroy');
         return new Response(null, {
@@ -344,7 +331,6 @@ const reconRoute = async (request: Request, env: Env, session: Credential,
 
 const isUnauthorized = (value: unknown): boolean => Number((value as any)?.status) === 401;
 
-// Distinct from a route answering `null` (no such path), which must not trigger a renewal.
 const REFUSED = Symbol('upstream refused the credential');
 
 type Attempt = (attempt: Request, session: Credential) => Promise<Response | null>;
@@ -353,18 +339,17 @@ const attemptOnce = async (run: Attempt, request: Request,
     session: Credential): Promise<Response | null | typeof REFUSED> => {
     try {
         const answered = await run(request, session);
-        return answered && isUnauthorized(answered) ? REFUSED : answered;
+        if (answered && isUnauthorized(answered)) {
+            await answered.body?.cancel().catch((): void => undefined);
+            return REFUSED;
+        }
+        return answered;
     } catch (error) {
         if (!isUnauthorized(error)) throw error;
         return REFUSED;
     }
 };
 
-/**
- * Run an authenticated route, and give an upstream rejection exactly one more chance:
- * renew the credential, replay once, and end the session if it is still refused. Anything
- * beyond one retry is a loop against a credential that is not coming back.
- */
 const authenticated = async (request: Request, env: Env,
     run: Attempt): Promise<Response | null> => {
     const replay = request.method === 'GET' || request.method === 'HEAD' ?
@@ -383,9 +368,6 @@ const authenticated = async (request: Request, env: Env,
     throw expired();
 };
 
-/**
- * Resolves null only for paths outside /api/, An unknown /api/ path gets a JSON 404
- */
 const handle = async (request: Request, env: Env): Promise<Response | null> => {
     const { pathname, searchParams } = new URL(request.url);
     if (!pathname.startsWith('/api/')) return null;
@@ -408,8 +390,6 @@ const handle = async (request: Request, env: Env): Promise<Response | null> => {
             return json({ error: 'Proxy path not allowed.', code: 'proxy_path_denied' }, 404);
         }
         if (error instanceof HttpError) {
-            // An ended session takes its cookie with it, so the browser stops presenting
-            // an id that can only be refused.
             const headers = error.code === 'session_expired' ? {
                 'Set-Cookie': sessionCookieHeader('', {
                     secure: secureFor(request), maxAgeSeconds: 0
@@ -421,4 +401,4 @@ const handle = async (request: Request, env: Env): Promise<Response | null> => {
     }
 };
 
-export { type Env, handle, json, requireSession, sessionOf };
+export { type Env, handle, json, requireSession };

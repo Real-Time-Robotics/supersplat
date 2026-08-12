@@ -37,6 +37,31 @@ test('a 401 ends the session for every listener', async () => {
     assert.equal(sessionIsOver(), true);
 });
 
+test('an explicit logout ends the local runtime after the server reply', async () => {
+    install(() => new Response(null, { status: 204 }));
+    let announcements = 0;
+    onSessionEnded(() => {
+        announcements += 1;
+    });
+
+    await reconFetch('/api/reconstruction/session', { method: 'DELETE' });
+
+    assert.equal(announcements, 1);
+    assert.equal(sessionIsOver(), true);
+});
+
+test('an sdk request rejected by the gp proxy ends the session', async () => {
+    install(() => answer(401, { code: 'session_expired' }));
+    let announcements = 0;
+    onSessionEnded(() => {
+        announcements += 1;
+    });
+
+    await reconFetch('/api/gp/v1/datasets');
+
+    assert.equal(announcements, 1);
+});
+
 test('several calls racing into the same expiry announce it once', async () => {
     install(() => answer(401, { code: 'session_expired' }));
     let announcements = 0;
@@ -54,7 +79,6 @@ test('several calls racing into the same expiry announce it once', async () => {
 });
 
 test('a rejected api key at the login form is not a session ending', async () => {
-    // Nothing was signed in yet; the form reports it and the user tries again.
     install(() => answer(401, { code: 'invalid_api_key' }));
     let announcements = 0;
     onSessionEnded(() => {

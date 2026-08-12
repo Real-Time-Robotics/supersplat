@@ -12,7 +12,6 @@ type PanelTab = 'create' | 'recent' | 'api';
 type RunHandlers = {
     onSelect(id: string): void;
     onAction(id: string, action: RunAction): void;
-    /** Whether this run's picked folder is still in hand, which decides resume vs re-pick. */
     hasFolder(id: string): boolean;
 };
 
@@ -349,9 +348,6 @@ class ReconstructionView {
         return this.root.querySelector(selector) as T;
     }
 
-    /**
-     * Show either the pickers for a new run, or what the selected one already committed to.
-     */
     showCompose(run: Run | null) {
         this.composePanel.hidden = run !== null;
         this.runFixed.hidden = run === null;
