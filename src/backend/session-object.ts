@@ -97,14 +97,6 @@ const sqliteStorage = (sql: SqlStorage): SessionStorage => ({
     }
 });
 
-const ensureSchema = (sql: SqlStorage): void => {
-    sql.exec(SCHEMA);
-    const columns = sql.exec('PRAGMA table_info(session)').toArray();
-    if (!columns.some(column => column.name === 'version')) {
-        sql.exec('ALTER TABLE session ADD COLUMN version INTEGER NOT NULL DEFAULT 1');
-    }
-};
-
 const json = (payload: unknown, status = 200) => new Response(JSON.stringify(payload), {
     status, headers: { 'Content-Type': 'application/json' }
 });
@@ -112,6 +104,7 @@ const json = (payload: unknown, status = 200) => new Response(JSON.stringify(pay
 class ReconstructionSession {
     readonly #state: SessionState;
     readonly #ctx: any;
+    #schemaReady = false;
 
     constructor(ctx: any, env: { GENESIS_BASE_URL: string }) {
         this.#ctx = ctx;
@@ -121,12 +114,20 @@ class ReconstructionSession {
     }
 
     #ensureSchema(): void {
-        ensureSchema(this.#ctx.storage.sql);
+        if (this.#schemaReady) return;
+        const sql = this.#ctx.storage.sql;
+        sql.exec(SCHEMA);
+        const columns = sql.exec('PRAGMA table_info(session)').toArray();
+        if (!columns.some((column: any) => column.name === 'version')) {
+            sql.exec('ALTER TABLE session ADD COLUMN version INTEGER NOT NULL DEFAULT 1');
+        }
+        this.#schemaReady = true;
     }
 
     async #erase(): Promise<void> {
         await this.#ctx.storage.deleteAlarm?.();
         await this.#ctx.storage.deleteAll?.();
+        this.#schemaReady = false;
     }
 
     async alarm(): Promise<void> {
@@ -161,4 +162,4 @@ class ReconstructionSession {
     }
 }
 
-export { ReconstructionSession, SCHEMA, ensureSchema, sqliteStorage };
+export { ReconstructionSession };

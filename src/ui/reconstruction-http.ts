@@ -54,11 +54,4 @@ const reconFetch = async (input: FetchInput, init: FetchInit = {}): Promise<Resp
     return response;
 };
 
-const reconJson = async <T>(path: FetchInput, init: FetchInit = {}): Promise<T> => {
-    const response = await reconFetch(path, init);
-    const payload = await response.json().catch(() => ({})) as any;
-    if (!response.ok) throw new Error(payload.error || `Request failed (${response.status}).`);
-    return payload as T;
-};
-
-export { endSession, onSessionEnded, reconFetch, reconJson, sessionIsOver, sessionRestored };
+export { endSession, onSessionEnded, reconFetch, sessionIsOver, sessionRestored };

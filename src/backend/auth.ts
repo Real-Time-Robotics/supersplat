@@ -1,4 +1,5 @@
 import { HttpError } from './http-error';
+import type { TokenSet } from './session';
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@][^\s.@]*\.[^\s@]+$/;
 
@@ -58,8 +59,6 @@ const creditBalance = (baseUrl: string, apiKey: string): Promise<any> => {
         headers: { Authorization: `Bearer ${apiKey}` }
     });
 };
-
-type TokenSet = { accessToken: string; refreshToken: string; expiresIn: number };
 
 const oidcConfig = async (baseUrl: string): Promise<{ issuer: string; clientId: string }> => {
     const config = await gatewayJson(baseUrl, '/v1/config');

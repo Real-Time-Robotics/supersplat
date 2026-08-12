@@ -188,7 +188,6 @@ class SessionState {
 }
 
 export {
-    ACCESS_REFRESH_MARGIN_MS,
     SESSION_COOKIE,
     SESSION_LIFETIME_MS,
     SessionState,
@@ -198,7 +197,6 @@ export {
     type SessionRecord,
     type SessionStorage,
     type TokenSet,
-    accountOf,
     isSessionId,
     newSessionId,
     readCookie,

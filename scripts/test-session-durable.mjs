@@ -172,6 +172,67 @@ test('the object still answers after a logout wiped its database', async (contex
     assert.equal(answer.status, 200);
 });
 
+test('the schema is built once per object, and again only after a wipe', async (context) => {
+    const { env } = await worldFor(context);
+    const cookie = await signIn(env);
+    const id = decodeURIComponent(cookie.split('=').slice(1).join('='));
+    const storage = env.RECON_SESSIONS.storageOf(id);
+
+    const created = [];
+    const exec = storage.sql.exec.bind(storage.sql);
+    storage.sql.exec = (query, ...bindings) => {
+        if (/CREATE TABLE/i.test(query)) created.push(query);
+        return exec(query, ...bindings);
+    };
+
+    for (let i = 0; i < 3; i++) {
+        await call(env, '/api/reconstruction/session', { headers: { Cookie: cookie } });
+    }
+    assert.equal(created.length, 0, 'a live object re-runs no DDL on the read path');
+
+    await call(env, '/api/reconstruction/session', {
+        method: 'DELETE', headers: { Cookie: cookie }
+    });
+    await call(env, '/api/reconstruction/session', { headers: { Cookie: cookie } });
+    assert.equal(created.length, 1, 'a wiped database is rebuilt exactly once');
+});
+
+test('an object created before lease versioning is migrated in place', async (context) => {
+    const { env } = await worldFor(context);
+    const id = 'legacy-session';
+    const object = env.RECON_SESSIONS.get(id);
+    const storage = env.RECON_SESSIONS.storageOf(id);
+    const now = Date.now();
+    storage.sql.exec(`CREATE TABLE session(
+      id                INTEGER PRIMARY KEY CHECK (id = 1),
+      kind              TEXT    NOT NULL,
+      access_token      TEXT    NOT NULL DEFAULT '',
+      refresh_token     TEXT    NOT NULL DEFAULT '',
+      access_expires_at INTEGER NOT NULL DEFAULT 0,
+      api_key           TEXT    NOT NULL DEFAULT '',
+      label             TEXT    NOT NULL DEFAULT '',
+      customer_id       TEXT    NOT NULL DEFAULT '',
+      expires_at        INTEGER NOT NULL,
+      created_at        INTEGER NOT NULL,
+      updated_at        INTEGER NOT NULL
+    )`);
+    storage.sql.exec(
+        `INSERT INTO session(id, kind, api_key, label, customer_id,
+                             expires_at, created_at, updated_at)
+         VALUES(1, 'api-key', 'gp_live_legacy', 'Legacy', 'c1', ?, ?, ?)`,
+        now + 60_000, now, now
+    );
+
+    const answer = await object.fetch(new Request('https://session.invalid/credential', {
+        method: 'POST'
+    }));
+
+    assert.equal(answer.status, 200);
+    assert.equal((await answer.json()).token, 'gp_live_legacy');
+    const columns = storage.sql.exec('PRAGMA table_info(session)').toArray();
+    assert.ok(columns.some(column => column.name === 'version'));
+});
+
 test('a session gets an alarm to clear itself out even if nobody returns', async (context) => {
     const { env } = await worldFor(context);
     const cookie = await signIn(env);

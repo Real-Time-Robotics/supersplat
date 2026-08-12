@@ -1,12 +1,11 @@
 import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import path from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 import { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 
+import { sessionNamespace } from './scripts/session-namespace.mjs';
 import { handle } from './src/backend/router.ts';
-import { ReconstructionSession } from './src/backend/session-object.ts';
 
 const rootDir = path.dirname(fileURLToPath(import.meta.url));
 const distDir = path.join(rootDir, 'dist');
@@ -26,32 +25,6 @@ try {
     localEnv = parseEnv(await readFile(path.join(rootDir, '.env.local'), 'utf8'));
 } catch {
 }
-
-const sessionNamespace = (env) => {
-    const objects = new Map();
-    const sql = () => {
-        const db = new DatabaseSync(':memory:');
-        return {
-            exec: (query, ...bindings) => {
-                const statement = db.prepare(query);
-                const reads = /^\s*SELECT/i.test(query);
-                const rows = reads ?
-                    statement.all(...bindings) : (statement.run(...bindings), []);
-                return { toArray: () => rows };
-            }
-        };
-    };
-    return {
-        idFromName: name => name,
-        get: (id) => {
-            if (!objects.has(id)) {
-                objects.set(id, new ReconstructionSession(
-                    { storage: { sql: sql(), deleteAll: async () => {} } }, env));
-            }
-            return objects.get(id);
-        }
-    };
-};
 
 const env = {
     GENESIS_BASE_URL: process.env.GENESIS_BASE_URL || localEnv.GENESIS_BASE_URL ||
