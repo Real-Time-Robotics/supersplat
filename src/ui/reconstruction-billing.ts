@@ -1,3 +1,4 @@
+import { reconFetch } from './reconstruction-http';
 import { CheckoutStatus, PricingCatalog } from './reconstruction-types';
 import { delay, messageOf, readJson } from './reconstruction-utils';
 import { ReconstructionView } from './reconstruction-view';
@@ -37,7 +38,7 @@ class ReconstructionBilling {
 
     async refreshCredits() {
         try {
-            const response = await fetch('/api/reconstruction/credits', { cache: 'no-store' });
+            const response = await reconFetch('/api/reconstruction/credits', { cache: 'no-store' });
             const data = await readJson<{ balance: number; concurrent?: number }>(response);
             this.setBalance(data.balance);
             if (typeof data.concurrent === 'number') this.cap = data.concurrent;
@@ -69,7 +70,7 @@ class ReconstructionBilling {
 
     private async loadPricing() {
         try {
-            const response = await fetch('/api/reconstruction/pricing', { cache: 'no-store' });
+            const response = await reconFetch('/api/reconstruction/pricing', { cache: 'no-store' });
             const catalog = await readJson<PricingCatalog>(response);
             this.view.pricingPacks.textContent = '';
             for (const pack of catalog.packs) {
@@ -119,7 +120,7 @@ class ReconstructionBilling {
         if (popup) popup.document.body.textContent = 'Creating checkout…';
         this.view.purchaseStatus.textContent = 'Creating checkout…';
         try {
-            const response = await fetch('/api/reconstruction/checkout', {
+            const response = await reconFetch('/api/reconstruction/checkout', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(body)
@@ -143,7 +144,7 @@ class ReconstructionBilling {
         for (let attempt = 0; attempt < 150 && pollId === this.checkoutPollId; attempt++) {
             let checkout: CheckoutStatus | null = null;
             try {
-                const response = await fetch(`/api/reconstruction/checkouts/${encodeURIComponent(checkoutId)}`, {
+                const response = await reconFetch(`/api/reconstruction/checkouts/${encodeURIComponent(checkoutId)}`, {
                     cache: 'no-store'
                 });
                 checkout = await readJson<CheckoutStatus>(response);

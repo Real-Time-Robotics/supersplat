@@ -1,6 +1,7 @@
 import { Events } from '../events';
 import { type CacheScope, artifactCache } from './reconstruction-artifact-cache';
 import { ReconstructionDatasets } from './reconstruction-datasets';
+import { reconFetch } from './reconstruction-http';
 import type { ProgressVisual } from './reconstruction-progress';
 import { Artifact, ArtifactSource, RecentDataset, RecentRun } from './reconstruction-types';
 import { gp } from './reconstruction-upload';
@@ -78,7 +79,7 @@ class ReconstructionArtifacts {
     async refreshRecentRuns() {
         this.view.refreshRunsButton.disabled = true;
         try {
-            const response = await fetch('/api/reconstruction/runs?limit=12', { cache: 'no-store' });
+            const response = await reconFetch('/api/reconstruction/runs?limit=12', { cache: 'no-store' });
             const data = await readJson<{ datasets: RecentDataset[] }>(response);
             this.view.recentRuns.textContent = '';
             if (!data.datasets.length) {
@@ -159,7 +160,7 @@ class ReconstructionArtifacts {
         trigger.disabled = true;
         trigger.textContent = 'Đang tải…';
         try {
-            const response = await fetch(
+            const response = await reconFetch(
                 `/api/reconstruction/datasets/${encodeURIComponent(dataset.dataset_id)}/runs`,
                 { cache: 'no-store' }
             );

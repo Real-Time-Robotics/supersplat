@@ -1,5 +1,6 @@
 import type { ReconstructionArtifacts } from './reconstruction-artifacts';
 import type { ReconstructionBilling } from './reconstruction-billing';
+import { reconFetch } from './reconstruction-http';
 import type { ProgressVisual } from './reconstruction-progress';
 import type {
     Artifact,
@@ -180,7 +181,7 @@ class ReconstructionJob {
      */
     async submit(datasetId: string, pipeline: ReconstructionPipeline,
         runName: string, idempotencyKey: string): Promise<string> {
-        const response = await fetch('/api/reconstruction/jobs', {
+        const response = await reconFetch('/api/reconstruction/jobs', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -259,7 +260,7 @@ class ReconstructionJob {
 
     async cancel(): Promise<boolean> {
         if (this.activeJobId) {
-            const response = await fetch(`/api/reconstruction/jobs/${encodeURIComponent(this.activeJobId)}/cancel`, {
+            const response = await reconFetch(`/api/reconstruction/jobs/${encodeURIComponent(this.activeJobId)}/cancel`, {
                 method: 'POST'
             });
             if (response.status === 409) {
@@ -382,7 +383,7 @@ class ReconstructionJob {
         let artifacts: Artifact[] = [];
         for (;;) {
             if (!this.stillWatching(generation)) return 'detached';
-            const response = await fetch(`/api/reconstruction/jobs/${encodeURIComponent(jobId)}`, { cache: 'no-store' });
+            const response = await reconFetch(`/api/reconstruction/jobs/${encodeURIComponent(jobId)}`, { cache: 'no-store' });
             if (!this.stillWatching(generation)) return 'detached';
             if (response.status === 404 && transientNotFound < JOB_NOT_FOUND_GRACE) {
                 transientNotFound++;

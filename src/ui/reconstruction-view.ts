@@ -80,9 +80,6 @@ class ReconstructionView {
     readonly cacheUsageLabel: HTMLElement;
     readonly clearCacheButton: HTMLButtonElement;
     readonly tabButtons: HTMLButtonElement[];
-    readonly apiKeyLabel: HTMLElement;
-    readonly apiRevealButton: HTMLButtonElement;
-    readonly copyKeyButton: HTMLButtonElement;
     readonly apiStatus: HTMLElement;
     readonly dropzone: HTMLDivElement;
     readonly pipelineButtons: HTMLButtonElement[];
@@ -282,12 +279,12 @@ class ReconstructionView {
                     <strong>API key</strong>
                     <span>Dùng để gọi Genesis Point từ SDK hoặc curl. Giữ kín như mật khẩu.</span>
                 </div>
-                <div class="recon-api-key-row">
-                    <code class="recon-api-key">••••••••••••••••</code>
-                    <button class="recon-button recon-api-reveal" type="button">Hiện</button>
-                    <button class="recon-button recon-copy-key" type="button">Sao chép</button>
-                </div>
-                <p class="recon-api-status" role="status"></p>
+                <p class="recon-api-status" role="status">
+                    Tạo và thu hồi API key trong trang quản lý của Genesis Point.
+                    Phiên đăng nhập này không tạo key nào.
+                </p>
+                <a class="recon-button recon-api-manage" target="_blank" rel="noopener"
+                   href="https://recons.rtrobotics.com/?tab=api-keys">Mở trang quản lý API key</a>
             </section>
             </div>`;
         root.appendChild(body);
@@ -333,9 +330,6 @@ class ReconstructionView {
         this.pipelineNote = this.query('.recon-note');
         this.tabButtons = Array.from(
             root.querySelectorAll<HTMLButtonElement>('.recon-tabs > .recon-tab'));
-        this.apiKeyLabel = this.query('.recon-api-key');
-        this.apiRevealButton = this.query('.recon-api-reveal');
-        this.copyKeyButton = this.query('.recon-copy-key');
         this.apiStatus = this.query('.recon-api-status');
         this.folderInput.setAttribute('webkitdirectory', '');
 

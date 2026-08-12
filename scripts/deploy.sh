@@ -41,6 +41,7 @@ step "tests"
 npm run test:ui
 npm run test:backend
 npm run test:auth-session
+npm run test:session-durable
 npm run test:gateway-proxy
 npm run test:runs-freshness
 npm run test:model-import

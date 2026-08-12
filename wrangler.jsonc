@@ -11,6 +11,16 @@
     "run_worker_first": ["/api/*"]
   },
   "vars": { "GENESIS_BASE_URL": "https://recons.rtrobotics.com" },
+  // One object per session id. SQLite-backed is the only kind the Workers Free plan
+  // offers, and `new_sqlite_classes` is what declares it as one.
+  "durable_objects": {
+    "bindings": [
+      { "name": "RECON_SESSIONS", "class_name": "ReconstructionSession" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["ReconstructionSession"] }
+  ],
   "routes": [{ "pattern": "editor.rtrobotics.com", "custom_domain": true }],
   "observability": { "enabled": true }
 }

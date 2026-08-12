@@ -1,7 +1,6 @@
 import { Client } from 'genesis-recon';
 
 import {
-    createSuperSplatKey,
     creditBalance,
     passwordLogin,
     registerUser,
@@ -14,14 +13,19 @@ import { RECONSTRUCTION_PIPELINES, buildJobConfig, isValidRunName } from './jobs
 import {
     SESSION_COOKIE,
     SESSION_LIFETIME_MS,
-    openSession,
+    type Account,
+    type Credential,
+    newSessionId,
     readCookie,
-    sealSession,
-    sessionCookieHeader,
-    type SessionData
+    sessionCookieHeader
 } from './session';
 
-type Env = { GENESIS_BASE_URL: string; SESSION_SECRET: string };
+type SessionNamespace = {
+    idFromName: (name: string) => unknown;
+    get: (id: unknown) => { fetch: (request: Request) => Promise<Response> };
+};
+
+type Env = { GENESIS_BASE_URL: string; RECON_SESSIONS: SessionNamespace };
 
 const RECON_PREFIX = '/api/reconstruction';
 
@@ -33,18 +37,49 @@ const json = (payload: unknown, status = 200, headers: Record<string, string> = 
     }
 );
 
-const sessionOf = (request: Request, env: Env): Promise<SessionData | null> => {
-    const token = readCookie(request, SESSION_COOKIE);
-    return token ? openSession(token, env.SESSION_SECRET, Date.now()) : Promise.resolve(null);
+/** The object holding this browser's session, or null when it presented no cookie. */
+const objectFor = (request: Request, env: Env) => {
+    const id = readCookie(request, SESSION_COOKIE);
+    if (!id) return null;
+    if (!env.RECON_SESSIONS) {
+        // Fail closed: without the binding nothing can be authenticated, and treating
+        // that as "no session" would be indistinguishable from a working logged-out app.
+        throw new HttpError(503, 'Session storage is unavailable.', 'sessions_unavailable');
+    }
+    return env.RECON_SESSIONS.get(env.RECON_SESSIONS.idFromName(id));
 };
 
-const requireSession = async (request: Request, env: Env): Promise<SessionData> => {
-    const session = await sessionOf(request, env);
-    if (!session) {
+const askSession = (object: { fetch: (request: Request) => Promise<Response> },
+    path: string, body?: unknown): Promise<Response> => object.fetch(new Request(
+    `https://session.invalid${path}`,
+    body === undefined ?
+        { method: 'POST' } :
+        {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        }
+));
+
+const sessionOf = async (request: Request, env: Env): Promise<Credential | null> => {
+    const object = objectFor(request, env);
+    if (!object) return null;
+    const answer = await askSession(object, '/credential');
+    return answer.ok ? await answer.json() as Credential : null;
+};
+
+const expired = () => new HttpError(401,
+    'Your session has ended. Sign in again to continue.', 'session_expired');
+
+const requireSession = async (request: Request, env: Env): Promise<Credential> => {
+    const object = objectFor(request, env);
+    if (!object) {
         throw new HttpError(401, 'Open Reconstruction and sign in or enter an API key.',
             'authentication_required');
     }
-    return session;
+    const answer = await askSession(object, '/credential');
+    if (!answer.ok) throw expired();
+    return await answer.json() as Credential;
 };
 
 const secureFor = (request: Request): boolean => {
@@ -52,13 +87,21 @@ const secureFor = (request: Request): boolean => {
     return forwarded === 'https' || new URL(request.url).protocol === 'https:';
 };
 
-const accountOf = (data: SessionData) => ({ label: data.label, customerId: data.customerId });
-
-const establish = async (request: Request, env: Env, data: SessionData,
-    status = 200, extra: Record<string, unknown> = {}): Promise<Response> => {
-    const token = await sealSession(data, env.SESSION_SECRET, Date.now());
-    return json({ authenticated: true, account: accountOf(data), ...extra }, status, {
-        'Set-Cookie': sessionCookieHeader(token, {
+/**
+ * Mint a fresh id and hand the credentials to its object. A new login is always a new
+ * session id, so a cookie from before it can never name this one.
+ */
+const establish = async (request: Request, env: Env, record: Record<string, unknown>,
+    status = 200): Promise<Response> => {
+    if (!env.RECON_SESSIONS) {
+        throw new HttpError(503, 'Session storage is unavailable.', 'sessions_unavailable');
+    }
+    const id = newSessionId();
+    const object = env.RECON_SESSIONS.get(env.RECON_SESSIONS.idFromName(id));
+    const created = await askSession(object, '/create', record);
+    const { account } = await created.json() as { account: Account };
+    return json({ authenticated: true, account }, status, {
+        'Set-Cookie': sessionCookieHeader(id, {
             secure: secureFor(request),
             maxAgeSeconds: Math.floor(SESSION_LIFETIME_MS / 1000)
         })
@@ -67,9 +110,17 @@ const establish = async (request: Request, env: Env, data: SessionData,
 
 const loginAndEstablish = async (request: Request, env: Env, email: string, password: string,
     status: number): Promise<Response> => {
-    const accessToken = await passwordLogin(env.GENESIS_BASE_URL, email, password);
-    const { apiKey, customerId } = await createSuperSplatKey(env.GENESIS_BASE_URL, accessToken);
-    return establish(request, env, { apiKey, label: email, customerId }, status);
+    const tokens = await passwordLogin(env.GENESIS_BASE_URL, email, password);
+    const credits = await creditBalance(env.GENESIS_BASE_URL, tokens.accessToken)
+    .catch((): null => null);
+    return establish(request, env, {
+        kind: 'oidc',
+        accessToken: tokens.accessToken,
+        refreshToken: tokens.refreshToken,
+        expiresIn: tokens.expiresIn,
+        label: email,
+        customerId: credits?.customer_id || ''
+    }, status);
 };
 
 const bodyOf = async (request: Request): Promise<any> => await request.json().catch(() => ({})) ?? {};
@@ -77,9 +128,13 @@ const bodyOf = async (request: Request): Promise<any> => await request.json().ca
 const sessionRoute = async (request: Request, env: Env, rest: string): Promise<Response | null> => {
     if (rest === '' && request.method === 'GET') {
         const session = await requireSession(request, env);
-        return json({ authenticated: true, account: accountOf(session) });
+        return json({ authenticated: true, account: session.account });
     }
     if (rest === '' && request.method === 'DELETE') {
+        // Idempotent, and the object's state goes before the cookie is cleared: a
+        // replayed cookie must find nothing, not a session it can still spend.
+        const object = objectFor(request, env);
+        if (object) await askSession(object, '/destroy');
         return new Response(null, {
             status: 204,
             headers: {
@@ -90,10 +145,6 @@ const sessionRoute = async (request: Request, env: Env, rest: string): Promise<R
             }
         });
     }
-    if (rest === '/api-key' && request.method === 'GET') {
-        const session = await requireSession(request, env);
-        return json({ apiKey: session.apiKey });
-    }
     if (rest === '/api-key' && request.method === 'POST') {
         const apiKey = String((await bodyOf(request)).apiKey || '').trim();
         if (!apiKey.startsWith('gp_live_')) {
@@ -102,6 +153,7 @@ const sessionRoute = async (request: Request, env: Env, rest: string): Promise<R
         }
         const credits = await creditBalance(env.GENESIS_BASE_URL, apiKey);
         return establish(request, env, {
+            kind: 'api-key',
             apiKey,
             label: credits?.customer_id ? `Customer ${credits.customer_id}` : 'API key user',
             customerId: credits?.customer_id || ''
@@ -170,14 +222,14 @@ const submitJob = async (request: Request, gp: any): Promise<Response> => {
     return json({ jobId, idempotencyKey }, 202);
 };
 
-const streamJobEvents = async (request: Request, env: Env, session: SessionData,
+const streamJobEvents = async (request: Request, env: Env, session: Credential,
     jobId: string): Promise<Response> => {
     const lastEventId = request.headers.get('last-event-id');
     const upstream = await fetch(
         new URL(`/v1/jobs/${encodeURIComponent(jobId)}/stream`, env.GENESIS_BASE_URL),
         {
             headers: {
-                Authorization: `Bearer ${session.apiKey}`,
+                Authorization: `Bearer ${session.token}`,
                 Accept: 'text/event-stream',
                 ...(lastEventId ? { 'Last-Event-ID': lastEventId } : {})
             },
@@ -195,10 +247,9 @@ const streamJobEvents = async (request: Request, env: Env, session: SessionData,
     });
 };
 
-const reconRoute = async (request: Request, env: Env, pathname: string,
-    search: URLSearchParams): Promise<Response | null> => {
-    const session = await requireSession(request, env);
-    const gp: any = new Client(env.GENESIS_BASE_URL, session.apiKey);
+const reconRoute = async (request: Request, env: Env, session: Credential,
+    pathname: string, search: URLSearchParams): Promise<Response | null> => {
+    const gp: any = new Client(env.GENESIS_BASE_URL, session.token);
     const segments = segmentsOf(pathname);
     const [head, second, third, fourth, fifth] = segments;
     const { method } = request;
@@ -291,6 +342,47 @@ const reconRoute = async (request: Request, env: Env, pathname: string,
     return null;
 };
 
+const isUnauthorized = (value: unknown): boolean => Number((value as any)?.status) === 401;
+
+// Distinct from a route answering `null` (no such path), which must not trigger a renewal.
+const REFUSED = Symbol('upstream refused the credential');
+
+type Attempt = (attempt: Request, session: Credential) => Promise<Response | null>;
+
+const attemptOnce = async (run: Attempt, request: Request,
+    session: Credential): Promise<Response | null | typeof REFUSED> => {
+    try {
+        const answered = await run(request, session);
+        return answered && isUnauthorized(answered) ? REFUSED : answered;
+    } catch (error) {
+        if (!isUnauthorized(error)) throw error;
+        return REFUSED;
+    }
+};
+
+/**
+ * Run an authenticated route, and give an upstream rejection exactly one more chance:
+ * renew the credential, replay once, and end the session if it is still refused. Anything
+ * beyond one retry is a loop against a credential that is not coming back.
+ */
+const authenticated = async (request: Request, env: Env,
+    run: Attempt): Promise<Response | null> => {
+    const replay = request.method === 'GET' || request.method === 'HEAD' ?
+        request : request.clone();
+    const session = await requireSession(request, env);
+    const first = await attemptOnce(run, request, session);
+    if (first !== REFUSED) return first;
+
+    const object = objectFor(request, env);
+    const renewed = object ? await askSession(object, '/reauthenticate') : null;
+    if (!renewed?.ok) throw expired();
+    const second = await attemptOnce(run, replay, await renewed.json() as Credential);
+    if (second !== REFUSED) return second;
+
+    if (object) await askSession(object, '/destroy');
+    throw expired();
+};
+
 /**
  * Resolves null only for paths outside /api/, An unknown /api/ path gets a JSON 404
  */
@@ -299,8 +391,7 @@ const handle = async (request: Request, env: Env): Promise<Response | null> => {
     if (!pathname.startsWith('/api/')) return null;
     try {
         if (pathname.startsWith(`${PROXY_PREFIX}/`)) {
-            const session = await requireSession(request, env);
-            return await proxyToGateway(request, session.apiKey, env.GENESIS_BASE_URL);
+            return await authenticated(request, env, (attempt, session) => proxyToGateway(attempt, session.token, env.GENESIS_BASE_URL));
         }
         if (pathname === `${RECON_PREFIX}/session` ||
             pathname.startsWith(`${RECON_PREFIX}/session/`)) {
@@ -308,7 +399,7 @@ const handle = async (request: Request, env: Env): Promise<Response | null> => {
                 pathname.slice(`${RECON_PREFIX}/session`.length));
             if (answered) return answered;
         } else if (pathname.startsWith(`${RECON_PREFIX}/`)) {
-            const answered = await reconRoute(request, env, pathname, searchParams);
+            const answered = await authenticated(request, env, (attempt, session) => reconRoute(attempt, env, session, pathname, searchParams));
             if (answered) return answered;
         }
         return json({ error: 'Not found.', code: 'not_found' }, 404);
@@ -317,7 +408,14 @@ const handle = async (request: Request, env: Env): Promise<Response | null> => {
             return json({ error: 'Proxy path not allowed.', code: 'proxy_path_denied' }, 404);
         }
         if (error instanceof HttpError) {
-            return json({ error: error.message, code: error.code }, error.status);
+            // An ended session takes its cookie with it, so the browser stops presenting
+            // an id that can only be refused.
+            const headers = error.code === 'session_expired' ? {
+                'Set-Cookie': sessionCookieHeader('', {
+                    secure: secureFor(request), maxAgeSeconds: 0
+                })
+            } : {};
+            return json({ error: error.message, code: error.code }, error.status, headers);
         }
         return json({ error: String((error as Error)?.message ?? error), code: 'local_error' }, 500);
     }

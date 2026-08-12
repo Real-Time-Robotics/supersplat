@@ -1,6 +1,7 @@
 import { Client } from 'genesis-recon';
 
 import { describeFailure } from './reconstruction-failure';
+import { reconFetch } from './reconstruction-http';
 import type { ProgressVisual } from './reconstruction-progress';
 import { Transfer } from './reconstruction-transfer';
 import { UploadProgress } from './reconstruction-types';
@@ -40,7 +41,7 @@ class ReconstructionUpload {
 
     // Give up on a session.
     async discard(datasetId: string): Promise<void> {
-        const response = await fetch(
+        const response = await reconFetch(
             `/api/reconstruction/datasets/${encodeURIComponent(datasetId)}`, { method: 'DELETE' });
         if (!response.ok) await readJson(response);
         await this.records.remove(datasetId);

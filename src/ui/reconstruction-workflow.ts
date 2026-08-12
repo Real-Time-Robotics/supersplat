@@ -2,6 +2,7 @@ import { Events } from '../events';
 import { ReconstructionArtifacts } from './reconstruction-artifacts';
 import { ReconstructionBilling } from './reconstruction-billing';
 import { estimateTotalPixels, shortfallNote } from './reconstruction-estimate';
+import { reconFetch } from './reconstruction-http';
 import { ReconstructionJob, ReconstructionJobError } from './reconstruction-job';
 import { folderFingerprint, normalizeObjectName } from './reconstruction-names';
 import type { ProgressVisual } from './reconstruction-progress';
@@ -144,7 +145,7 @@ class ReconstructionWorkflow {
         this.setBusy(true);
 
         try {
-            const response = await fetch(
+            const response = await reconFetch(
                 `/api/reconstruction/datasets/${encodeURIComponent(dataset.dataset_id)}/quote` +
                 `?pipeline=${encodeURIComponent(this.pipeline)}`,
                 { cache: 'no-store' }
@@ -196,7 +197,7 @@ class ReconstructionWorkflow {
         if (!this.preparedDataset) return null;
         this.preparedDataset.pipeline = this.pipeline;
         try {
-            const response = await fetch(
+            const response = await reconFetch(
                 `/api/reconstruction/datasets/${encodeURIComponent(this.preparedDataset.datasetId)}/quote` +
                 `?pipeline=${encodeURIComponent(this.pipeline)}`,
                 { cache: 'no-store' }
@@ -418,7 +419,7 @@ class ReconstructionWorkflow {
         try {
             const pixels = await estimateTotalPixels(files);
             if (this.files !== files) return;        // a newer pick landed while we decoded
-            const response = await fetch('/api/reconstruction/estimate', {
+            const response = await reconFetch('/api/reconstruction/estimate', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -564,7 +565,7 @@ class ReconstructionWorkflow {
 
     private async openRun(run: Run) {
         if (!run.jobId) return;
-        const response = await fetch(
+        const response = await reconFetch(
             `/api/reconstruction/jobs/${encodeURIComponent(run.jobId)}`, { cache: 'no-store' });
         const data = await readJson<{ artifacts?: Artifact[] }>(response);
         const artifacts = data.artifacts ?? [];
@@ -600,7 +601,7 @@ class ReconstructionWorkflow {
             run.state === 'running' && run.jobId !== null && run.id !== selectedId));
         if (pending.length === 0) return;
         const snapshots = await Promise.all(pending.map(async (run) => {
-            const response = await fetch(
+            const response = await reconFetch(
                 `/api/reconstruction/jobs/${encodeURIComponent(run.jobId as string)}`,
                 { cache: 'no-store' });
             return { run, job: (await readJson<{ job: JobStatus }>(response)).job };
@@ -674,7 +675,7 @@ class ReconstructionWorkflow {
     }
 
     private async quoteDataset(datasetId: string): Promise<UploadResponse> {
-        const response = await fetch(
+        const response = await reconFetch(
             `/api/reconstruction/datasets/${encodeURIComponent(datasetId)}/quote` +
             `?pipeline=${encodeURIComponent(this.pipeline)}`,
             { cache: 'no-store' }

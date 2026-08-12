@@ -1,4 +1,5 @@
 import { Events } from '../events';
+import { reconFetch } from './reconstruction-http';
 import { RecentDataset } from './reconstruction-types';
 import { messageOf, readJson } from './reconstruction-utils';
 import { ReconstructionView } from './reconstruction-view';
@@ -43,7 +44,7 @@ class ReconstructionDatasets {
         );
 
         try {
-            const response = await fetch(
+            const response = await reconFetch(
                 `/api/reconstruction/datasets/${encodeURIComponent(dataset.dataset_id)}`,
                 { method: 'DELETE' }
             );

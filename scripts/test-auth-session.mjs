@@ -7,6 +7,7 @@ import { call, envFor, listenOnRandomPort, sendJson, signInWithApiKey } from './
 test('auth sessions and photogrammetry proxy flow remain isolated and typed', async (context) => {
     const registrations = [];
     const revoked = [];
+    const keyCalls = [];
     const quotes = [];
     const submissions = [];
     let uploadSessions = 0;
@@ -33,14 +34,13 @@ test('auth sessions and photogrammetry proxy flow remain isolated and typed', as
             uploadSessions += 1;
             sendJson(res, 201, { dataset_id: 'unexpected-upload' });
         } else if (req.method === 'POST' && url.pathname === '/protocol/openid-connect/token') {
-            sendJson(res, 200, { access_token: 'human-token' });
-        } else if (req.method === 'GET' && url.pathname === '/v1/api-keys') {
-            sendJson(res, 200, { keys: [{ id: 'old-key', name: 'SuperSplat Reconstruction' }] });
-        } else if (req.method === 'DELETE' && url.pathname === '/v1/api-keys/old-key') {
-            revoked.push('old-key');
-            res.writeHead(204).end();
-        } else if (req.method === 'POST' && url.pathname === '/v1/api-keys') {
-            sendJson(res, 201, { id: 'new-key', key: 'gp_live_created_for_test' });
+            sendJson(res, 200, {
+                access_token: 'human-token', refresh_token: 'human-refresh', expires_in: 300
+            });
+        } else if (url.pathname.startsWith('/v1/api-keys')) {
+            keyCalls.push(`${req.method} ${url.pathname}`);
+            if (req.method === 'DELETE') revoked.push(url.pathname);
+            sendJson(res, 200, { keys: [] });
         } else if (req.method === 'POST' && url.pathname === '/v1/auth/register') {
             let body = '';
             for await (const chunk of req) body += chunk;
@@ -89,19 +89,24 @@ test('auth sessions and photogrammetry proxy flow remain isolated and typed', as
     const cookie = login.headers.get('set-cookie');
     assert.match(cookie, /HttpOnly/);
     assert.match(cookie, /SameSite=Strict/);
-    assert.deepEqual(revoked, ['old-key']);
+    // Signing in is not a reason to hand out a long-lived credential, and it is certainly
+    // not a reason to revoke one another device is still using.
+    assert.deepEqual(keyCalls, []);
+    assert.deepEqual(revoked, []);
+    // The cookie is an opaque id: no key, no access token, no refresh token.
+    for (const secret of ['gp_live_', 'human-token', 'human-refresh']) {
+        assert.ok(!cookie.includes(secret), `the cookie leaked ${secret}`);
+    }
 
     const session = await call(env, '/api/reconstruction/session', { headers: { Cookie: cookie } });
     assert.equal(session.status, 200);
     assert.equal((await session.json()).account.label, 'user@example.com');
 
-    const key = await call(env, '/api/reconstruction/session/api-key', {
+    // There is no way to read a credential back out of a session, for anyone.
+    const reveal = await call(env, '/api/reconstruction/session/api-key', {
         headers: { Cookie: cookie }
     });
-    assert.equal(key.status, 200);
-    assert.equal((await key.json()).apiKey, 'gp_live_created_for_test');
-    assert.equal((await call(env, '/api/reconstruction/session/api-key')).status, 401,
-        'the key is the session, so it is never served without one');
+    assert.equal(reveal.status, 404);
 
     const logout = await call(env, '/api/reconstruction/session', {
         method: 'DELETE',
@@ -109,6 +114,15 @@ test('auth sessions and photogrammetry proxy flow remain isolated and typed', as
     });
     assert.equal(logout.status, 204);
     assert.match(logout.headers.get('set-cookie'), /Max-Age=0/);
+
+    const replayed = await call(env, '/api/reconstruction/session', {
+        headers: { Cookie: cookie }
+    });
+    assert.equal(replayed.status, 401, 'a cookie kept past logout must buy nothing');
+    const repeated = await call(env, '/api/reconstruction/session', {
+        method: 'DELETE', headers: { Cookie: cookie }
+    });
+    assert.equal(repeated.status, 204, 'logout is idempotent');
     const anonymous = await call(env, '/api/reconstruction/session');
     assert.equal(anonymous.status, 401);
 

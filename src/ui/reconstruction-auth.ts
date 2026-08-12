@@ -1,3 +1,4 @@
+import { onSessionEnded, reconFetch, sessionRestored } from './reconstruction-http';
 import { ReconstructionView } from './reconstruction-view';
 
 type Account = {
@@ -38,7 +39,6 @@ const validate = (mode: string, values: AuthValues): string | null => {
 
 class ReconstructionAuth {
     private account: Account | null = null;
-    private apiKey = '';
     private requestInFlight = false;
 
     constructor(
@@ -71,9 +71,9 @@ class ReconstructionAuth {
             button.textContent = reveal ? 'Hide' : 'Show';
             button.setAttribute('aria-label', `${reveal ? 'Hide' : 'Show'} API key`);
         });
-        view.apiRevealButton.addEventListener('click', () => this.revealApiKey());
-        view.copyKeyButton.addEventListener('click', () => this.copyApiKey());
         view.query<HTMLButtonElement>('.recon-sign-out').addEventListener('click', () => this.signOut());
+        onSessionEnded(() => this.forgetSession(
+            'Phiên đăng nhập đã hết hạn. Hãy đăng nhập lại để tiếp tục.'));
     }
 
     async ensure() {
@@ -84,13 +84,14 @@ class ReconstructionAuth {
         this.view.showAuth();
         this.setStatus('Checking your session...');
         try {
-            const response = await fetch('/api/reconstruction/session', { cache: 'no-store' });
+            const response = await reconFetch('/api/reconstruction/session', { cache: 'no-store' });
             if (response.status === 401) {
                 this.setStatus('');
                 return;
             }
             const session = await this.readResponse(response);
             this.account = session.account;
+            sessionRestored();
             await this.activate();
         } catch (error) {
             this.setStatus(error instanceof Error ? error.message : String(error), true);
@@ -139,6 +140,7 @@ class ReconstructionAuth {
             });
             const session = await this.readResponse(response);
             this.account = session.account;
+            sessionRestored();
             form.reset();
             await this.activate();
         } catch (error) {
@@ -154,45 +156,6 @@ class ReconstructionAuth {
         return payload as SessionResponse;
     }
 
-    /**
-     * The session's key, fetched only when asked for
-     */
-    private async loadApiKey(): Promise<string> {
-        if (this.apiKey) return this.apiKey;
-        const response = await fetch('/api/reconstruction/session/api-key', { cache: 'no-store' });
-        const payload = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(payload.error || `Request failed (${response.status}).`);
-        this.apiKey = String(payload.apiKey || '');
-        return this.apiKey;
-    }
-
-    private async revealApiKey() {
-        const shown = this.view.apiKeyLabel.dataset.shown === 'yes';
-        if (shown) {
-            this.view.apiKeyLabel.textContent = '••••••••••••••••';
-            delete this.view.apiKeyLabel.dataset.shown;
-            this.view.apiRevealButton.textContent = 'Hiện';
-            return;
-        }
-        try {
-            this.view.apiKeyLabel.textContent = await this.loadApiKey();
-            this.view.apiKeyLabel.dataset.shown = 'yes';
-            this.view.apiRevealButton.textContent = 'Ẩn';
-            this.setApiStatus('Giữ kín khoá này -- nó gọi được mọi thứ tài khoản bạn gọi được.');
-        } catch (error) {
-            this.setApiStatus(error instanceof Error ? error.message : String(error), true);
-        }
-    }
-
-    private async copyApiKey() {
-        try {
-            await navigator.clipboard.writeText(await this.loadApiKey());
-            this.setApiStatus('Đã sao chép API key.');
-        } catch {
-            this.setApiStatus('Trình duyệt chặn sao chép. Nhấn “Hiện” rồi chép thủ công.', true);
-        }
-    }
-
     private async activate() {
         if (!this.account) return;
         this.view.showApp(this.account.label);
@@ -201,15 +164,22 @@ class ReconstructionAuth {
 
     private async signOut() {
         try {
-            await fetch('/api/reconstruction/session', { method: 'DELETE' });
+            await reconFetch('/api/reconstruction/session', { method: 'DELETE' });
         } finally {
-            this.account = null;
-            this.apiKey = '';
-            this.view.apiKeyLabel.textContent = '••••••••••••••••';
-            delete this.view.apiKeyLabel.dataset.shown;
-            this.view.showAuth();
-            this.setTab('login');
+            this.forgetSession('');
         }
+    }
+
+    /**
+     * Back to the login screen with nothing of the old session left in memory. Called both
+     * by an explicit sign-out and by the backend telling us the session is over -- the app
+     * must never keep looking signed in after a 401.
+     */
+    private forgetSession(message: string) {
+        this.account = null;
+        this.view.showAuth();
+        this.setTab('login');
+        if (message) this.setStatus(message, true);
     }
 
     private setBusy(busy: boolean) {

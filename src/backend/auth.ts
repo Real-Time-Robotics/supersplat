@@ -59,21 +59,20 @@ const creditBalance = (baseUrl: string, apiKey: string): Promise<any> => {
     });
 };
 
-const passwordLogin = async (baseUrl: string, email: string,
-    password: string): Promise<string> => {
+type TokenSet = { accessToken: string; refreshToken: string; expiresIn: number };
+
+const oidcConfig = async (baseUrl: string): Promise<{ issuer: string; clientId: string }> => {
     const config = await gatewayJson(baseUrl, '/v1/config');
     const issuer = String(config?.oidc_issuer || '').replace(/\/$/, '');
     const clientId = String(config?.oidc_client_id || '');
     if (!issuer || !clientId) {
         throw new HttpError(503, 'Genesis authentication is not configured.', 'auth_not_configured');
     }
-    const body = new URLSearchParams({
-        grant_type: 'password',
-        client_id: clientId,
-        username: email,
-        password,
-        scope: 'openid'
-    });
+    return { issuer, clientId };
+};
+
+const tokenRequest = async (issuer: string, body: URLSearchParams,
+    fallback: string, code: string): Promise<TokenSet> => {
     const response = await fetch(`${issuer}/protocol/openid-connect/token`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -83,35 +82,38 @@ const passwordLogin = async (baseUrl: string, email: string,
     if (!response.ok || !payload?.access_token) {
         throw new HttpError(
             response.status === 400 || response.status === 401 ? 401 : response.status,
-            errorDetail(payload, 'Email or password is incorrect.'),
-            'login_failed'
+            errorDetail(payload, fallback),
+            code
         );
     }
-    return payload.access_token;
+    return {
+        accessToken: String(payload.access_token),
+        // Keycloak may decline to issue one. The session then lives exactly as long as
+        // the access token, and logs out honestly rather than being propped up.
+        refreshToken: String(payload.refresh_token || ''),
+        expiresIn: Number(payload.expires_in) || 0
+    };
 };
 
-const createSuperSplatKey = async (baseUrl: string,
-    accessToken: string): Promise<{ apiKey: string; customerId: string }> => {
-    const headers = { Authorization: `Bearer ${accessToken}` };
-    const listed = await gatewayJson(baseUrl, '/v1/api-keys', { headers });
-    const keys = Array.isArray(listed) ? listed : (listed?.api_keys || listed?.keys || []);
-    const existing = keys.filter((key: any) => key?.name === 'SuperSplat Reconstruction' &&
-        !key?.revoked_at);
-    await Promise.all(existing.map((key: any) => gatewayJson(baseUrl, `/v1/api-keys/${encodeURIComponent(key.id)}`, {
-        method: 'DELETE',
-        headers
-    })));
-    const created = await gatewayJson(baseUrl, '/v1/api-keys', {
-        method: 'POST',
-        headers: { ...headers, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: 'SuperSplat Reconstruction' })
-    });
-    const apiKey = created?.key || created?.api_key;
-    if (!apiKey) {
-        throw new HttpError(502, 'Genesis did not return the newly created API key.',
-            'missing_api_key');
-    }
-    return { apiKey, customerId: created?.customer_id || '' };
+const passwordLogin = async (baseUrl: string, email: string,
+    password: string): Promise<TokenSet> => {
+    const { issuer, clientId } = await oidcConfig(baseUrl);
+    return tokenRequest(issuer, new URLSearchParams({
+        grant_type: 'password',
+        client_id: clientId,
+        username: email,
+        password,
+        scope: 'openid'
+    }), 'Email or password is incorrect.', 'login_failed');
+};
+
+const refreshTokens = async (baseUrl: string, refreshToken: string): Promise<TokenSet> => {
+    const { issuer, clientId } = await oidcConfig(baseUrl);
+    return tokenRequest(issuer, new URLSearchParams({
+        grant_type: 'refresh_token',
+        client_id: clientId,
+        refresh_token: refreshToken
+    }), 'The session has expired.', 'session_expired');
 };
 
 const registerUser = (baseUrl: string, input: {
@@ -128,11 +130,12 @@ const registerUser = (baseUrl: string, input: {
 });
 
 export {
-    createSuperSplatKey,
+    type TokenSet,
     creditBalance,
     errorDetail,
     gatewayJson,
     passwordLogin,
+    refreshTokens,
     registerUser,
     validateLogin,
     validateRegistration
