@@ -5,6 +5,9 @@ type CacheScope =
 type IndexEntry = { size: number; seq: number };
 
 const CACHE_NAME = 'genesis-artifacts-v1';
+// Stamped on every entry we write so a lost index can be rebuilt without reading the
+// bodies back. Entries written before it existed are measured once, on reconcile.
+const SIZE_HEADER = 'x-genesis-cached-bytes';
 const INDEX_KEY = 'genesis.artifact-cache.index';
 const DEFAULT_CEILING_BYTES = 4 * 1024 ** 3;
 // Leave the browser headroom: at 100% of the reported quota a write fails outright, and
@@ -55,6 +58,20 @@ class ArtifactCache {
         return caches.open(CACHE_NAME);
     }
 
+    // The entry's real byte count. Free for anything we wrote; a legacy entry costs one
+    // read of its body, and content-length is absent often enough not to be relied on.
+    private async sizeOf(response: Response): Promise<number> {
+        for (const header of [SIZE_HEADER, 'content-length']) {
+            const declared = Number(response.headers.get(header));
+            if (Number.isFinite(declared) && declared > 0) return declared;
+        }
+        try {
+            return (await response.clone().blob()).size;
+        } catch {
+            return 0;
+        }
+    }
+
     async budget(): Promise<number> {
         try {
             const quota = (await navigator.storage.estimate()).quota ?? 0;
@@ -90,13 +107,17 @@ class ArtifactCache {
             }
             return null;
         }
-        index[key] = { size: index[key]?.size ?? 0, seq: this.nextSeq(index) };
+        index[key] = {
+            size: index[key]?.size || await this.sizeOf(hit),
+            seq: this.nextSeq(index)
+        };
         this.writeIndex(index);
         return hit;
     }
 
     async write(scope: CacheScope, name: string, response: Response): Promise<void> {
         const key = cacheKeyFor(scope, name);
+        const contentType = response.headers.get('content-type') ?? '';
         let bytes: Uint8Array<ArrayBuffer>;
         try {
             bytes = new Uint8Array(await response.arrayBuffer());
@@ -106,9 +127,9 @@ class ArtifactCache {
         const budget = await this.budget();
         if (bytes.byteLength > budget) return;
         await this.evictTo(budget - bytes.byteLength, key);
-        if (await this.put(key, bytes)) return;
+        if (await this.put(key, bytes, contentType)) return;
         await this.evictOldestHalf(key);
-        await this.put(key, bytes);
+        await this.put(key, bytes, contentType);
     }
 
     async remove(scope: CacheScope, name: string): Promise<void> {
@@ -122,12 +143,29 @@ class ArtifactCache {
         this.writeIndex({});
     }
 
+    /**
+     * Make the index agree with what the cache actually holds: a body whose index entry
+     * was lost is measured and kept, an index entry whose body is gone is dropped.
+     * Sizing them at 0 made them free to hold and invisible to eviction, so the cache
+     * grew past its budget and never shrank.
+     */
     async reconcile(): Promise<void> {
         const index = this.readIndex();
-        const present = new Set((await (await this.open()).keys()).map(request => request.url));
+        const cache = await this.open();
         const reconciled: Record<string, IndexEntry> = {};
-        for (const url of present) {
-            reconciled[url] = index[url] ?? { size: 0, seq: 0 };
+        let seq = this.nextSeq(index);
+        for (const request of await cache.keys()) {
+            const known = index[request.url];
+            if (known?.size) {
+                reconciled[request.url] = known;
+                continue;
+            }
+            const response = await cache.match(request.url);
+            if (!response) continue;      // evicted between keys() and match()
+            reconciled[request.url] = {
+                size: await this.sizeOf(response),
+                seq: known?.seq ?? seq++
+            };
         }
         this.writeIndex(reconciled);
     }
@@ -139,9 +177,12 @@ class ArtifactCache {
         this.writeIndex(index);
     }
 
-    private async put(key: string, bytes: Uint8Array<ArrayBuffer>): Promise<boolean> {
+    private async put(key: string, bytes: Uint8Array<ArrayBuffer>,
+        contentType = ''): Promise<boolean> {
+        const headers = new Headers({ [SIZE_HEADER]: String(bytes.byteLength) });
+        if (contentType) headers.set('Content-Type', contentType);
         try {
-            await (await this.open()).put(key, new Response(bytes));
+            await (await this.open()).put(key, new Response(bytes, { headers }));
         } catch (error) {
             if (!isQuotaError(error)) throw error;
             return false;

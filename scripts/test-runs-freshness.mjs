@@ -4,7 +4,7 @@ import { test } from 'node:test';
 
 import { call, envFor, listenOnRandomPort, sendJson, signInWithApiKey } from './test-support.mjs';
 
-test('the runs aggregate is lazy and cached, and the upload route is gone', async (context) => {
+test('the runs aggregate is lazy and always fresh, and the upload route is gone', async (context) => {
     const runCalls = [];
     const gateway = createServer((req, res) => {
         const send = (status, payload) => sendJson(res, status, payload);
@@ -53,8 +53,12 @@ test('the runs aggregate is lazy and cached, and the upload route is gone', asyn
     const first = await call(env, '/api/reconstruction/datasets/ds1/runs', { headers: { cookie } });
     const firstBody = await first.json();
     assert.equal(firstBody.runs.length, 1);
+    assert.equal(first.headers.get('cache-control'), 'no-store');
+
+    // An isolate-local Map was only ever right for whichever isolate happened to answer,
+    // so a run finishing on one left the others serving a stale list for up to a minute.
     await call(env, '/api/reconstruction/datasets/ds1/runs', { headers: { cookie } });
-    assert.equal(runCalls.length, 1, 'the second open must be served from cache');
+    assert.equal(runCalls.length, 2, 'every open asks upstream');
 
     const upload = await call(env, '/api/reconstruction/upload', {
         method: 'POST', headers: { cookie }

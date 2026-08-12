@@ -130,33 +130,6 @@ const sessionRoute = async (request: Request, env: Env, rest: string): Promise<R
     return null;
 };
 
-const RUN_CACHE_TTL_MS = 60_000;
-
-const runsCache = new Map<string, { runs: any; at: number }>();
-const jobContexts = new Map<string, { datasetId: string }>();
-
-const digestOf = async (value: string): Promise<string> => {
-    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
-    return [...new Uint8Array(digest).slice(0, 8)]
-    .map(byte => byte.toString(16).padStart(2, '0'))
-    .join('');
-};
-
-const invalidateRuns = (datasetId: string): void => {
-    for (const key of [...runsCache.keys()]) {
-        if (key.endsWith(`:${datasetId}`)) runsCache.delete(key);
-    }
-};
-
-const cachedRuns = async (gp: any, apiKey: string, datasetId: string): Promise<any> => {
-    const key = `${await digestOf(apiKey)}:${datasetId}`;
-    const hit = runsCache.get(key);
-    if (hit && Date.now() - hit.at < RUN_CACHE_TTL_MS) return hit.runs;
-    const runs = await gp.listRuns(datasetId);
-    runsCache.set(key, { runs, at: Date.now() });
-    return runs;
-};
-
 const pipelineFor = (value: string | null, fallback = 'splat'): string => {
     const pipeline = String(value || fallback);
     if (!RECONSTRUCTION_PIPELINES.has(pipeline)) {
@@ -194,8 +167,6 @@ const submitJob = async (request: Request, gp: any): Promise<Response> => {
     const config = buildJobConfig({ presetConfig, pipeline, datasetId, runNameField, runName });
     const idempotencyKey = String(body.idempotencyKey || crypto.randomUUID());
     const jobId = await gp.submitJob(pipeline, config, { idempotencyKey });
-    invalidateRuns(datasetId);
-    jobContexts.set(jobId, { datasetId });
     return json({ jobId, idempotencyKey }, 202);
 };
 
@@ -214,8 +185,6 @@ const streamJobEvents = async (request: Request, env: Env, session: SessionData,
         }
     );
 
-    const context = jobContexts.get(jobId);
-    if (context) invalidateRuns(context.datasetId);
     return new Response(upstream.body, {
         status: upstream.status,
         headers: {
@@ -288,7 +257,7 @@ const reconRoute = async (request: Request, env: Env, pathname: string,
         if (third === 'runs' && !fourth && method === 'GET') {
             return json({
                 dataset_id: second,
-                runs: await cachedRuns(gp, session.apiKey, second)
+                runs: await gp.listRuns(second)
             });
         }
         if (third === 'runs' && fourth && fifth && segments[5] === 'artifacts' && method === 'GET') {
@@ -296,10 +265,6 @@ const reconRoute = async (request: Request, env: Env, pathname: string,
         }
         if (!third && method === 'DELETE') {
             await gp.deleteDataset(second);
-            invalidateRuns(second);
-            for (const [jobId, context] of [...jobContexts]) {
-                if (context.datasetId === second) jobContexts.delete(jobId);
-            }
             return new Response(null, { status: 204 });
         }
     }

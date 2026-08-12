@@ -24,7 +24,7 @@
         "test:ui": "node --experimental-transform-types --import ./scripts/ts-resolve.mjs --test \"src/ui/*.test.ts\"",
         "test:auth-session": "node --import ./scripts/ts-resolve.mjs --test scripts/test-auth-session.mjs",
         "test:gateway-proxy": "node --import ./scripts/ts-resolve.mjs --test scripts/test-gateway-proxy.mjs",
-        "test:runs-cache": "node --import ./scripts/ts-resolve.mjs --test scripts/test-runs-cache.mjs",
+        "test:runs-freshness": "node --import ./scripts/ts-resolve.mjs --test scripts/test-runs-freshness.mjs",
         "test:model-import": "node scripts/run-model-import-smoke.mjs",
         "develop": "cross-env BUILD_TYPE=debug concurrently --kill-others \"npm run watch\" \"wrangler dev\"",
         "lint": "eslint src worker",

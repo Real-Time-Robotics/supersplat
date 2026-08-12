@@ -42,7 +42,7 @@ npm run test:ui
 npm run test:backend
 npm run test:auth-session
 npm run test:gateway-proxy
-npm run test:runs-cache
+npm run test:runs-freshness
 npm run test:model-import
 
 # 2. Version. `npm run build` runs prebuild, which builds the genesis TypeScript SDK from
