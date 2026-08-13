@@ -78,11 +78,12 @@ const formatProgressRate = (progress: JobProgressEvent) => {
 const formatEta = (seconds: number | null | undefined) => {
     if (seconds == null || !Number.isFinite(seconds) || seconds < 0) return '';
     if (seconds === 0) return '';
-    if (seconds < 60) return `~${Math.max(1, Math.ceil(seconds))}s left`;
-    const minutes = Math.floor(seconds / 60);
-    if (minutes < 60) return `~${minutes}m ${Math.ceil(seconds % 60)}s left`;
-    const hours = Math.floor(minutes / 60);
-    return `~${hours}h ${minutes % 60}m left`;
+    // Rounded before it is split, or a remainder rounding up to 60 reads as "1m 60s".
+    const whole = Math.max(1, Math.ceil(seconds));
+    if (whole < 60) return `~${whole}s left`;
+    const minutes = Math.floor(whole / 60);
+    if (minutes < 60) return `~${minutes}m ${whole % 60}s left`;
+    return `~${Math.floor(minutes / 60)}h ${minutes % 60}m left`;
 };
 
 const progressPhaseLabel = (progress: JobProgressEvent) => {

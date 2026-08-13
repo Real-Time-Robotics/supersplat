@@ -128,6 +128,10 @@ describe('formatEtaShort', () => {
         assert.equal(formatEtaShort(80), '1m 20s');
     });
 
+    it('carries a rounded-up remainder into the minute rather than reading 60s', () => {
+        assert.equal(formatEtaShort(119.5), '2m 0s');
+    });
+
     it('renders hours and minutes past an hour', () => {
         assert.equal(formatEtaShort(3 * 3600 + 25 * 60), '3h 25m');
     });

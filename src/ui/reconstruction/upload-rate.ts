@@ -57,11 +57,12 @@ const formatRate = (bytesPerSecond: number) => (
  */
 const formatEtaShort = (seconds: number) => {
     if (!Number.isFinite(seconds) || seconds <= 0) return '';
-    if (seconds < 60) return `${Math.max(1, Math.ceil(seconds))}s`;
-    const minutes = Math.floor(seconds / 60);
-    if (minutes < 60) return `${minutes}m ${Math.ceil(seconds % 60)}s`;
-    const hours = Math.floor(minutes / 60);
-    return `${hours}h ${minutes % 60}m`;
+    // Rounded before it is split, or a remainder rounding up to 60 reads as "1m 60s".
+    const whole = Math.max(1, Math.ceil(seconds));
+    if (whole < 60) return `${whole}s`;
+    const minutes = Math.floor(whole / 60);
+    if (minutes < 60) return `${minutes}m ${whole % 60}s`;
+    return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 };
 
 export { RateMeter, formatEtaShort, formatRate };
