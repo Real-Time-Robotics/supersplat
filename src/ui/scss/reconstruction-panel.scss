@@ -422,12 +422,14 @@
     display: flex;
     box-sizing: border-box;
     height: 100%;
+    grid-area: 1 / 1;
     flex-direction: column;
     justify-content: center;
     gap: 9px;
 
     &[hidden] {
-        display: none;
+        visibility: hidden;
+        pointer-events: none;
     }
 
     label {
@@ -471,9 +473,8 @@
 }
 
 .recon-auth-stage {
-    height: 300px;
-    min-height: 300px;
-    flex: 0 0 300px;
+    display: grid;
+    flex: 0 0 auto;
 }
 
 .recon-auth-names {
