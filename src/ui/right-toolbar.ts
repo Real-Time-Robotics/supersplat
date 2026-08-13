@@ -12,12 +12,8 @@ import flyCameraSvg from './svg/fly-camera.svg';
 import orbitCameraSvg from './svg/orbit-camera.svg';
 import ringsSvg from './svg/rings.svg';
 import showHideSplatsSvg from './svg/show-hide-splats.svg';
+import { createSvg } from './svg-element';
 import { Tooltips } from './tooltips';
-
-const createSvg = (svgString: string) => {
-    const decodedStr = decodeURIComponent(svgString.substring('data:image/svg+xml,'.length));
-    return new DOMParser().parseFromString(decodedStr, 'image/svg+xml').documentElement;
-};
 
 class RightToolbar extends Container {
     constructor(events: Events, tooltips: Tooltips, args = {}) {
