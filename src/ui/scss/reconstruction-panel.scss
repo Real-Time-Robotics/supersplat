@@ -1571,6 +1571,11 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+
+    // Always in the markup so a detail change patches a row instead of rebuilding it.
+    &:empty {
+        display: none;
+    }
 }
 
 .recon-run-state {

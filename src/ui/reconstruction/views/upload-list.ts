@@ -51,11 +51,19 @@ const runDetail = (run: Run): string => (
 
 /** The nodes of one row that change without the row being rebuilt. */
 type RowNodes = {
+    row: HTMLElement;
+    signature: string;
     bar: HTMLElement | null;
     percent: HTMLElement;
+    detail: HTMLElement;
     rate: HTMLElement;
     eta: HTMLElement;
 };
+
+/** Everything a row's structure depends on; anything else is patched into the nodes. */
+const signatureOf = (run: Run, selected: boolean, controls: RunAction[]): string => [
+    run.state, run.pipeline, run.runName || run.preset, selected, controls.join(',')
+].join('|');
 
 /**
  * The list of runs, one row each, with the bytes-per-second and eta of whichever row is streaming.
@@ -67,6 +75,7 @@ class UploadList {
     readonly newRunButton: HTMLButtonElement;
     private rows = new Map<string, RowNodes>();
     private rates = new Map<string, TransferRate>();
+    private handlers: RunHandlers | null = null;
 
     constructor(host: HTMLElement) {
         const root = document.createElement('section');
@@ -90,17 +99,30 @@ class UploadList {
     }
 
     render(runs: Run[], selectedId: string | null, cap: number | null, handlers: RunHandlers) {
-        this.rows.clear();
+        this.handlers = handlers;
         for (const id of Array.from(this.rates.keys())) {
             if (!runs.some(run => run.id === id && RATE_STATES.has(run.state))) {
                 this.rates.delete(id);
             }
         }
 
-        this.list.replaceChildren();
+        const previous = this.rows;
+        this.rows = new Map();
+        const wanted: HTMLElement[] = [];
         for (const run of runs) {
-            this.list.appendChild(this.row(run, selectedId, handlers));
+            const controls = runControls(run, handlers.hasFolder(run.id));
+            const signature = signatureOf(run, run.id === selectedId, controls);
+            const existing = previous.get(run.id);
+            const nodes = existing?.signature === signature ?
+                existing :
+                this.row(run, run.id === selectedId, controls, signature);
+            this.paint(nodes, run);
+            this.rows.set(run.id, nodes);
+            wanted.push(nodes.row);
         }
+        const ordered = wanted.length === this.list.childElementCount &&
+            wanted.every((node, index) => this.list.children[index] === node);
+        if (!ordered) this.list.replaceChildren(...wanted);
 
         const running = runs.filter(run => run.state === 'running').length;
         const parked = runs.some(run => run.state === 'waiting-slot');
@@ -126,11 +148,21 @@ class UploadList {
         nodes.eta.textContent = rate ? formatEtaShort(rate.etaSeconds) : '';
     }
 
-    private row(run: Run, selectedId: string | null, handlers: RunHandlers): HTMLElement {
+    /** Everything outside the row's signature: the values that move while it stays put. */
+    private paint(nodes: RowNodes, run: Run) {
+        const barred = BAR_STATES.has(run.state);
+        nodes.detail.textContent = runDetail(run);
+        nodes.percent.textContent = barred ? `${Math.round(run.percent)}%` : '';
+        if (nodes.bar) nodes.bar.style.width = `${Math.min(100, Math.max(0, run.percent))}%`;
+        this.paintRate(nodes, RATE_STATES.has(run.state) ? this.rates.get(run.id) : undefined);
+    }
+
+    private row(run: Run, selected: boolean, controls: RunAction[],
+        signature: string): RowNodes {
         const row = document.createElement('div');
         row.className = 'recon-run-row';
         row.dataset.state = run.state;
-        row.classList.toggle('active', run.id === selectedId);
+        row.classList.toggle('active', selected);
 
         const mark = document.createElement('span');
         mark.className = 'recon-run-mark';
@@ -140,8 +172,8 @@ class UploadList {
         const select = document.createElement('button');
         select.type = 'button';
         select.className = 'recon-run-select';
-        select.setAttribute('aria-pressed', String(run.id === selectedId));
-        select.addEventListener('click', () => handlers.onSelect(run.id));
+        select.setAttribute('aria-pressed', String(selected));
+        select.addEventListener('click', () => this.handlers?.onSelect(run.id));
 
         const top = document.createElement('span');
         top.className = 'recon-run-top';
@@ -159,14 +191,9 @@ class UploadList {
         state.className = 'recon-run-state';
         state.dataset.state = run.state;
         state.textContent = RUN_STATE_TEXT[run.state];
-        meta.append(state);
-        const detail = runDetail(run);
-        if (detail) {
-            const rest = document.createElement('span');
-            rest.className = 'recon-run-detail';
-            rest.textContent = detail;
-            meta.append(rest);
-        }
+        const detail = document.createElement('span');
+        detail.className = 'recon-run-detail';
+        meta.append(state, detail);
         select.append(top, meta);
 
         let bar: HTMLElement | null = null;
@@ -174,7 +201,6 @@ class UploadList {
             const track = document.createElement('span');
             track.className = 'recon-run-bar';
             bar = document.createElement('i');
-            bar.style.width = `${Math.min(100, Math.max(0, run.percent))}%`;
             track.append(bar);
             select.append(track);
         }
@@ -183,20 +209,14 @@ class UploadList {
         stats.className = 'recon-run-stats';
         const percent = document.createElement('span');
         percent.className = 'recon-run-percent';
-        percent.textContent = BAR_STATES.has(run.state) ? `${Math.round(run.percent)}%` : '';
         const rate = document.createElement('span');
         rate.className = 'recon-run-rate';
         const eta = document.createElement('span');
         eta.className = 'recon-run-eta';
         stats.append(percent, rate, eta);
 
-        const nodes: RowNodes = { bar, percent, rate, eta };
-        this.rows.set(run.id, nodes);
-        this.paintRate(nodes, RATE_STATES.has(run.state) ? this.rates.get(run.id) : undefined);
-
         row.append(mark, select, stats);
 
-        const controls = runControls(run, handlers.hasFolder(run.id));
         if (controls.length > 0) {
             const actions = document.createElement('div');
             actions.className = 'recon-run-actions';
@@ -210,13 +230,14 @@ class UploadList {
                 button.textContent = ui.label;
                 button.title = ui.title;
                 button.setAttribute('aria-label', ui.title);
-                button.addEventListener('click', () => handlers.onAction(run.id, action));
+                button.addEventListener('click',
+                    () => this.handlers?.onAction(run.id, action));
                 actions.append(button);
             }
             row.append(actions);
         }
 
-        return row;
+        return { row, signature, bar, percent, detail, rate, eta };
     }
 }
 
