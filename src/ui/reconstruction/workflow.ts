@@ -31,7 +31,8 @@ import { Events } from '../../events';
 
 type PickedFolder = { named: Named[]; fingerprint: string; record: UploadRecord | null };
 
-const MAX_CONCURRENT_UPLOADS = 5;
+// Matches the four boxes one user can rent at once on the control plane.
+const MAX_CONCURRENT_UPLOADS = 4;
 
 class ReconstructionWorkflow {
     private files: File[] = [];
