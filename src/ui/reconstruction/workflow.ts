@@ -165,6 +165,7 @@ class ReconstructionWorkflow {
                 quote
             };
             this.applyPreparedQuote(quote);
+            this.artifacts.setPickedDataset(dataset.dataset_id);
             this.view.fileSummary.textContent =
                 `${datasetLabel} · ${dataset.image_count.toLocaleString()} existing images · ready to reuse`;
         } catch (error) {
@@ -296,6 +297,7 @@ class ReconstructionWorkflow {
             };
             this.view.fileSummary.textContent = `Dataset ${value.datasetId} is already uploaded · ready to reuse`;
             this.view.startButton.disabled = false;
+            this.artifacts.setPickedDataset(value.datasetId);
         } catch {
             localStorage.removeItem(PREPARED_DATASET_KEY);
         }
@@ -312,6 +314,7 @@ class ReconstructionWorkflow {
     private clearPreparedDataset() {
         this.preparedDataset = null;
         this.persistPreparedDataset();
+        this.artifacts.setPickedDataset(null);
     }
 
     private applyPreparedQuote(quote: UploadResponse['quote']): UploadResponse {

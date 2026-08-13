@@ -1108,6 +1108,10 @@
     background-color: $bcg-dark;
     border-left: 2px solid transparent;
 
+    &:hover {
+        background-color: $bcg-primary;
+    }
+
     &.primary {
         border-left-color: $clr-hilight;
     }
@@ -1256,16 +1260,36 @@
     margin-bottom: 10px;
 }
 
-// Create's picker: the choice is which dataset, so the row carries the time it was made
-// and the two things you can do to it, and nothing else.
 .recon-pick {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 8px;
     padding: 6px 8px;
-    background-color: $bcg-dark;
+    // A tone below the buttons standing on it
+    background-color: $bcg-darker;
+    border-left: 2px solid transparent;
     border-radius: 2px;
+
+    &:hover {
+        background-color: $bcg-dark;
+    }
+
+    &.active {
+        background-color: rgba($clr-hilight, 0.1);
+        border-left-color: $clr-hilight;
+
+        &:hover {
+            background-color: rgba($clr-hilight, 0.16);
+        }
+    }
+}
+
+.recon-pick-info {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 2px;
 }
 
 .recon-pick-created {
@@ -1276,6 +1300,12 @@
     font-weight: normal;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+.recon-pick-detail {
+    color: $text-secondary;
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
 }
 
 .recon-dataset {
@@ -1320,6 +1350,11 @@
 .recon-use-dataset {
     padding: 5px 7px;
     font-size: 10px;
+
+    // Orange on a dark row barely lifts on hover, so the ring carries the state.
+    &:hover {
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.45);
+    }
 }
 
 .recon-dataset-models {
@@ -1359,13 +1394,17 @@
 
 .recon-delete-dataset {
     align-self: stretch;
-    padding: 5px 7px;
+    padding: 4px 7px;
     color: $text-secondary;
     font-size: 10px;
+    background-color: transparent;
+    border: 1px solid $bcg-lighter;
 
     &:hover,
     &:focus-visible {
-        color: $error;
+        color: $clr-active;
+        background-color: rgba($error, 0.75);
+        border-color: transparent;
     }
 }
 

@@ -49,7 +49,9 @@ class ReconstructionArtifacts {
     private activeDatasetId: string | null = null;
     private activeScope: CacheScope | null = null;
     private sessionGeneration = 0;
+    private pickedDatasetId: string | null = null;
     private readonly artifactLocations = new Map<string, HTMLElement>();
+    private readonly pickRows = new Map<string, HTMLElement>();
     private readonly datasets: ReconstructionDatasets;
 
     constructor(
@@ -92,6 +94,7 @@ class ReconstructionArtifacts {
         this.activeDatasetId = null;
         this.activeScope = null;
         this.artifactLocations.clear();
+        this.pickRows.clear();
         this.view.recentRuns.textContent = '';
         this.view.datasetTree.textContent = '';
         this.view.artifactList.textContent = '';
@@ -132,12 +135,11 @@ class ReconstructionArtifacts {
     }
 
     /**
-     * Create's picker. Named by when the server committed the dataset, not by its label —
-     * the label carries the timestamp of when the run was composed in the browser, which
-     * is minutes off the upload and reads as the wrong time.
+     * Create's picker. Named by when the server committed the dataset.
      */
     private renderDatasetPicker(datasets: RecentDataset[]) {
         this.view.recentRuns.textContent = '';
+        this.pickRows.clear();
         if (!datasets.length) {
             const empty = document.createElement('span');
             empty.textContent = 'No reconstruction datasets yet.';
@@ -149,10 +151,19 @@ class ReconstructionArtifacts {
             row.className = 'recon-pick';
             const name = dataset.label || dataset.dataset_id;
 
+            const info = document.createElement('div');
+            info.className = 'recon-pick-info';
             const created = document.createElement('strong');
             created.className = 'recon-pick-created';
             created.textContent = datasetCreated(dataset).toLocaleString('en-US');
             created.title = `Dataset ${dataset.dataset_id}`;
+            const detail = document.createElement('span');
+            detail.className = 'recon-pick-detail';
+            detail.textContent = [
+                `${dataset.image_count.toLocaleString()} images`,
+                formatBytes(dataset.bytes)
+            ].join(' · ');
+            info.append(created, detail);
 
             const actions = document.createElement('div');
             actions.className = 'recon-dataset-actions';
@@ -173,9 +184,25 @@ class ReconstructionArtifacts {
                 () => this.datasets.requestDelete(dataset, deleteButton));
             actions.append(useButton, deleteButton);
 
-            row.append(created, actions);
+            row.append(info, actions);
+            this.paintPick(row, dataset.dataset_id === this.pickedDatasetId);
+            this.pickRows.set(dataset.dataset_id, row);
             this.view.recentRuns.appendChild(row);
         }
+    }
+
+    /**
+     * Marks the dataset a run would reuse.
+     */
+    setPickedDataset(datasetId: string | null) {
+        this.pickedDatasetId = datasetId;
+        for (const [id, row] of this.pickRows) this.paintPick(row, id === datasetId);
+    }
+
+    private paintPick(row: HTMLElement, picked: boolean) {
+        row.classList.toggle('active', picked);
+        if (picked) row.setAttribute('aria-current', 'true');
+        else row.removeAttribute('aria-current');
     }
 
     /** Artifacts' tree: a row per dataset, expanding to the jobs it produced. */
