@@ -190,6 +190,13 @@
     overflow: hidden;
 }
 
+.recon-panels {
+    display: flex;
+    flex: 1 1 auto;
+    min-height: 0;
+    flex-direction: column;
+}
+
 // Signed out there is no balance to read and no tab worth reaching.
 .recon-dashboard:not(.signed-in) {
     .recon-credit,
@@ -574,7 +581,7 @@
 
 .recon-shared-progress {
     flex: 0 0 auto;
-    margin-bottom: 8px;
+    margin-top: 8px;
 }
 
 .recon-tab-panel {
@@ -1115,85 +1122,6 @@
         text-overflow: ellipsis;
         white-space: nowrap;
     }
-}
-
-.recon-download {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    margin-bottom: 7px;
-    padding: 7px 8px;
-    background-color: $bcg-dark;
-    border-radius: 2px;
-
-    &[hidden] {
-        display: none;
-    }
-}
-
-.recon-download-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-
-    strong {
-        min-width: 0;
-        overflow: hidden;
-        color: $text-primary;
-        font-weight: normal;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-    }
-}
-
-.recon-download-cancel {
-    flex: 0 0 auto;
-    min-height: 22px;
-    padding: 2px 8px;
-    color: $text-secondary;
-    font-size: 10px;
-    background-color: $bcg-darkest;
-
-    &[hidden] {
-        display: none;
-    }
-
-    &:hover {
-        color: $clr-active;
-        background-color: rgba($error, 0.75);
-    }
-}
-
-.recon-download-bar {
-    display: block;
-    width: 100%;
-    height: 3px;
-    overflow: hidden;
-    background-color: $bcg-darkest;
-    border-radius: 2px;
-
-    i {
-        display: block;
-        width: 0;
-        height: 100%;
-        background-color: $clr-hilight;
-        transition: width 0.2s linear;
-
-        .recon-download[data-mode='done'] & {
-            background-color: #5ad48a;
-        }
-
-        .recon-download[data-mode='failed'] & {
-            background-color: $error;
-        }
-    }
-}
-
-.recon-download-stats {
-    color: $text-secondary;
-    font-size: 10px;
-    font-variant-numeric: tabular-nums;
 }
 
 .recon-artifact-list {

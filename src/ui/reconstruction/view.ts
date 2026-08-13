@@ -68,6 +68,22 @@ class ReconstructionView {
         return this.shell.buyCreditsButton;
     }
 
+    get cancelButton() {
+        return this.shell.cancelButton;
+    }
+
+    get downloadCancelButton() {
+        return this.shell.downloadCancelButton;
+    }
+
+    get openPrimaryButton() {
+        return this.shell.openPrimaryButton;
+    }
+
+    get checkoutLink() {
+        return this.shell.checkoutLink;
+    }
+
     get pricingPanel() {
         return this.shell.pricingPanel;
     }
@@ -114,18 +130,6 @@ class ReconstructionView {
 
     get startButton() {
         return this.create.startButton;
-    }
-
-    get cancelButton() {
-        return this.create.cancelButton;
-    }
-
-    get openPrimaryButton() {
-        return this.create.openPrimaryButton;
-    }
-
-    get checkoutLink() {
-        return this.create.checkoutLink;
     }
 
     get imageInput() {
@@ -188,10 +192,6 @@ class ReconstructionView {
         return this.artifacts.artifactList;
     }
 
-    get downloadCancelButton() {
-        return this.artifacts.downloadCancel;
-    }
-
     get cacheUsageLabel() {
         return this.artifacts.cacheUsageLabel;
     }
@@ -224,15 +224,6 @@ class ReconstructionView {
     /** One upload progress tick, written into the run's row without rebuilding it. */
     setTransfer(runId: string, rate: TransferRate) {
         this.create.uploads.setTransfer(runId, rate);
-    }
-
-    /** One artifact download tick. */
-    setDownload(title: string, detail: string, visual: ProgressVisual) {
-        this.artifacts.setDownload(title, detail, visual);
-    }
-
-    hideDownload() {
-        this.artifacts.hideDownload();
     }
 
     showAuth() {

@@ -96,7 +96,6 @@ class ReconstructionArtifacts {
         this.activeScope = null;
         this.artifactLocations.clear();
         this.pickRows.clear();
-        this.view.hideDownload();
         this.view.recentRuns.textContent = '';
         this.view.datasetTree.textContent = '';
         this.view.artifactList.textContent = '';
@@ -110,10 +109,6 @@ class ReconstructionArtifacts {
 
     cancelDownload() {
         this.activeDownload?.abort();
-    }
-
-    get isDownloading() {
-        return this.activeDownload !== null;
     }
 
     async refreshRecentRuns() {
@@ -328,7 +323,6 @@ class ReconstructionArtifacts {
         this.activeDatasetId = source.type === 'run' ? source.run.dataset_id : null;
         this.activeScope = scopeOf(source);
         this.view.artifactPanel.hidden = false;
-        this.view.hideDownload();
         this.view.artifactTitle.textContent = source.label;
         this.view.artifactList.textContent = '';
         this.artifactLocations.clear();
@@ -384,11 +378,9 @@ class ReconstructionArtifacts {
         const report = options.report ??
             ((title: string, detail: string, visual: ProgressVisual) => {
                 this.view.setState(title, detail, visual);
-                this.view.setDownload(title, detail, visual);
             });
         if (manageView) {
             this.view.setBusy(true, this.canStart());
-            this.view.cancelButton.hidden = false;
             this.view.downloadCancelButton.hidden = false;
         }
         const filename = artifact.name.split('/').pop() || 'genesis-artifact';
@@ -456,7 +448,6 @@ class ReconstructionArtifacts {
             if (this.activeDownload === controller) {
                 this.activeDownload = null;
                 if (manageView) {
-                    this.view.cancelButton.hidden = true;
                     this.view.downloadCancelButton.hidden = true;
                     this.view.setBusy(false, this.canStart());
                 }

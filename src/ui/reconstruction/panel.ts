@@ -45,13 +45,7 @@ class ReconstructionPanel extends Container {
             ]);
         });
 
-        view.cancelButton.addEventListener('click', () => {
-            if (artifacts.isDownloading) {
-                artifacts.cancelDownload();
-            } else {
-                workflow.cancelJob();
-            }
-        });
+        view.cancelButton.addEventListener('click', () => workflow.cancelJob());
 
         const setVisible = (visible: boolean) => {
             if (visible === this.hidden) {

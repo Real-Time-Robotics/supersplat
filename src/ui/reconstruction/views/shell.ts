@@ -45,6 +45,10 @@ class DashboardShell {
     readonly customPrice: HTMLElement;
     readonly tabButtons: HTMLButtonElement[];
     readonly stage: HTMLElement;
+    readonly cancelButton: HTMLButtonElement;
+    readonly downloadCancelButton: HTMLButtonElement;
+    readonly openPrimaryButton: HTMLButtonElement;
+    readonly checkoutLink: HTMLAnchorElement;
 
     constructor(host: HTMLElement) {
         const root = document.createElement('div');
@@ -91,7 +95,35 @@ class DashboardShell {
                             aria-controls="recon-${tab}-tab"><span
                             class="recon-nav-label">${label}</span></button>`).join('')}
                 </nav>
-                <div class="recon-stage"></div>
+                <div class="recon-stage">
+                    <div class="recon-panels"></div>
+                    <section class="recon-shared-progress">
+                        <div class="recon-progress-card" data-mode="idle">
+                            <div class="recon-progress-ring" role="progressbar" aria-label="Ready">
+                                <svg viewBox="0 0 44 44" aria-hidden="true">
+                                    <circle class="recon-progress-track" cx="22" cy="22" r="18" pathLength="100"></circle>
+                                    <circle class="recon-progress-value" cx="22" cy="22" r="18" pathLength="100"></circle>
+                                    <circle class="recon-progress-activity" cx="22" cy="22" r="18" pathLength="100"></circle>
+                                </svg>
+                                <strong class="recon-progress-center">&#8212;</strong>
+                            </div>
+                            <div class="recon-state">
+                                <strong class="recon-status">Ready</strong>
+                                <span class="recon-status-detail">Choose a set of photos captured around an object or space.</span>
+                                <span class="recon-worker-status" role="status" hidden>
+                                    <i></i>
+                                    <span></span>
+                                </span>
+                            </div>
+                        </div>
+                        <a class="recon-checkout" target="reconstruction-checkout" rel="noopener" hidden>Open checkout &#8599;</a>
+                        <div class="recon-shared-actions">
+                            <button class="recon-button recon-primary recon-open-primary" type="button" hidden>Open model now</button>
+                            <button class="recon-button recon-download-cancel" type="button" hidden>Cancel download</button>
+                            <button class="recon-button recon-cancel" type="button" hidden>Cancel job</button>
+                        </div>
+                    </section>
+                </div>
             </div>`;
         host.appendChild(root);
 
@@ -108,7 +140,11 @@ class DashboardShell {
         this.customCreditsInput = root.querySelector('.recon-custom-credits input');
         this.customPrice = root.querySelector('.recon-custom-price');
         this.tabButtons = Array.from(root.querySelectorAll<HTMLButtonElement>('.recon-nav'));
-        this.stage = root.querySelector('.recon-stage');
+        this.stage = root.querySelector('.recon-panels');
+        this.cancelButton = root.querySelector('.recon-cancel');
+        this.downloadCancelButton = root.querySelector('.recon-download-cancel');
+        this.openPrimaryButton = root.querySelector('.recon-open-primary');
+        this.checkoutLink = root.querySelector('.recon-checkout');
 
         for (const button of this.tabButtons) {
             const icon = TABS.find(entry => entry.tab === button.dataset.tab)?.icon;

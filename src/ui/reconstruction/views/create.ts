@@ -23,9 +23,6 @@ class CreateView {
     readonly recentRuns: HTMLElement;
     readonly refreshRunsButton: HTMLButtonElement;
     readonly startButton: HTMLButtonElement;
-    readonly cancelButton: HTMLButtonElement;
-    readonly openPrimaryButton: HTMLButtonElement;
-    readonly checkoutLink: HTMLAnchorElement;
     readonly uploads: UploadList;
     private panes: HTMLElement[];
 
@@ -119,31 +116,6 @@ class CreateView {
                 </div>
                 <div class="recon-file-summary">No images selected</div>
             </div>
-            <section class="recon-shared-progress">
-                <div class="recon-progress-card" data-mode="idle">
-                    <div class="recon-progress-ring" role="progressbar" aria-label="Ready">
-                        <svg viewBox="0 0 44 44" aria-hidden="true">
-                            <circle class="recon-progress-track" cx="22" cy="22" r="18" pathLength="100"></circle>
-                            <circle class="recon-progress-value" cx="22" cy="22" r="18" pathLength="100"></circle>
-                            <circle class="recon-progress-activity" cx="22" cy="22" r="18" pathLength="100"></circle>
-                        </svg>
-                        <strong class="recon-progress-center">—</strong>
-                    </div>
-                    <div class="recon-state">
-                        <strong class="recon-status">Ready</strong>
-                        <span class="recon-status-detail">Choose a set of photos captured around an object or space.</span>
-                        <span class="recon-worker-status" role="status" hidden>
-                            <i></i>
-                            <span></span>
-                        </span>
-                    </div>
-                </div>
-                <a class="recon-checkout" target="reconstruction-checkout" rel="noopener" hidden>Open checkout ↗</a>
-                <div class="recon-shared-actions">
-                    <button class="recon-button recon-primary recon-open-primary" type="button" hidden>Open model now</button>
-                    <button class="recon-button recon-cancel" type="button" hidden>Cancel</button>
-                </div>
-            </section>
             <footer class="recon-footer">
                 <button class="recon-button recon-primary recon-start" type="button" disabled>Create Gaussian Splat</button>
                 <p class="recon-note">Credits are only held once the job starts. Completed artifacts remain available in Artifacts.</p>
@@ -169,9 +141,6 @@ class CreateView {
         this.recentRuns = root.querySelector('.recon-recent-list');
         this.refreshRunsButton = root.querySelector('.recon-refresh-runs');
         this.startButton = root.querySelector('.recon-start');
-        this.cancelButton = root.querySelector('.recon-cancel');
-        this.openPrimaryButton = root.querySelector('.recon-open-primary');
-        this.checkoutLink = root.querySelector('.recon-checkout');
         this.panes = Array.from(root.querySelectorAll<HTMLElement>('.recon-source-pane'));
 
         this.folderInput.setAttribute('webkitdirectory', '');
