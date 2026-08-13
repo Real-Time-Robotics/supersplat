@@ -13,6 +13,9 @@ import {
     readJson
 } from './reconstruction-utils';
 import { ReconstructionView } from './reconstruction-view';
+import cachedSvg from './svg/recon-cached.svg';
+import remoteSvg from './svg/recon-remote.svg';
+import { createSvg } from './svg-element';
 
 type ArtifactOpenResult = {
     status: 'opened' | 'downloaded' | 'cancelled' | 'failed';
@@ -399,7 +402,9 @@ class ReconstructionArtifacts {
         if (!location) return;
         location.classList.toggle('local', Boolean(artifact.local));
         location.classList.toggle('remote', !artifact.local);
-        location.textContent = artifact.local ? '✓' : '☁';
+        // Drawn, not typed: neither ✓ nor ☁ exists in Arial, so both fell back to a font
+        // with different metrics — and ☁ renders as colour emoji on some platforms.
+        location.replaceChildren(createSvg(artifact.local ? cachedSvg : remoteSvg));
         const label = artifact.local ?
             'Đã có trên máy này · bấm để xoá khỏi bộ nhớ đệm' :
             'Chưa có trên máy này; sẽ tải từ kho lưu trữ';

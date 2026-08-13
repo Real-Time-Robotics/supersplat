@@ -1167,9 +1167,12 @@
     height: 20px;
     box-sizing: border-box;
     border-radius: 50%;
-    font-family: Arial, sans-serif;
-    font-size: 12px;
-    font-weight: bold;
+
+    svg {
+        display: block;
+        width: 12px;
+        height: 12px;
+    }
 
     &.local {
         color: $clr-active;
@@ -1179,7 +1182,6 @@
     &.remote {
         color: $text-secondary;
         background-color: $bcg-darkest;
-        font-size: 13px;
     }
 }
 
