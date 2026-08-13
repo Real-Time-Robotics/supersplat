@@ -240,6 +240,7 @@
     "popup.shortcuts.redo": "Rétablir",
     "popup.shortcuts.toggle-data-panel": "Afficher/Cacher l'onglet données",
     "popup.shortcuts.toggle-timeline-panel": "Afficher/Cacher la timeline",
+    "popup.shortcuts.toggle-reconstruction-panel": "Afficher/Cacher l'onglet Reconstruction",
 
     "popup.export": "Exporter",
     "popup.export.header": "Exporter",

@@ -240,6 +240,7 @@
     "popup.shortcuts.redo": "やり直し",
     "popup.shortcuts.toggle-data-panel": "データパネルの切り替え",
     "popup.shortcuts.toggle-timeline-panel": "タイムラインパネルの切り替え",
+    "popup.shortcuts.toggle-reconstruction-panel": "Reconstruction パネルの切り替え",
 
     "popup.export": "エクスポート",
     "popup.export.header": "エクスポート",

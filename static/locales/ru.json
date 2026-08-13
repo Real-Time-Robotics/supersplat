@@ -240,6 +240,7 @@
     "popup.shortcuts.redo": "Повторить",
     "popup.shortcuts.toggle-data-panel": "Переключить панель данных",
     "popup.shortcuts.toggle-timeline-panel": "Переключить панель временной шкалы",
+    "popup.shortcuts.toggle-reconstruction-panel": "Переключить панель Reconstruction",
 
     "popup.export": "Экспорт",
     "popup.export.header": "Экспорт",

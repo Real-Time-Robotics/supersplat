@@ -240,6 +240,7 @@
     "popup.shortcuts.redo": "Wiederholen",
     "popup.shortcuts.toggle-data-panel": "Splat Daten Panel anzeigen",
     "popup.shortcuts.toggle-timeline-panel": "Zeitleiste anzeigen",
+    "popup.shortcuts.toggle-reconstruction-panel": "Reconstruction Panel anzeigen",
 
     "popup.export": "Exportieren",
     "popup.export.header": "Exportieren",

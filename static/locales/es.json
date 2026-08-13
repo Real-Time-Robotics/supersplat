@@ -240,6 +240,7 @@
     "popup.shortcuts.redo": "Rehacer",
     "popup.shortcuts.toggle-data-panel": "Alternar panel de datos",
     "popup.shortcuts.toggle-timeline-panel": "Alternar panel de línea de tiempo",
+    "popup.shortcuts.toggle-reconstruction-panel": "Alternar panel de Reconstruction",
 
     "popup.export": "Exportar",
     "popup.export.header": "Exportar",

@@ -240,6 +240,7 @@
     "popup.shortcuts.redo": "다시 실행",
     "popup.shortcuts.toggle-data-panel": "데이터 패널 전환",
     "popup.shortcuts.toggle-timeline-panel": "타임라인 패널 전환",
+    "popup.shortcuts.toggle-reconstruction-panel": "Reconstruction 패널 전환",
 
     "popup.export": "내보내기",
     "popup.export.header": "내보내기",
