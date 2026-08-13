@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Ship the editor to Cloudflare Workers.
-#   scripts/deploy.sh              # gate -> bump patch -> build+deploy -> smoke
+#   scripts/deploy.sh              # preflight -> gate -> bump patch -> build+deploy -> smoke
 #   scripts/deploy.sh --no-bump    # same, keeping the current version
 #
 # Creds live in ~/.config/genesis/cloudflare.env (0600):
@@ -11,6 +11,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 CREDS="${CLOUDFLARE_ENV:-$HOME/.config/genesis/cloudflare.env}"
 SITE="${SITE_URL:-https://editor.rtrobotics.com}"
+WORKER="${WORKER_NAME:-supersplat-editor}"
 BUMP=1
 [ "${1:-}" = "--no-bump" ] && BUMP=0
 
@@ -31,6 +32,26 @@ fi
 
 step() { echo; echo "==== $* ===="; }
 
+deployment_id() {
+    curl -sf -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+        "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$WORKER/deployments" |
+        node -e 'let b = ""; process.stdin.on("data", c => b += c).on("end", () => {
+            const d = JSON.parse(b).result?.deployments ?? [];
+            // Picked by date, not by position: the API answers newest-first today,
+            // but nothing in the response promises that.
+            const newest = d.reduce((a, x) => (a && a.created_on > x.created_on ? a : x), null);
+            process.stdout.write(newest?.id ?? "");
+        })' 2>/dev/null || true
+}
+
+# Check if wrangler is available as devDependency
+step "preflight"
+[ -x node_modules/.bin/wrangler ] || {
+    echo "ERROR: no node_modules/.bin/wrangler -- run npm install" >&2
+    exit 1
+}
+node_modules/.bin/wrangler --version
+
 # Gate before mutating package.json.
 step "typecheck"
 npx tsc --noEmit -p tsconfig.json
@@ -45,20 +66,33 @@ npm run test:gateway-proxy
 npm run test:runs-freshness
 npm run test:model-import
 
-# prebuild bundles the linked Genesis SDK.
 if [ "$BUMP" = 1 ]; then
     step "bump patch"
+    bumped_from="$(node -p 'require("./package.json").version')"
     npm version patch --no-git-tag-version
 fi
 version="$(node -p 'require("./package.json").version')"
 
-# Smoke decides success because route updates can fail after upload.
 step "deploy $version"
+before="$(deployment_id)"
+# prebuild bundles the linked Genesis SDK.
 set +e
 npm run deploy
 deploy_rc=$?
 set -e
-[ "$deploy_rc" = 0 ] || echo "WARN: wrangler exited $deploy_rc -- smoke decides" >&2
+after="$(deployment_id)"
+
+if [ "$deploy_rc" != 0 ] && [ -n "$after" ] && [ "$after" = "$before" ]; then
+    echo "FAIL: wrangler exited $deploy_rc and left deployment $after in place -- nothing was uploaded" >&2
+    if [ "$BUMP" = 1 ]; then
+        # Keeping the bump would walk the version one patch further from what is live on
+        # every failed run.
+        npm version "$bumped_from" --no-git-tag-version --allow-same-version >/dev/null
+        echo "Reverted the bump to $bumped_from." >&2
+    fi
+    exit 1
+fi
+[ "$deploy_rc" = 0 ] || echo "WARN: wrangler exited $deploy_rc after uploading -- smoke decides" >&2
 
 step "smoke"
 # Cloudflare serves the previous bundle for a few seconds after the upload, so the
