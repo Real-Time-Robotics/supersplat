@@ -34,6 +34,8 @@ type UploadProgress = {
     loaded: number;
     total: number;
     file?: string;
+    /** The session these bytes belong to; keys the rate window per transfer. */
+    datasetId: string;
 };
 
 type StageEvent = {

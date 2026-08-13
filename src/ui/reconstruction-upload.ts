@@ -1,5 +1,6 @@
 import { Client } from 'genesis-recon';
 
+import { RateMeter, formatRate, type TransferRate } from './reconstruction/upload-rate';
 import { describeFailure } from './reconstruction-failure';
 import { reconFetch } from './reconstruction-http';
 import type { ProgressVisual } from './reconstruction-progress';
@@ -16,6 +17,8 @@ type TransferHooks = {
     onSession?: (record: UploadRecord) => void;
     onPercent?: (percent: number) => void;
     onCard?: (title: string, detail: string, visual: ProgressVisual) => void;
+    /** Every tick, not just whole-percent ones: the run row renders speed and eta from it. */
+    onRate?: (rate: TransferRate) => void;
 };
 
 class UploadPaused extends Error {
@@ -27,9 +30,8 @@ class UploadPaused extends Error {
 
 class ReconstructionUpload {
     private readonly records = new UploadRecords();
+    private readonly rate = new RateMeter();
     private transfer: Transfer | null = null;
-    private transferKey = '';
-    private transferSamples: { time: number; loaded: number }[] = [];
 
     pause() {
         this.transfer?.pause();
@@ -94,28 +96,17 @@ class ReconstructionUpload {
         throw outcome.error;
     }
 
-    private transferDetail(key: string, loaded: number, total: number, suffix = '') {
-        const now = performance.now();
-        if (this.transferKey !== key) {
-            this.transferKey = key;
-            this.transferSamples = [{ time: now, loaded }];
-        } else {
-            this.transferSamples.push({ time: now, loaded });
-        }
-        while (this.transferSamples.length > 2 && now - this.transferSamples[0].time > 8000) {
-            this.transferSamples.shift();
-        }
-        const first = this.transferSamples[0];
-        const elapsed = (now - first.time) / 1000;
-        const speed = elapsed >= 0.4 ? (loaded - first.loaded) / elapsed : 0;
-        const eta = total > loaded && speed > 0 ? (total - loaded) / speed : 0;
+    private transferDetail(key: string, loaded: number, total: number,
+        suffix = ''): [string, TransferRate] {
+        const rate = this.rate.sample(key, loaded, total);
         const transferred = total > 0 ?
             `${formatBytes(loaded)} / ${formatBytes(total)}` :
             formatBytes(loaded);
-        const estimate = speed > 0 ?
-            ` · ${formatBytes(speed)}/s${total > 0 ? ` · ${formatDuration(eta)}` : ''}` :
+        const eta = total > 0 ? ` · ${formatDuration(rate.etaSeconds)}` : '';
+        const estimate = rate.bytesPerSecond > 0 ?
+            ` · ${formatRate(rate.bytesPerSecond)}${eta}` :
             ' · estimating…';
-        return transferred + estimate + suffix;
+        return [transferred + estimate + suffix, rate];
     }
 
     private updateStorageProgress(progress: UploadProgress, hooks: TransferHooks) {
@@ -128,8 +119,10 @@ class ReconstructionUpload {
             const ratio = progress.total > 0 ? progress.loaded / progress.total : 0;
             hooks.onPercent?.(ratio * 100);
             const current = progress.file ? ` · ${progress.file}` : '';
-            hooks.onCard?.('Đang tải lên kho lưu trữ',
-                this.transferDetail('object-storage-upload', progress.loaded, progress.total, current),
+            const [detail, rate] = this.transferDetail(
+                progress.datasetId, progress.loaded, progress.total, current);
+            hooks.onRate?.(rate);
+            hooks.onCard?.('Đang tải lên kho lưu trữ', detail,
                 { mode: 'determinate', value: ratio * 100 });
             return;
         }
