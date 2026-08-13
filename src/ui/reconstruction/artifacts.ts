@@ -461,19 +461,22 @@ class ReconstructionArtifacts {
 
     private updateArtifactLocation(artifact: Artifact) {
         const location = this.artifactLocations.get(artifact.name);
-        if (!location) return;
-        location.classList.toggle('local', Boolean(artifact.local));
-        location.classList.toggle('remote', !artifact.local);
+        if (location) this.paintArtifactLocation(location, Boolean(artifact.local));
+    }
+
+    private paintArtifactLocation(location: HTMLElement, local: boolean) {
+        location.classList.toggle('local', local);
+        location.classList.toggle('remote', !local);
         // Drawn, not typed: neither ✓ nor ☁ exists in Arial, so both fell back to a font
         // with different metrics — and ☁ renders as colour emoji on some platforms.
-        location.replaceChildren(createSvg(artifact.local ? cachedSvg : remoteSvg));
-        const label = artifact.local ?
+        location.replaceChildren(createSvg(local ? cachedSvg : remoteSvg));
+        const label = local ?
             'Đã có trên máy này · bấm để xoá khỏi bộ nhớ đệm' :
             'Chưa có trên máy này; sẽ tải từ kho lưu trữ';
         location.title = label;
         location.setAttribute('aria-label', label);
-        location.setAttribute('role', artifact.local ? 'button' : 'img');
-        if (artifact.local) location.tabIndex = 0;
+        location.setAttribute('role', local ? 'button' : 'img');
+        if (local) location.tabIndex = 0;
         else location.removeAttribute('tabindex');
     }
 
@@ -496,14 +499,7 @@ class ReconstructionArtifacts {
     async clearCache() {
         await artifactCache.clear();
         for (const location of this.artifactLocations.values()) {
-            location.classList.remove('local');
-            location.classList.add('remote');
-            location.textContent = '☁';
-            location.setAttribute('role', 'img');
-            location.removeAttribute('tabindex');
-            const label = 'Chưa có trên máy này; sẽ tải từ kho lưu trữ';
-            location.title = label;
-            location.setAttribute('aria-label', label);
+            this.paintArtifactLocation(location, false);
         }
         await this.refreshCacheUsage();
     }
@@ -568,7 +564,5 @@ class ReconstructionArtifacts {
     }
 }
 
-export {
-    ArtifactOpenResult,
-    ReconstructionArtifacts
-};
+export { ReconstructionArtifacts };
+export type { ArtifactOpenResult };
