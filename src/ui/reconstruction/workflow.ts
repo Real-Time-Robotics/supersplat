@@ -669,7 +669,6 @@ class ReconstructionWorkflow {
             run.pipeline as ReconstructionPipeline, run.runName, run.submitKey as string);
     }
 
-
     private reconstruct() {
         if (!this.canStart) return;
         const run = this.trackRun();
@@ -682,25 +681,25 @@ class ReconstructionWorkflow {
     private startQueuedRun() {
         const next = this.runs.list().find(run => run.state === 'queued');
         if (!next) return;
-        this.startRun(next).catch((error) => {
+        this.startRun(next, false).catch((error) => {
             this.view.progress.showNotice(messageOf(error), 8000);
         });
     }
 
-    private async startRun(run: Run) {
+    private async startRun(run: Run, select = true) {
         const generation = this.sessionGeneration;
         if (this.submitting.has(run.id)) return;
         const transferring = this.picked.has(run.id);
         // Only bytes are rationed. A run reusing an uploaded dataset must not wait behind someone else's upload.
         if (transferring && this.upload.active >= MAX_CONCURRENT_UPLOADS) {
             this.coordinator.transition(run.id, 'queued', { detail: '' });
-            this.selectRun(run.id);
+            if (select) this.selectRun(run.id);
             return;
         }
         this.coordinator.setSlotCap(this.billing.concurrentCap);
         this.cancelling.delete(run.id);
         this.submitting.add(run.id);
-        this.runs.select(run.id);
+        if (select) this.runs.select(run.id);
         if (!this.coordinator.transition(run.id, transferring ? 'uploading' : 'quoting',
             { detail: '' })) {
             this.submitting.delete(run.id);
@@ -753,7 +752,6 @@ class ReconstructionWorkflow {
                     submitted?.detail || 'Máy chủ từ chối job này.', { mode: 'failed' });
                 return;
             }
-            this.submitting.delete(run.id);
             if (this.runs.selected()?.id === run.id) this.watchRun(submitted);
         } catch (error) {
             if (generation !== this.sessionGeneration) return;
