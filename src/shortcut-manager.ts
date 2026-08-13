@@ -59,7 +59,7 @@ const defaultShortcuts: Record<string, ShortcutBinding> = {
     'edit.redo': { keys: ['z'], ctrl: 'required', shift: 'required', repeat: true, capture: true },
     'dataPanel.toggle': { keys: ['d'], ctrl: 'required', capture: true },
     'timelinePanel.toggle': { keys: ['t'], ctrl: 'required', capture: true },
-    'reconstructionPanel.toggleVisible': { keys: ['k'], ctrl: 'required', capture: true },
+    'reconstructionPanel.toggleVisible': { keys: ['m'], ctrl: 'required', capture: true },
 
     // Camera fly keys - use physical positions (codes) for WASD layout on non-QWERTY keyboards
     'camera.fly.forward': { codes: ['KeyW'], held: true, shift: 'optional', alt: 'optional' },
@@ -70,6 +70,24 @@ const defaultShortcuts: Record<string, ShortcutBinding> = {
     'camera.fly.up': { codes: ['KeyE'], held: true, shift: 'optional', alt: 'optional' },
     'camera.modifier.fast': { codes: ['ShiftLeft', 'ShiftRight'], held: true, alt: 'optional' },
     'camera.modifier.slow': { codes: ['AltLeft', 'AltRight'], held: true, shift: 'optional' }
+};
+
+/**
+ * True when `event` is the chord bound to `id`. For handlers that have to run inside a
+ * .blocks-shortcuts subtree, which the global table deliberately never reaches — they
+ * ask here instead of hardcoding the key and drifting when a binding changes.
+ */
+const matchesShortcut = (id: string, event: KeyboardEvent): boolean => {
+    const binding = defaultShortcuts[id];
+    if (!binding) return false;
+    const keyHit = binding.keys?.some(key => key.toLowerCase() === event.key.toLowerCase()) ||
+        binding.codes?.includes(event.code) || false;
+    const modOk = (state: string | undefined, pressed: boolean) => (
+        state === 'required' ? pressed : state === 'optional' ? true : !pressed);
+    return keyHit &&
+        modOk(binding.ctrl, event.ctrlKey || event.metaKey) &&
+        modOk(binding.shift, event.shiftKey) &&
+        modOk(binding.alt, event.altKey);
 };
 
 class ShortcutManager {
@@ -142,4 +160,4 @@ class ShortcutManager {
     }
 }
 
-export { ShortcutManager };
+export { ShortcutManager, matchesShortcut };

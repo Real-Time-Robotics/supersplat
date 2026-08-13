@@ -1,18 +1,18 @@
-import { ArtifactsView } from './reconstruction/artifacts-view';
-import { AuthView } from './reconstruction/auth-view';
-import { CreateView } from './reconstruction/create-view';
-import { DashboardShell, type DashboardTab } from './reconstruction/dashboard-shell';
-import { SettingsView } from './reconstruction/settings-view';
-import type { RunHandlers } from './reconstruction/upload-list';
-import type { TransferRate } from './reconstruction/upload-rate';
-import { ProgressVisual, ReconstructionProgress } from './reconstruction-progress';
-import type { Run } from './reconstruction-run';
+import { ProgressVisual, ReconstructionProgress } from './progress';
+import type { Run } from './run';
 import {
     JobHeartbeatEvent,
     JobProgressEvent,
     ReconstructionPipeline,
     StageEvent
-} from './reconstruction-types';
+} from './types';
+import type { TransferRate } from './upload-rate';
+import { ArtifactsView } from './views/artifacts';
+import { AuthView } from './views/auth';
+import { CreateView } from './views/create';
+import { SettingsView } from './views/settings';
+import { DashboardShell, type DashboardTab } from './views/shell';
+import type { RunHandlers } from './views/upload-list';
 
 type PanelTab = DashboardTab;
 

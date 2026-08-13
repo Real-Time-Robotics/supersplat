@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { beforeEach, test } from 'node:test';
 
-import { ArtifactCache, cacheKeyFor } from './reconstruction-artifact-cache';
+import { ArtifactCache, cacheKeyFor } from './artifact-cache';
 
 class FakeCache {
     store = new Map<string, { body: Uint8Array; headers: Record<string, string> }>();

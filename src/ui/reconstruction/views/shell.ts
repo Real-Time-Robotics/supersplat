@@ -1,7 +1,7 @@
-import artifactsSvg from '../svg/recon-artifacts.svg';
-import createSvgIcon from '../svg/recon-create.svg';
-import settingsSvg from '../svg/recon-settings.svg';
-import { createSvg } from '../svg-element';
+import artifactsSvg from '../../svg/recon-artifacts.svg';
+import createSvgIcon from '../../svg/recon-create.svg';
+import settingsSvg from '../../svg/recon-settings.svg';
+import { createSvg } from '../../svg-element';
 
 type DashboardTab = 'create' | 'artifacts' | 'settings';
 

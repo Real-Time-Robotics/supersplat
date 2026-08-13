@@ -1,4 +1,4 @@
-import { runKey, type Run, type RunState } from './reconstruction-run';
+import { runKey, type Run, type RunState } from './run';
 
 type RunPatch = Partial<Omit<Run, 'id' | 'state'>>;
 

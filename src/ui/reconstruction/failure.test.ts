@@ -3,7 +3,7 @@ import { test } from 'node:test';
 
 import { UploadError } from 'genesis-recon';
 
-import { classOf, describeFailure } from './reconstruction-failure.ts';
+import { classOf, describeFailure } from './failure.ts';
 
 test('a classified SDK error keeps its class and maps to an action', () => {
     const throttled = new UploadError('store asked for less load', 429, 'peer-unavailable');

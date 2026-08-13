@@ -1,21 +1,21 @@
-import { Events } from '../events';
-import { type CacheScope, artifactCache } from './reconstruction-artifact-cache';
-import { ReconstructionDatasets } from './reconstruction-datasets';
-import { onSessionEnded, reconFetch } from './reconstruction-http';
-import type { ProgressVisual } from './reconstruction-progress';
-import { Artifact, ArtifactSource, RecentDataset, RecentRun } from './reconstruction-types';
-import { gp } from './reconstruction-upload';
+import { type CacheScope, artifactCache } from './artifact-cache';
+import { ReconstructionDatasets } from './datasets';
+import { onSessionEnded, reconFetch } from './http';
+import type { ProgressVisual } from './progress';
+import { Artifact, ArtifactSource, RecentDataset, RecentRun } from './types';
+import { gp } from './upload';
 import {
     OPENABLE_ARTIFACT_EXTENSIONS,
     formatBytes,
     formatDuration,
     messageOf,
     readJson
-} from './reconstruction-utils';
-import { ReconstructionView } from './reconstruction-view';
-import cachedSvg from './svg/recon-cached.svg';
-import remoteSvg from './svg/recon-remote.svg';
-import { createSvg } from './svg-element';
+} from './utils';
+import { ReconstructionView } from './view';
+import { Events } from '../../events';
+import cachedSvg from '../svg/recon-cached.svg';
+import remoteSvg from '../svg/recon-remote.svg';
+import { createSvg } from '../svg-element';
 
 type ArtifactOpenResult = {
     status: 'opened' | 'downloaded' | 'cancelled' | 'failed';

@@ -2,8 +2,8 @@ import {
     JobHeartbeatEvent,
     JobProgressEvent,
     StageEvent
-} from './reconstruction-types';
-import { formatBytes } from './reconstruction-utils';
+} from './types';
+import { formatBytes } from './utils';
 
 type ProgressVisual =
     | { mode: 'idle'; center?: string }

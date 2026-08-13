@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { beforeEach, test } from 'node:test';
 
-import { onSessionEnded, reconFetch, sessionIsOver, sessionRestored } from './reconstruction-http';
+import { onSessionEnded, reconFetch, sessionIsOver, sessionRestored } from './http';
 
 const answer = (status: number, body: unknown = {}) => new Response(JSON.stringify(body), {
     status, headers: { 'Content-Type': 'application/json' }

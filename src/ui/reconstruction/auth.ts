@@ -1,5 +1,5 @@
-import { endSession, onSessionEnded, reconFetch, sessionRestored } from './reconstruction-http';
-import { ReconstructionView } from './reconstruction-view';
+import { endSession, onSessionEnded, reconFetch, sessionRestored } from './http';
+import { ReconstructionView } from './view';
 
 type Account = {
     label: string;

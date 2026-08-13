@@ -1,13 +1,13 @@
 import { Client } from 'genesis-recon';
 
-import { RateMeter, formatRate, type TransferRate } from './reconstruction/upload-rate';
-import { describeFailure } from './reconstruction-failure';
-import { reconFetch } from './reconstruction-http';
-import type { ProgressVisual } from './reconstruction-progress';
-import { Transfer } from './reconstruction-transfer';
-import { UploadProgress } from './reconstruction-types';
-import { UploadRecords, type UploadRecord } from './reconstruction-upload-records';
-import { delay, formatBytes, formatDuration, readJson } from './reconstruction-utils';
+import { describeFailure } from './failure';
+import { reconFetch } from './http';
+import type { ProgressVisual } from './progress';
+import { Transfer } from './transfer';
+import { UploadProgress } from './types';
+import { RateMeter, formatRate, type TransferRate } from './upload-rate';
+import { UploadRecords, type UploadRecord } from './upload-records';
+import { delay, formatBytes, formatDuration, readJson } from './utils';
 
 const gp = new Client(`${location.origin}/api/gp`, 'session-cookie', { fetch: reconFetch });
 

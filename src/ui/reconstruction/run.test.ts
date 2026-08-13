@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { runCard, runControls, type Run, type RunState } from './reconstruction-run.ts';
+import { runCard, runControls, type Run, type RunState } from './run.ts';
 
 const STATES: RunState[] = [
     'queued', 'uploading', 'paused', 'quoting', 'waiting-slot', 'running', 'done', 'cancelled',

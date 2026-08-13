@@ -1,7 +1,7 @@
-import { reconFetch } from './reconstruction-http';
-import type { CheckoutStatus, PricingCatalog } from './reconstruction-types';
-import { delay, messageOf, readJson } from './reconstruction-utils';
-import type { ReconstructionView } from './reconstruction-view';
+import { reconFetch } from './http';
+import type { CheckoutStatus, PricingCatalog } from './types';
+import { delay, messageOf, readJson } from './utils';
+import type { ReconstructionView } from './view';
 
 class ReconstructionBilling {
     private balance = 0;

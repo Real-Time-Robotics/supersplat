@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { folderFingerprint, newRunName, normalizeObjectName } from './reconstruction-names.ts';
+import { folderFingerprint, newRunName, normalizeObjectName } from './names.ts';
 
 test('normalizeObjectName flattens a relative path and strips unsafe characters', () => {
     assert.equal(normalizeObjectName('set a/DJI_0001.JPG', 0), 'set_a__DJI_0001.JPG');

@@ -1,5 +1,5 @@
-import { runControls, type Run, type RunAction, type RunState } from '../reconstruction-run';
-import { formatEtaShort, formatRate, type TransferRate } from './upload-rate';
+import { runControls, type Run, type RunAction, type RunState } from '../run';
+import { formatEtaShort, formatRate, type TransferRate } from '../upload-rate';
 
 type RunHandlers = {
     onSelect(id: string): void;

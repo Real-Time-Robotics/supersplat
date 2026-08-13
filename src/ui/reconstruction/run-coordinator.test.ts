@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { RunCoordinator, canTransition } from './reconstruction-run-coordinator.ts';
-import { RunStore } from './reconstruction-run-store.ts';
+import { RunCoordinator, canTransition } from './run-coordinator.ts';
+import { RunStore } from './run-store.ts';
 
 const run = (id: string, patch = {}) => ({
     id,

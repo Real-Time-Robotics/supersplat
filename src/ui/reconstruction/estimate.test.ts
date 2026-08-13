@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { estimateTotalPixels, shortfallNote, type Decode } from './reconstruction-estimate.ts';
+import { estimateTotalPixels, shortfallNote, type Decode } from './estimate.ts';
 
 const folder = (count: number): File[] => Array.from(
     { length: count }, (_, index) => new File([], `img-${index}.jpg`));

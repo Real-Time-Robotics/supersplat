@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { ReconstructionBilling } from './reconstruction-billing.ts';
+import { ReconstructionBilling } from './billing.ts';
 
 const control = () => ({
     hidden: false,

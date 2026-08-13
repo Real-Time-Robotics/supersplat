@@ -1,4 +1,4 @@
-import { formatBytes } from '../reconstruction-utils';
+import { formatBytes } from './utils';
 
 /** Bytes moved so far plus the rate derived from them. Zero rate means "not known yet". */
 type TransferRate = {

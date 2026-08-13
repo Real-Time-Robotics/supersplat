@@ -3,7 +3,7 @@ import { test } from 'node:test';
 
 import { UploadError } from 'genesis-recon';
 
-import { Transfer } from './reconstruction-transfer.ts';
+import { Transfer } from './transfer.ts';
 
 const target = { datasetId: 'ds1', label: 'set' };
 

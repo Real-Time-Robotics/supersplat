@@ -1,12 +1,13 @@
 import { Container } from '@playcanvas/pcui';
 
-import { Events } from '../events';
-import { i18n } from './localization';
-import { ReconstructionArtifacts } from './reconstruction-artifacts';
-import { ReconstructionAuth } from './reconstruction-auth';
-import { ReconstructionBilling } from './reconstruction-billing';
-import { ReconstructionView } from './reconstruction-view';
-import { ReconstructionWorkflow } from './reconstruction-workflow';
+import { Events } from '../../events';
+import { matchesShortcut } from '../../shortcut-manager';
+import { i18n } from '../localization';
+import { ReconstructionArtifacts } from './artifacts';
+import { ReconstructionAuth } from './auth';
+import { ReconstructionBilling } from './billing';
+import { ReconstructionView } from './view';
+import { ReconstructionWorkflow } from './workflow';
 
 class ReconstructionPanel extends Container {
     constructor(events: Events) {
@@ -78,7 +79,7 @@ class ReconstructionPanel extends Container {
         });
 
         this.dom.addEventListener('keydown', (event: KeyboardEvent) => {
-            if (event.key.toLowerCase() === 'k' && (event.ctrlKey || event.metaKey)) {
+            if (matchesShortcut('reconstructionPanel.toggleVisible', event)) {
                 event.preventDefault();
                 event.stopPropagation();
                 setVisible(false);

@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import type { ReconstructionArtifacts } from './reconstruction-artifacts.ts';
-import type { ReconstructionBilling } from './reconstruction-billing.ts';
-import { ReconstructionJob } from './reconstruction-job.ts';
-import type { ReconstructionView } from './reconstruction-view.ts';
+import type { ReconstructionArtifacts } from './artifacts.ts';
+import type { ReconstructionBilling } from './billing.ts';
+import { ReconstructionJob } from './job.ts';
+import type { ReconstructionView } from './view.ts';
 
 class StubEventSource {
     onopen: (() => void) | null = null;

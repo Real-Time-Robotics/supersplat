@@ -1,15 +1,13 @@
-import { Events } from '../events';
-import type { TransferRate } from './reconstruction/upload-rate';
-import { ReconstructionArtifacts } from './reconstruction-artifacts';
-import { ReconstructionBilling } from './reconstruction-billing';
-import { estimateTotalPixels, shortfallNote } from './reconstruction-estimate';
-import { onSessionEnded, reconFetch } from './reconstruction-http';
-import { ReconstructionJob, ReconstructionJobError } from './reconstruction-job';
-import { folderFingerprint, normalizeObjectName } from './reconstruction-names';
-import type { ProgressVisual } from './reconstruction-progress';
-import { runCard, type Run, type RunAction } from './reconstruction-run';
-import { RunCoordinator } from './reconstruction-run-coordinator';
-import { RunStore } from './reconstruction-run-store';
+import { ReconstructionArtifacts } from './artifacts';
+import { ReconstructionBilling } from './billing';
+import { estimateTotalPixels, shortfallNote } from './estimate';
+import { onSessionEnded, reconFetch } from './http';
+import { ReconstructionJob, ReconstructionJobError } from './job';
+import { folderFingerprint, normalizeObjectName } from './names';
+import type { ProgressVisual } from './progress';
+import { runCard, type Run, type RunAction } from './run';
+import { RunCoordinator } from './run-coordinator';
+import { RunStore } from './run-store';
 import {
     Artifact,
     ArtifactSource,
@@ -17,17 +15,19 @@ import {
     RecentDataset,
     ReconstructionPipeline,
     UploadResponse
-} from './reconstruction-types';
-import { ReconstructionUpload, UploadPaused, type Named } from './reconstruction-upload';
-import type { UploadRecord } from './reconstruction-upload-records';
+} from './types';
+import { ReconstructionUpload, UploadPaused, type Named } from './upload';
+import type { TransferRate } from './upload-rate';
+import type { UploadRecord } from './upload-records';
 import {
     IMAGE_EXTENSIONS,
     PIPELINE_KEY,
     PREPARED_DATASET_KEY,
     messageOf,
     readJson
-} from './reconstruction-utils';
-import { ReconstructionView } from './reconstruction-view';
+} from './utils';
+import { ReconstructionView } from './view';
+import { Events } from '../../events';
 
 type PickedFolder = { named: Named[]; fingerprint: string; record: UploadRecord | null };
 

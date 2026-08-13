@@ -1,4 +1,4 @@
-import type { ProgressVisual } from './reconstruction-progress';
+import type { ProgressVisual } from './progress';
 
 type RunState =
     | 'queued'

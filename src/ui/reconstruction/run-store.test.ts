@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { RunStore } from './reconstruction-run-store.ts';
+import { RunStore } from './run-store.ts';
 
 const run = (id: string, patch = {}) => ({
     id,
