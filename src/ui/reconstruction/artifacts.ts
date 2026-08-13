@@ -80,6 +80,7 @@ class ReconstructionArtifacts {
             button.addEventListener('click', () => this.refreshRecentRuns());
         }
         view.clearCacheButton.addEventListener('click', () => this.clearCache());
+        view.downloadCancelButton.addEventListener('click', () => this.cancelDownload());
         onSessionEnded(() => this.endSession());
         artifactCache.reconcile().then(() => this.refreshCacheUsage());
     }
@@ -95,6 +96,7 @@ class ReconstructionArtifacts {
         this.activeScope = null;
         this.artifactLocations.clear();
         this.pickRows.clear();
+        this.view.hideDownload();
         this.view.recentRuns.textContent = '';
         this.view.datasetTree.textContent = '';
         this.view.artifactList.textContent = '';
@@ -326,6 +328,7 @@ class ReconstructionArtifacts {
         this.activeDatasetId = source.type === 'run' ? source.run.dataset_id : null;
         this.activeScope = scopeOf(source);
         this.view.artifactPanel.hidden = false;
+        this.view.hideDownload();
         this.view.artifactTitle.textContent = source.label;
         this.view.artifactList.textContent = '';
         this.artifactLocations.clear();
@@ -379,10 +382,14 @@ class ReconstructionArtifacts {
         this.activeDownload = controller;
         const manageView = options.manageView ?? true;
         const report = options.report ??
-            ((title: string, detail: string, visual: ProgressVisual) => this.view.setState(title, detail, visual));
+            ((title: string, detail: string, visual: ProgressVisual) => {
+                this.view.setState(title, detail, visual);
+                this.view.setDownload(title, detail, visual);
+            });
         if (manageView) {
             this.view.setBusy(true, this.canStart());
             this.view.cancelButton.hidden = false;
+            this.view.downloadCancelButton.hidden = false;
         }
         const filename = artifact.name.split('/').pop() || 'genesis-artifact';
         try {
@@ -450,6 +457,7 @@ class ReconstructionArtifacts {
                 this.activeDownload = null;
                 if (manageView) {
                     this.view.cancelButton.hidden = true;
+                    this.view.downloadCancelButton.hidden = true;
                     this.view.setBusy(false, this.canStart());
                 }
             }
