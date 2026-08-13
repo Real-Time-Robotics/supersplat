@@ -1,4 +1,5 @@
-import type { ProgressVisual } from './progress';
+import { formatProgressAmount, stageLabel, type ProgressVisual } from './progress';
+import type { JobGpu, JobStatus } from './types';
 
 type RunState =
     | 'queued'
@@ -88,5 +89,30 @@ const runCard = (run: Run): [string, string, ProgressVisual] => {
     }
 };
 
-export { runCard, runControls, runKey };
+const GPU_TEXT: Record<JobGpu['state'], string> = {
+    creating: 'Đang thuê GPU',
+    loading: 'Đang khởi tạo GPU',
+    running: 'GPU đã sẵn sàng'
+};
+
+/**
+ * The row detail for a run no stream is attached to. Only the selected run gets an SSE
+ * stream, so for every other one this is the whole progress the user can see — built from
+ * the status the poll already read rather than from the bare status word.
+ */
+const runPollDetail = (job: JobStatus): string => {
+    const parts: string[] = [];
+    if (job.gpu) parts.push(GPU_TEXT[job.gpu.state]);
+    const stage = job.current_stage;
+    if (stage) {
+        parts.push(stage.total > 0 ?
+            `${stage.index}/${stage.total} ${stageLabel(stage.step)}` :
+            stageLabel(stage.step));
+    }
+    const amount = job.progress ? formatProgressAmount(job.progress) : '';
+    if (amount) parts.push(amount);
+    return parts.join(' · ') || job.status;
+};
+
+export { runCard, runControls, runKey, runPollDetail };
 export type { Run, RunAction, RunState };

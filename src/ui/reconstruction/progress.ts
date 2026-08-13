@@ -358,7 +358,5 @@ class ReconstructionProgress {
     }
 }
 
-export {
-    ProgressVisual,
-    ReconstructionProgress
-};
+export { ReconstructionProgress, formatProgressAmount, stageLabel };
+export type { ProgressVisual };

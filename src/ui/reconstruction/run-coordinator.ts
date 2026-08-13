@@ -1,5 +1,5 @@
 import { newRunName } from './names';
-import type { Run, RunState } from './run';
+import { runPollDetail, type Run, type RunState } from './run';
 import type { RunPatch, RunStore } from './run-store';
 import type { JobStatus } from './types';
 
@@ -165,7 +165,7 @@ class RunCoordinator {
             if (terminal) {
                 this.settle(run.id, terminal.state, terminal.patch);
             } else {
-                this.#runs.update(run.id, { detail: job.status });
+                this.#runs.update(run.id, { detail: runPollDetail(job) });
             }
         }
         if (this.#waiting()) {

@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { runCard, runControls, type Run, type RunState } from './run.ts';
+import { runCard, runControls, runPollDetail, type Run, type RunState } from './run.ts';
+import type { JobStatus } from './types.ts';
 
 const STATES: RunState[] = [
     'queued', 'uploading', 'paused', 'quoting', 'waiting-slot', 'running', 'done', 'cancelled',
@@ -63,4 +64,47 @@ test('an upload in flight shows how far it got, not a spinner', () => {
     const [, detail, visual] = runCard({ ...run('uploading'), percent: 42 });
     assert.deepEqual(visual, { mode: 'determinate', value: 42 });
     assert.match(detail, /42%/);
+});
+
+const job = (patch: Partial<JobStatus> = {}): JobStatus => ({
+    terminal: false, status: 'running', ...patch
+});
+
+const stage = (step: string, index: number, total: number) => ({
+    phase: 'start' as const, step, index, total, returncode: null
+});
+
+test('an unwatched run reads its stage, not the bare status word', () => {
+    const detail = runPollDetail(job({ current_stage: stage('feature_extraction', 2, 7) }));
+    assert.match(detail, /2\/7/);
+    assert.match(detail, /Finding image features/);
+    assert.doesNotMatch(detail, /feature_extraction/);
+});
+
+test('a rented box in the queue is named while the job has no stage yet', () => {
+    const detail = runPollDetail(job({
+        status: 'queued',
+        gpu: { state: 'loading', provider: 'vast', since: '2026-08-13T00:00:00Z' }
+    }));
+    assert.match(detail, /GPU/);
+    assert.notEqual(detail, 'queued');
+});
+
+test('stage progress rides along with the stage', () => {
+    const detail = runPollDetail(job({
+        current_stage: stage('training', 1, 3),
+        progress: {
+            stage: 'training',
+            mode: 'determinate',
+            current: 4000,
+            total: 30000,
+            unit: 'iterations',
+            observed_at: '2026-08-13T00:00:00Z'
+        }
+    }));
+    assert.match(detail, /4,000 \/ 30,000 iterations/);
+});
+
+test('a status with nothing to unpack still says something', () => {
+    assert.equal(runPollDetail(job({ status: 'assigning' })), 'assigning');
 });
