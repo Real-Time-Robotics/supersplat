@@ -2,7 +2,7 @@ import { type CacheScope, artifactCache } from './artifact-cache';
 import { ReconstructionDatasets } from './datasets';
 import { onSessionEnded, reconFetch } from './http';
 import type { ProgressVisual } from './progress';
-import { Artifact, ArtifactSource, RecentDataset, RecentRun } from './types';
+import type { Artifact, ArtifactSource, RecentDataset, RecentRun } from './types';
 import { gp } from './upload';
 import {
     OPENABLE_ARTIFACT_EXTENSIONS,

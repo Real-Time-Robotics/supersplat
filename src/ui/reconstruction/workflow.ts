@@ -8,7 +8,7 @@ import type { ProgressVisual } from './progress';
 import { runCard, type Run, type RunAction } from './run';
 import { RunCoordinator } from './run-coordinator';
 import { RunStore } from './run-store';
-import {
+import type {
     Artifact,
     ArtifactSource,
     JobStatus,
@@ -31,6 +31,14 @@ import { Events } from '../../events';
 
 type PickedFolder = { named: Named[]; fingerprint: string; record: UploadRecord | null };
 
+/**
+ * How many datasets may stream to the store at once. The SDK already runs concurrent PUTs
+ * inside one uploadDataset call, and a browser allows only about six connections per host,
+ * so a third dataset does not add throughput — it just splits the same pipe further and
+ * makes every eta worse. Runs past the cap sit in 'queued' and drain as slots free.
+ */
+const MAX_CONCURRENT_UPLOADS = 2;
+
 class ReconstructionWorkflow {
     private files: File[] = [];
     private named: { name: string; data: File }[] = [];
@@ -39,11 +47,13 @@ class ReconstructionWorkflow {
         pipeline: ReconstructionPipeline;
     }) | null = null;
     private pipeline: ReconstructionPipeline = 'splat';
-    private cancelled = false;
     private pendingResume: UploadRecord | null = null;
     private watchGeneration = 0;
     private sessionGeneration = 0;
-    private submitting = false;
+    /** Runs whose start is in flight; guards a double Start on one run, not concurrency. */
+    private readonly submitting = new Set<string>();
+    /** Runs a cancel was accepted for, so a later error reads as cancelled not failed. */
+    private readonly cancelling = new Set<string>();
     private readonly picked = new Map<string, PickedFolder>();
     private readonly discarding = new Set<string>();
     private readonly upload: ReconstructionUpload;
@@ -180,7 +190,7 @@ class ReconstructionWorkflow {
         this.sessionGeneration++;
         this.watchGeneration++;
         this.coordinator.stop();
-        this.upload.pause();
+        this.upload.pauseAll();
         this.job.detach();
         this.artifacts.cancelDownload();
         this.billing.endSession();
@@ -189,8 +199,8 @@ class ReconstructionWorkflow {
         this.discarding.clear();
         this.clearPreparedDataset();
         this.releaseComposeFolder();
-        this.cancelled = false;
-        this.submitting = false;
+        this.cancelling.clear();
+        this.submitting.clear();
         this.view.checkoutLink.hidden = true;
     }
 
@@ -199,9 +209,11 @@ class ReconstructionWorkflow {
         const records = await this.upload.openSessions().catch(() => [] as UploadRecord[]);
         if (generation !== this.sessionGeneration) return;
         const known = new Set(this.runs.list().map(run => run.datasetId).filter(Boolean));
-        const uploading = this.submitting ? this.fingerprint : '';
+        // A session we still hold the folder for is resumable from that folder, so offering
+        // it again as a "pick the folder" row would duplicate a run already on the list.
+        const held = new Set(Array.from(this.picked.values()).map(folder => folder.fingerprint));
         for (const record of records) {
-            if (known.has(record.datasetId) || record.fingerprint === uploading) continue;
+            if (known.has(record.datasetId) || held.has(record.fingerprint)) continue;
             const detail = 'Chọn lại thư mục để tiếp tục';
             const run = this.runs.upsert({
                 id: crypto.randomUUID(),
@@ -250,7 +262,8 @@ class ReconstructionWorkflow {
 
     private settleCancelled(error: unknown, run: Run): boolean {
         const code = error instanceof ReconstructionJobError ? error.code : '';
-        if (code !== 'cancelled_by_user' && !this.cancelled) return false;
+        if (code !== 'cancelled_by_user' && !this.cancelling.has(run.id)) return false;
+        this.cancelling.delete(run.id);
         this.coordinator.settle(run.id, 'cancelled', { percent: 0, detail: '' });
         this.card(run, 'Đã huỷ luồng',
             'Máy chủ xác nhận job đã dừng. Ảnh đã tải lên vẫn còn trong kho lưu trữ.',
@@ -259,20 +272,24 @@ class ReconstructionWorkflow {
     }
 
     async cancelJob() {
+        // The button belongs to the shared card, which shows the selected run — so that is
+        // the run being cancelled. Scoping it matters once several runs are live: a global
+        // flag would make the next unrelated failure report itself as cancelled.
+        const target = this.runs.selected();
         this.view.cancelButton.disabled = true;
         this.view.resetStartLabel();
         this.view.checkoutLink.hidden = true;
         try {
             const accepted = await this.job.cancel();
             if (!accepted) {
-                this.cancelled = false;
+                if (target) this.cancelling.delete(target.id);
                 return;
             }
-            this.cancelled = true;
+            if (target) this.cancelling.add(target.id);
             this.billing.cancelPolling();
             this.view.cancelButton.hidden = true;
         } catch (error) {
-            this.cancelled = false;
+            if (target) this.cancelling.delete(target.id);
             this.view.cancelButton.disabled = false;
             this.view.progress.showNotice(`Could not cancel: ${messageOf(error)}`, 8000);
         }
@@ -514,7 +531,7 @@ class ReconstructionWorkflow {
         if (!run) return;
         switch (action) {
             case 'pause':
-                this.upload.pause();
+                this.upload.pause(run.id);
                 return;
             case 'resume':
             case 'retry':
@@ -553,7 +570,7 @@ class ReconstructionWorkflow {
 
         this.discarding.add(run.id);
         try {
-            if (run.state === 'uploading') this.upload.pause();
+            if (run.state === 'uploading') this.upload.pause(run.id);
             if (run.datasetId) await this.upload.discard(run.datasetId);
         } finally {
             this.discarding.delete(run.id);
@@ -635,9 +652,9 @@ class ReconstructionWorkflow {
             }
         };
         return folder.record ?
-            this.upload.resume(folder.record, folder.named, hooks) :
-            this.upload.start(folder.named, folder.fingerprint, run.pipeline, run.preset,
-                run.label, hooks);
+            this.upload.resume(run.id, folder.record, folder.named, hooks) :
+            this.upload.start(run.id, folder.named, folder.fingerprint, run.pipeline,
+                run.preset, run.label, hooks);
     }
 
     /** Invariant: use the run's pipeline, never the current picker value. */
@@ -683,19 +700,22 @@ class ReconstructionWorkflow {
 
     private async startRun(run: Run) {
         const generation = this.sessionGeneration;
-        if (this.submitting) {
+        if (this.submitting.has(run.id)) return;
+        const transferring = this.picked.has(run.id);
+        // Only bytes are rationed. A run reusing an uploaded dataset goes straight to
+        // quoting, so it must not wait behind someone else's upload.
+        if (transferring && this.upload.active >= MAX_CONCURRENT_UPLOADS) {
             this.coordinator.transition(run.id, 'queued', { detail: '' });
             this.selectRun(run.id);
             return;
         }
         this.coordinator.setSlotCap(this.billing.concurrentCap);
-        this.cancelled = false;
-        this.submitting = true;
-        const transferring = this.picked.has(run.id);
+        this.cancelling.delete(run.id);
+        this.submitting.add(run.id);
         this.runs.select(run.id);
         if (!this.coordinator.transition(run.id, transferring ? 'uploading' : 'quoting',
             { detail: '' })) {
-            this.submitting = false;
+            this.submitting.delete(run.id);
             throw new Error('Luồng này không ở trạng thái có thể bắt đầu lại.');
         }
         this.view.checkoutLink.hidden = true;
@@ -745,8 +765,12 @@ class ReconstructionWorkflow {
                     submitted?.detail || 'Máy chủ từ chối job này.', { mode: 'failed' });
                 return;
             }
-            this.submitting = false;
-            this.watchRun(submitted);
+            this.submitting.delete(run.id);
+            // ReconstructionJob paints the shared card unguarded, so only the selected run
+            // may hold the watcher. Submitting one run while looking at another must not
+            // redirect the card to the newcomer; the coordinator polls it either way and
+            // its own row keeps updating.
+            if (this.runs.selected()?.id === run.id) this.watchRun(submitted);
         } catch (error) {
             if (generation !== this.sessionGeneration) return;
             const alive = this.runs.list().some(r => r.id === run.id);
@@ -765,7 +789,7 @@ class ReconstructionWorkflow {
                 { mode: 'failed' });
         } finally {
             if (generation === this.sessionGeneration) {
-                this.submitting = false;
+                this.submitting.delete(run.id);
                 this.startQueuedRun();
             }
         }

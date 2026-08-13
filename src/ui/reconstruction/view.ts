@@ -1,6 +1,6 @@
 import { ProgressVisual, ReconstructionProgress } from './progress';
 import type { Run } from './run';
-import {
+import type {
     JobHeartbeatEvent,
     JobProgressEvent,
     ReconstructionPipeline,

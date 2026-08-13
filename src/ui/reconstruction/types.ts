@@ -140,7 +140,9 @@ type ArtifactSource =
     | { type: 'job'; jobId: string; label: string }
     | { type: 'run'; run: RecentRun; label: string };
 
-export {
+// `export type`, not `export`: this module declares only types, and node's type stripping
+// erases them — a plain export list then fails to resolve when a test imports the chain.
+export type {
     Artifact,
     ArtifactSource,
     CheckoutStatus,
