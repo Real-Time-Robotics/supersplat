@@ -1,14 +1,14 @@
 @use 'colors.scss' as *;
 
 #reconstruction-panel {
-    top: 50%;
-    right: 102px;
-    width: 380px;
-    height: min(640px, calc(100% - 224px));
-    max-height: min(640px, calc(100% - 224px));
+    position: absolute;
+    inset: 0;
+    display: none;
     box-sizing: border-box;
-    transform: translate(0, -50%);
-    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    background-color: $bcg-darken;
 
     strong,
     span,
@@ -31,33 +31,27 @@
     &:not(.pcui-hidden) {
         display: flex;
     }
-
-    > .panel-header {
-        flex: 0 0 auto;
-    }
 }
 
-.reconstruction-panel-close {
-    width: 26px;
-    height: 26px;
-    padding: 0 !important;
-    border: 0;
-    font-family: Arial, sans-serif !important;
-    font-size: 20px !important;
-    line-height: 1;
-    background: transparent;
-}
-
-.recon-body {
+.recon-dashboard {
+    // Derived from the space available rather than pinned to one width: the editor runs
+    // on laptops and on ultrawides, and 100% here is already the overlay minus its
+    // padding, so the card can never outgrow the viewport.
+    position: relative;
     display: flex;
-    flex-direction: column;
-    flex: 1 1 auto;
-    min-height: 0;
     box-sizing: border-box;
-    padding: 12px;
+    width: min(940px, 100%);
+    height: min(700px, 100%);
+    min-width: 0;
+    flex-direction: column;
     overflow: hidden;
     color: $text-primary;
     background-color: $bcg-primary;
+    border-radius: 12px;
+    filter: drop-shadow(5px 5px 10px rgba(0, 0, 0, 0.8));
+
+    // needed to get drop-shadow working on safari
+    will-change: transform;
 
     button,
     input {
@@ -65,7 +59,180 @@
     }
 }
 
-.recon-intro,
+.recon-topbar {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 10px;
+    padding: 7px 8px 7px 12px;
+    background-color: $bcg-dark;
+}
+
+.recon-topbar-icon {
+    color: $clr-hilight;
+    font-family: pc-icon;
+    font-size: 13px;
+    font-weight: bold;
+}
+
+.recon-topbar-title {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    color: $text-primary;
+    font-weight: bold;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.recon-topbar-close {
+    width: 26px;
+    height: 26px;
+    flex: 0 0 auto;
+    padding: 0;
+    color: $text-secondary;
+    font-family: Arial, sans-serif;
+    font-size: 20px;
+    line-height: 1;
+    background: transparent;
+    border: 0;
+    border-radius: 4px;
+    cursor: pointer;
+
+    &:hover {
+        color: $clr-active;
+        background-color: $bcg-darkest;
+    }
+
+    &:focus-visible {
+        outline: 1px solid $clr-hilight;
+        outline-offset: -2px;
+    }
+}
+
+.recon-main {
+    display: flex;
+    flex: 1 1 auto;
+    min-height: 0;
+
+    &[hidden] {
+        display: none !important;
+    }
+}
+
+.recon-sidebar {
+    display: flex;
+    flex: 0 0 auto;
+    box-sizing: border-box;
+    width: 136px;
+    flex-direction: column;
+    gap: 4px;
+    padding: 10px 8px;
+    background-color: $bcg-darkest;
+    border-right: 1px solid $bcg-lighter;
+}
+
+.recon-nav {
+    display: flex;
+    min-height: 30px;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    color: $text-secondary;
+    text-align: left;
+    background: transparent;
+    border: 0;
+    border-radius: 4px;
+    cursor: pointer;
+
+    &:hover {
+        color: $text-primary;
+        background-color: $bcg-dark;
+    }
+
+    &:focus-visible {
+        outline: 1px solid $clr-hilight;
+        outline-offset: -2px;
+    }
+
+    &.active {
+        color: $clr-active;
+        background-color: $bcg-dark;
+        box-shadow: inset 2px 0 0 0 $clr-hilight;
+
+        .recon-nav-icon {
+            color: $clr-hilight;
+        }
+    }
+}
+
+.recon-nav-icon {
+    width: 16px;
+    height: 16px;
+    flex: 0 0 auto;
+    color: inherit;
+}
+
+.recon-nav-label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.recon-stage {
+    display: flex;
+    flex: 1 1 auto;
+    box-sizing: border-box;
+    min-width: 0;
+    flex-direction: column;
+    padding: 12px;
+    overflow: hidden;
+}
+
+// Signed out there is no balance to read and no tab worth reaching.
+.recon-dashboard:not(.signed-in) {
+    .recon-credit,
+    .recon-sidebar {
+        display: none;
+    }
+}
+
+// Narrow or short viewports get the whole area: a centred card with 24px of backdrop
+// around it wastes the little room there is, and the sidebar becomes a top strip.
+@media (max-width: 900px), (max-height: 560px) {
+    #reconstruction-panel {
+        padding: 0;
+    }
+
+    .recon-dashboard {
+        width: 100%;
+        height: 100%;
+        border-radius: 0;
+    }
+
+    .recon-main {
+        flex-direction: column;
+    }
+
+    .recon-sidebar {
+        width: 100%;
+        flex-direction: row;
+        border-right: 0;
+        border-bottom: 1px solid $bcg-lighter;
+    }
+
+    .recon-nav {
+        flex: 1 1 0;
+        justify-content: center;
+        text-align: center;
+
+        &.active {
+            box-shadow: inset 0 -2px 0 0 $clr-hilight;
+        }
+    }
+}
+
 .recon-section-heading {
     display: flex;
     flex-direction: column;
@@ -79,10 +246,6 @@
     span {
         color: $text-secondary;
     }
-}
-
-.recon-intro {
-    margin-bottom: 10px;
 }
 
 .recon-button {
@@ -125,33 +288,43 @@
     }
 }
 
+// Lives in the topbar, so it is readable from every tab rather than only from Create.
 .recon-credit {
     display: flex;
+    flex: 0 0 auto;
     align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-    margin-bottom: 10px;
-    padding: 6px 8px;
-    background-color: $bcg-dark;
-    border-radius: 2px;
-}
+    gap: 7px;
+    color: $text-secondary;
+    font-size: 10px;
 
-.recon-auth,
-.recon-app {
-    min-height: 0;
+    i {
+        width: 6px;
+        height: 6px;
+        background-color: #5ad48a;
+        border-radius: 50%;
+    }
 
-    &[hidden] {
-        display: none !important;
+    strong {
+        color: $text-primary;
+        font-weight: normal;
+        font-variant-numeric: tabular-nums;
     }
 }
 
 .recon-auth {
     display: flex;
     flex: 1 1 auto;
+    box-sizing: border-box;
+    min-height: 0;
     flex-direction: column;
     justify-content: flex-start;
     gap: 10px;
+    padding: 16px;
     overflow: auto;
+
+    &[hidden] {
+        display: none !important;
+    }
 }
 
 .recon-auth-hero {
@@ -299,46 +472,6 @@
     cursor: pointer;
 }
 
-.recon-auth-created {
-    display: flex;
-    box-sizing: border-box;
-    height: 100%;
-    flex-direction: column;
-    gap: 8px;
-    padding: 10px;
-    background-color: $bcg-darkest;
-    border-radius: 2px;
-
-    &[hidden] {
-        display: none;
-    }
-
-    > p {
-        margin: 0;
-        color: $text-secondary;
-    }
-
-    > div {
-        display: flex;
-        gap: 6px;
-    }
-
-    code {
-        min-width: 0;
-        flex: 1 1 auto;
-        padding: 7px;
-        overflow: auto;
-        color: $text-primary;
-        background-color: $bcg-primary;
-        user-select: all;
-        white-space: nowrap;
-    }
-
-    > .recon-auth-continue {
-        margin-top: auto;
-    }
-}
-
 .recon-auth-status {
     min-height: 16px;
     margin: 0;
@@ -350,30 +483,25 @@
     }
 }
 
-.recon-app {
-    display: flex;
-    flex: 1 1 auto;
-    flex-direction: column;
-    min-height: 0;
-}
-
 .recon-account {
     display: flex;
-    align-items: center;
+    align-items: flex-end;
     justify-content: space-between;
     gap: 8px;
-    margin-bottom: 9px;
-    color: $text-secondary;
-    font-size: 10px;
+    margin-bottom: 14px;
 
-    > span {
+    > .recon-section-heading {
         min-width: 0;
+        margin-bottom: 0;
+    }
+
+    span {
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
     }
 
-    strong {
+    strong strong {
         color: $text-primary;
         font-weight: normal;
     }
@@ -385,25 +513,6 @@
     color: $text-secondary;
     font-size: 10px;
     white-space: nowrap;
-}
-
-.recon-credit-balance {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-
-    i {
-        width: 6px;
-        height: 6px;
-        border-radius: 50%;
-        background-color: #5ad48a;
-    }
-
-    strong {
-        color: $text-primary;
-        font-weight: normal;
-        font-variant-numeric: tabular-nums;
-    }
 }
 
 .recon-buy-credits {
@@ -420,49 +529,22 @@
 
 .recon-pricing {
     display: none;
-    flex: 0 1 auto;
-    max-height: 250px;
-    margin-bottom: 10px;
+    position: absolute;
+    z-index: 2;
+    top: 40px;
+    right: 10px;
+    box-sizing: border-box;
+    width: min(420px, calc(100% - 20px));
+    max-height: min(340px, calc(100% - 60px));
     padding: 10px;
     overflow: auto;
     background-color: $bcg-darkest;
-    border-radius: 2px;
+    border: 1px solid $bcg-lighter;
+    border-radius: 6px;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.6);
 
     &.open {
         display: block;
-    }
-}
-
-.recon-tabs {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    flex: 0 0 auto;
-    margin-bottom: 9px;
-    border-bottom: 1px solid $bcg-lighter;
-}
-
-.recon-tab {
-    min-height: 30px;
-    padding: 4px 8px;
-    color: $text-secondary;
-    background: transparent;
-    border: 0;
-    border-bottom: 2px solid transparent;
-    cursor: pointer;
-
-    &:hover {
-        color: $text-primary;
-        background-color: $bcg-dark;
-    }
-
-    &:focus-visible {
-        outline: 1px solid $clr-hilight;
-        outline-offset: -2px;
-    }
-
-    &.active {
-        color: $text-primary;
-        border-bottom-color: $clr-hilight;
     }
 }
 
@@ -581,14 +663,100 @@
     }
 }
 
-.recon-pipeline-picker {
+.recon-pipeline-picker,
+.recon-source-picker {
     margin-bottom: 10px;
 }
 
-.recon-pipeline-options {
+.recon-pipeline-options,
+.recon-source-options {
     display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 7px;
     margin-top: 7px;
+}
+
+@media (max-width: 620px) {
+    .recon-pipeline-options,
+    .recon-source-options {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}
+
+.recon-source-card {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 18px;
+    align-items: center;
+    gap: 9px;
+    width: 100%;
+    min-height: 48px;
+    padding: 8px 9px;
+    color: $text-secondary;
+    text-align: left;
+    background-color: $bcg-darkest;
+    border: 1px solid $bcg-light;
+    border-radius: 3px;
+    cursor: pointer;
+
+    &:hover {
+        border-color: $clr-icon-hilight;
+    }
+
+    &:focus-visible {
+        outline: 1px solid $clr-hilight;
+        outline-offset: 1px;
+    }
+
+    &:disabled {
+        color: $clr-disabled;
+        cursor: default;
+    }
+
+    &.active {
+        color: $text-primary;
+        border-color: $clr-hilight;
+    }
+}
+
+.recon-source-copy {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 2px;
+
+    strong {
+        color: $text-primary;
+        font-weight: bold;
+    }
+
+    small {
+        color: $text-secondary;
+    }
+}
+
+.recon-source-check {
+    color: $clr-hilight;
+    font-weight: bold;
+    text-align: center;
+    visibility: hidden;
+
+    .recon-source-card.active & {
+        visibility: visible;
+    }
+}
+
+.recon-source-pane {
+    margin-bottom: 9px;
+
+    &[hidden] {
+        display: none;
+    }
+
+    &[data-source='dataset'] {
+        padding: 9px;
+        background-color: $bcg-darkest;
+        border-radius: 2px;
+    }
 }
 
 .recon-pipeline-card {
@@ -925,6 +1093,21 @@
     }
 }
 
+.recon-artifacts-empty {
+    display: none;
+    margin: 0 0 10px;
+    color: $text-secondary;
+    line-height: 1.5;
+
+    strong {
+        color: $text-primary;
+    }
+}
+
+#recon-artifacts-tab:has(.recon-artifacts[hidden]) .recon-artifacts-empty {
+    display: block;
+}
+
 .recon-artifact-list {
     display: flex;
     flex-direction: column;
@@ -1023,19 +1206,23 @@
 
 .recon-footer {
     display: flex;
-    justify-content: flex-end;
-    gap: 5px;
+    flex-direction: column;
+    gap: 7px;
+    margin-top: 10px;
+    padding-top: 9px;
+    border-top: 1px solid $bcg-lighter;
+
+    &[hidden] {
+        display: none;
+    }
+}
+
+.recon-start {
+    min-height: 34px;
 }
 
 .recon-note {
-    padding-top: 7px;
-    border-top: 1px solid $bcg-lighter;
-}
-
-.recon-recent {
-    padding: 9px;
-    background-color: $bcg-darkest;
-    border-radius: 2px;
+    margin: 0;
 }
 
 .recon-recent-heading {
@@ -1187,6 +1374,10 @@
     flex-direction: column;
     gap: 6px;
     margin-bottom: 10px;
+
+    &[hidden] {
+        display: none;
+    }
 }
 
 // This heading carries the new-run button, so it stops being a plain block here.
@@ -1212,34 +1403,26 @@
     background-color: $bcg-dark;
     border-radius: 2px;
 
+    &[hidden] {
+        display: none;
+    }
+
     > .recon-run-fixed-detail {
         color: $text-secondary;
     }
 }
 
-.recon-api-key-row {
-    display: grid;
-    align-items: center;
-    grid-template-columns: 1fr auto auto;
-    gap: 6px;
-
-    > .recon-api-key {
-        padding: 6px 8px;
-        overflow-wrap: anywhere;
-        background-color: $bcg-darkest;
-        border-radius: 2px;
-    }
+.recon-api {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
 }
 
 .recon-api-status {
-    min-height: 16px;
-    margin: 8px 0 0;
+    margin: 0;
     color: $text-secondary;
     line-height: 1.4;
-
-    &.error {
-        color: $error;
-    }
 }
 
 .recon-run-list {
@@ -1254,7 +1437,7 @@
 
 .recon-run-row {
     display: grid;
-    grid-template-columns: 1fr auto;
+    grid-template-columns: 14px minmax(0, 1fr) auto auto;
     gap: 3px 8px;
     padding: 7px 8px;
     border-left: 2px solid transparent;
@@ -1267,12 +1450,35 @@
     }
 }
 
+.recon-run-mark {
+    grid-row: 1;
+    grid-column: 1;
+    align-self: center;
+    color: $text-secondary;
+    font-size: 11px;
+    text-align: center;
+
+    .recon-run-row[data-state='uploading'] &,
+    .recon-run-row[data-state='running'] & {
+        color: $clr-icon-hilight;
+    }
+
+    .recon-run-row[data-state='done'] & {
+        color: #5ad48a;
+    }
+
+    .recon-run-row[data-state='failed'] &,
+    .recon-run-row[data-state='cancelled'] & {
+        color: $error;
+    }
+}
+
 .recon-run-select {
     display: flex;
     min-width: 0;
     flex-direction: column;
     grid-row: 1;
-    grid-column: 1;
+    grid-column: 2;
     gap: 2px;
     padding: 0;
     border: 0;
@@ -1284,6 +1490,33 @@
     &:focus-visible {
         outline: 1px solid $clr-hilight;
         outline-offset: 1px;
+    }
+}
+
+.recon-run-stats {
+    display: flex;
+    grid-row: 1;
+    grid-column: 3;
+    min-width: 62px;
+    flex-direction: column;
+    align-items: flex-end;
+    justify-content: center;
+    gap: 1px;
+    color: $text-secondary;
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.recon-run-percent {
+    color: $text-primary;
+    font-size: 11px;
+}
+
+.recon-run-rate,
+.recon-run-eta {
+    &:empty {
+        display: none;
     }
 }
 
@@ -1355,8 +1588,8 @@
     display: flex;
     align-items: center;
     align-self: center;
-    grid-row: 1 / span 2;
-    grid-column: 2;
+    grid-row: 1;
+    grid-column: 4;
     gap: 3px;
 }
 
@@ -1381,9 +1614,10 @@
 }
 
 .recon-run-bar {
+    display: block;
+    width: 100%;
     height: 2px;
-    grid-row: 2;
-    grid-column: 1;
+    margin-top: 2px;
     overflow: hidden;
     background-color: $bcg-darkest;
     border-radius: 1px;
@@ -1392,6 +1626,7 @@
         display: block;
         height: 100%;
         background-color: $clr-hilight;
+        transition: width 0.2s linear;
     }
 }
 

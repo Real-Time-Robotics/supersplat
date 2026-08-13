@@ -230,7 +230,7 @@ class ReconstructionArtifacts {
     }
 
     showArtifacts(artifacts: Artifact[], source: ArtifactSource) {
-        this.view.setTab('recent');
+        this.view.setTab('artifacts');
         this.activeDatasetId = source.type === 'run' ? source.run.dataset_id : null;
         this.activeScope = scopeOf(source);
         this.view.artifactPanel.hidden = false;

@@ -1,4 +1,5 @@
 import { Events } from '../events';
+import type { TransferRate } from './reconstruction/upload-rate';
 import { ReconstructionArtifacts } from './reconstruction-artifacts';
 import { ReconstructionBilling } from './reconstruction-billing';
 import { estimateTotalPixels, shortfallNote } from './reconstruction-estimate';
@@ -628,6 +629,7 @@ class ReconstructionWorkflow {
             },
             onPercent: (percent: number) => this.runs.update(
                 run.id, { percent: Math.round(percent) }),
+            onRate: (rate: TransferRate) => this.view.setTransfer(run.id, rate),
             onCard: (title: string, detail: string, visual: ProgressVisual) => {
                 this.card(run, title, detail, visual);
             }

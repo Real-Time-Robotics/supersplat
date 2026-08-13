@@ -1,4 +1,4 @@
-import { Button, Container, Label } from '@playcanvas/pcui';
+import { Container } from '@playcanvas/pcui';
 
 import { Events } from '../events';
 import { i18n } from './localization';
@@ -12,30 +12,14 @@ class ReconstructionPanel extends Container {
     constructor(events: Events) {
         super({
             id: 'reconstruction-panel',
-            class: 'panel',
             hidden: true
         });
 
-        const header = new Container({ class: 'panel-header' });
-        const icon = new Label({
-            text: '\uE344',
-            class: 'panel-header-icon'
-        });
-        const title = new Label({ class: 'panel-header-label' });
-        i18n.bindText(title, 'panel.reconstruction');
-        const close = new Button({
-            class: ['panel-header-button', 'reconstruction-panel-close'],
-            text: '\u00D7'
-        });
-        close.dom.setAttribute('aria-label', 'Close Reconstruction panel');
-        close.dom.setAttribute('title', 'Close');
-        close.on('click', () => events.fire('reconstructionPanel.setVisible', false));
-        header.append(icon);
-        header.append(title);
-        header.append(close);
-        this.append(header);
-
         const view = new ReconstructionView(this.dom);
+        i18n.onChange(() => {
+            view.title.textContent = i18n.t('panel.reconstruction');
+        }, this);
+
         const runtime: { workflow?: ReconstructionWorkflow } = {};
         const billing = new ReconstructionBilling(view, async () => {
             await runtime.workflow?.refreshPreparedQuote();
@@ -85,6 +69,23 @@ class ReconstructionPanel extends Container {
         });
         events.on('settingsPanel.visible', (visible: boolean) => {
             if (visible) setVisible(false);
+        });
+
+        this.dom.addEventListener('reconClose', () => setVisible(false));
+
+        this.dom.addEventListener('pointerdown', (event: PointerEvent) => {
+            if (event.target === this.dom) setVisible(false);
+        });
+
+        this.dom.addEventListener('keydown', (event: KeyboardEvent) => {
+            if (event.key.toLowerCase() === 'k' && (event.ctrlKey || event.metaKey)) {
+                event.preventDefault();
+                event.stopPropagation();
+                setVisible(false);
+            } else if (event.key === 'Escape') {
+                event.stopPropagation();
+                setVisible(false);
+            }
         });
     }
 }

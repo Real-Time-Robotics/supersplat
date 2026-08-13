@@ -185,11 +185,6 @@ class ReconstructionAuth {
         });
     }
 
-    private setApiStatus(message: string, error = false) {
-        this.view.apiStatus.textContent = message;
-        this.view.apiStatus.classList.toggle('error', error);
-    }
-
     private setStatus(message: string, error = false) {
         const status = this.view.query<HTMLElement>('.recon-auth-status');
         status.textContent = message;
