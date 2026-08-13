@@ -1093,21 +1093,6 @@
     }
 }
 
-.recon-artifacts-empty {
-    display: none;
-    margin: 0 0 10px;
-    color: $text-secondary;
-    line-height: 1.5;
-
-    strong {
-        color: $text-primary;
-    }
-}
-
-#recon-artifacts-tab:has(.recon-artifacts[hidden]) .recon-artifacts-empty {
-    display: block;
-}
-
 .recon-artifact-list {
     display: flex;
     flex-direction: column;
@@ -1256,7 +1241,8 @@
     font-size: 17px;
 }
 
-.recon-recent-list {
+.recon-recent-list,
+.recon-tree-list {
     display: flex;
     flex-direction: column;
     gap: 4px;
@@ -1264,6 +1250,32 @@
     > span {
         color: $text-secondary;
     }
+}
+
+.recon-tree-list {
+    margin-bottom: 10px;
+}
+
+// Create's picker: the choice is which dataset, so the row carries the time it was made
+// and the two things you can do to it, and nothing else.
+.recon-pick {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 6px 8px;
+    background-color: $bcg-dark;
+    border-radius: 2px;
+}
+
+.recon-pick-created {
+    min-width: 0;
+    overflow: hidden;
+    color: $text-primary;
+    font-variant-numeric: tabular-nums;
+    font-weight: normal;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .recon-dataset {
@@ -1583,6 +1595,19 @@
 
     &[data-state='failed'] {
         color: $error;
+    }
+
+    // Job statuses from the gateway, which uses its own vocabulary for the same column.
+    &[data-state='done'] {
+        color: #55c07a;
+    }
+
+    &[data-state='queued'] {
+        color: $clr-disabled;
+    }
+
+    &[data-state='cancelled'] {
+        color: $clr-disabled;
     }
 }
 

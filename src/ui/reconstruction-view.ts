@@ -168,8 +168,9 @@ class ReconstructionView {
         return this.create.recentRuns;
     }
 
-    get refreshRunsButton() {
-        return this.create.refreshRunsButton;
+    /** Both tabs list datasets and both can refresh, so this is a set, not one button. */
+    get refreshRunsButtons() {
+        return [this.create.refreshRunsButton, this.artifacts.refreshButton];
     }
 
     get runsPanel() {
@@ -205,6 +206,11 @@ class ReconstructionView {
     }
 
     // -- artifacts -----------------------------------------------------------
+
+    /** The dataset/job tree in Artifacts, as opposed to the flat picker in Create. */
+    get datasetTree() {
+        return this.artifacts.treeList;
+    }
 
     get artifactPanel() {
         return this.artifacts.artifactPanel;

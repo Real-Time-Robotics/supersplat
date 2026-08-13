@@ -37,6 +37,13 @@ const scopeOf = (source: ArtifactSource): CacheScope => (source.type === 'job' ?
         created: source.run.created
     });
 
+/** The gateway sends epoch seconds; older rows can carry milliseconds. */
+const datasetCreated = (dataset: RecentDataset): Date => new Date(
+    dataset.created < 1e12 ? dataset.created * 1000 : dataset.created);
+
+const countOf = (counts: Record<string, number> | undefined): number => Object
+.values(counts || {}).reduce((sum, count) => sum + count, 0);
+
 class ReconstructionArtifacts {
     private activeDownload: AbortController | null = null;
     private activeDatasetId: string | null = null;
@@ -67,7 +74,9 @@ class ReconstructionArtifacts {
                 await this.refreshRecentRuns();
             }
         );
-        view.refreshRunsButton.addEventListener('click', () => this.refreshRecentRuns());
+        for (const button of view.refreshRunsButtons) {
+            button.addEventListener('click', () => this.refreshRecentRuns());
+        }
         view.clearCacheButton.addEventListener('click', () => this.clearCache());
         onSessionEnded(() => this.endSession());
         artifactCache.reconcile().then(() => this.refreshCacheUsage());
@@ -84,9 +93,14 @@ class ReconstructionArtifacts {
         this.activeScope = null;
         this.artifactLocations.clear();
         this.view.recentRuns.textContent = '';
+        this.view.datasetTree.textContent = '';
         this.view.artifactList.textContent = '';
         this.view.artifactPanel.hidden = true;
-        this.view.refreshRunsButton.disabled = false;
+        this.setRefreshDisabled(false);
+    }
+
+    private setRefreshDisabled(disabled: boolean) {
+        for (const button of this.view.refreshRunsButtons) button.disabled = disabled;
     }
 
     cancelDownload() {
@@ -99,84 +113,121 @@ class ReconstructionArtifacts {
 
     async refreshRecentRuns() {
         const generation = this.sessionGeneration;
-        this.view.refreshRunsButton.disabled = true;
+        this.setRefreshDisabled(true);
         try {
             const response = await reconFetch('/api/reconstruction/runs?limit=12', { cache: 'no-store' });
             const data = await readJson<{ datasets: RecentDataset[] }>(response);
             if (generation !== this.sessionGeneration) return;
-            this.view.recentRuns.textContent = '';
-            if (!data.datasets.length) {
-                const empty = document.createElement('span');
-                empty.textContent = 'No reconstruction datasets yet.';
-                this.view.recentRuns.appendChild(empty);
-                return;
-            }
-            for (const dataset of data.datasets) {
-                const card = document.createElement('section');
-                card.className = 'recon-dataset';
-                const heading = document.createElement('div');
-                heading.className = 'recon-dataset-heading';
-                const info = document.createElement('div');
-                info.className = 'recon-dataset-info';
-                const name = document.createElement('strong');
-                name.textContent = dataset.label || dataset.dataset_id;
-                name.title = dataset.label || dataset.dataset_id;
-                const datasetDetail = document.createElement('span');
-                const created = new Date(dataset.created < 1e12 ? dataset.created * 1000 : dataset.created);
-                datasetDetail.textContent =
-                    `${dataset.image_count.toLocaleString()} source images · ${formatBytes(dataset.bytes)} · ${created.toLocaleString('en-US')}`;
-                info.append(name, datasetDetail);
-                const actions = document.createElement('div');
-                actions.className = 'recon-dataset-actions';
-                const useButton = document.createElement('button');
-                useButton.type = 'button';
-                useButton.className = 'recon-button recon-primary recon-use-dataset';
-                useButton.textContent = 'Use dataset';
-                useButton.title = `Use ${dataset.label || dataset.dataset_id} without uploading it again`;
-                useButton.addEventListener('click', () => this.onDatasetSelected(dataset));
-                const deleteButton = document.createElement('button');
-                deleteButton.type = 'button';
-                deleteButton.className = 'recon-button recon-delete-dataset';
-                deleteButton.textContent = 'Delete';
-                deleteButton.title = `Delete dataset ${dataset.label || dataset.dataset_id}`;
-                deleteButton.setAttribute(
-                    'aria-label',
-                    `Delete dataset ${dataset.label || dataset.dataset_id} and all of its data`
-                );
-                deleteButton.addEventListener(
-                    'click',
-                    () => this.datasets.requestDelete(dataset, deleteButton)
-                );
-                actions.append(useButton, deleteButton);
-                heading.append(info, actions);
-                const models = document.createElement('div');
-                models.className = 'recon-dataset-models';
-                const total = Object.values(dataset.model_counts || {})
-                .reduce((sum, count) => sum + count, 0);
-                const expand = document.createElement('button');
-                expand.type = 'button';
-                expand.className = 'recon-button recon-expand-dataset';
-                expand.textContent = total ?
-                    `Xem ${total} mô hình` :
-                    'Chưa có mô hình nào';
-                expand.disabled = total === 0;
-                expand.addEventListener(
-                    'click',
-                    () => this.loadDatasetModels(dataset, models, expand)
-                );
-                models.appendChild(expand);
-                card.append(heading, models);
-                this.view.recentRuns.appendChild(card);
-            }
+            // One fetch feeds both tabs: Create picks a dataset, Artifacts walks into it.
+            this.renderDatasetPicker(data.datasets);
+            this.renderDatasetTree(data.datasets);
         } catch (error) {
             if (generation !== this.sessionGeneration) return;
-            this.view.recentRuns.textContent = `Could not load datasets: ${messageOf(error)}`;
+            const message = `Could not load datasets: ${messageOf(error)}`;
+            this.view.recentRuns.textContent = message;
+            this.view.datasetTree.textContent = message;
         } finally {
-            if (generation === this.sessionGeneration) this.view.refreshRunsButton.disabled = false;
+            if (generation === this.sessionGeneration) this.setRefreshDisabled(false);
         }
     }
 
-    private async loadDatasetModels(
+    /**
+     * Create's picker. Named by when the server committed the dataset, not by its label —
+     * the label carries the timestamp of when the run was composed in the browser, which
+     * is minutes off the upload and reads as the wrong time.
+     */
+    private renderDatasetPicker(datasets: RecentDataset[]) {
+        this.view.recentRuns.textContent = '';
+        if (!datasets.length) {
+            const empty = document.createElement('span');
+            empty.textContent = 'No reconstruction datasets yet.';
+            this.view.recentRuns.appendChild(empty);
+            return;
+        }
+        for (const dataset of datasets) {
+            const row = document.createElement('div');
+            row.className = 'recon-pick';
+            const name = dataset.label || dataset.dataset_id;
+
+            const created = document.createElement('strong');
+            created.className = 'recon-pick-created';
+            created.textContent = datasetCreated(dataset).toLocaleString('en-US');
+            created.title = `Dataset ${dataset.dataset_id}`;
+
+            const actions = document.createElement('div');
+            actions.className = 'recon-dataset-actions';
+            const useButton = document.createElement('button');
+            useButton.type = 'button';
+            useButton.className = 'recon-button recon-primary recon-use-dataset';
+            useButton.textContent = 'Use dataset';
+            useButton.title = `Use ${name} without uploading it again`;
+            useButton.addEventListener('click', () => this.onDatasetSelected(dataset));
+            const deleteButton = document.createElement('button');
+            deleteButton.type = 'button';
+            deleteButton.className = 'recon-button recon-delete-dataset';
+            deleteButton.textContent = 'Delete';
+            deleteButton.title = `Delete dataset ${name}`;
+            deleteButton.setAttribute('aria-label',
+                `Delete dataset ${name} and all of its data`);
+            deleteButton.addEventListener('click',
+                () => this.datasets.requestDelete(dataset, deleteButton));
+            actions.append(useButton, deleteButton);
+
+            row.append(created, actions);
+            this.view.recentRuns.appendChild(row);
+        }
+    }
+
+    /** Artifacts' tree: a row per dataset, expanding to the jobs it produced. */
+    private renderDatasetTree(datasets: RecentDataset[]) {
+        this.view.datasetTree.textContent = '';
+        if (!datasets.length) {
+            const empty = document.createElement('span');
+            empty.textContent = 'No reconstruction datasets yet.';
+            this.view.datasetTree.appendChild(empty);
+            return;
+        }
+        for (const dataset of datasets) {
+            const card = document.createElement('section');
+            card.className = 'recon-dataset';
+            const heading = document.createElement('div');
+            heading.className = 'recon-dataset-heading';
+            const info = document.createElement('div');
+            info.className = 'recon-dataset-info';
+            const name = document.createElement('strong');
+            name.textContent = dataset.label || dataset.dataset_id;
+            name.title = dataset.dataset_id;
+            const detail = document.createElement('span');
+            const runs = countOf(dataset.run_counts);
+            detail.textContent = [
+                `${dataset.image_count.toLocaleString()} source images`,
+                formatBytes(dataset.bytes),
+                datasetCreated(dataset).toLocaleString('en-US'),
+                `${runs} job${runs === 1 ? '' : 's'}`
+            ].join(' · ');
+            info.append(name, detail);
+
+            const jobs = document.createElement('div');
+            jobs.className = 'recon-dataset-models';
+            const expand = document.createElement('button');
+            expand.type = 'button';
+            expand.className = 'recon-button recon-expand-dataset';
+            // Counted from run_counts, not model_counts: a failed or running job is still a
+            // job the user started and wants to see, even with nothing openable yet.
+            expand.textContent = runs ?
+                `Xem ${runs} job` :
+                'Chưa có job nào';
+            expand.disabled = runs === 0;
+            expand.addEventListener('click', () => this.loadDatasetJobs(dataset, jobs, expand));
+            jobs.appendChild(expand);
+
+            heading.append(info);
+            card.append(heading, jobs);
+            this.view.datasetTree.appendChild(card);
+        }
+    }
+
+    private async loadDatasetJobs(
         dataset: RecentDataset,
         container: HTMLElement,
         trigger: HTMLButtonElement
@@ -191,8 +242,7 @@ class ReconstructionArtifacts {
             );
             const data = await readJson<{ runs: RecentRun[] }>(response);
             if (generation !== this.sessionGeneration) return;
-            const models = data.runs
-            .filter(run => run.status === 'done' && run.artifact_count > 0 && run.primary)
+            const jobs = data.runs
             .sort((a, b) => b.created - a.created)
             .map(run => ({
                 ...run,
@@ -201,28 +251,40 @@ class ReconstructionArtifacts {
                 image_count: dataset.image_count
             }));
             container.textContent = '';
-            if (!models.length) {
+            if (!jobs.length) {
                 const empty = document.createElement('span');
-                empty.textContent = data.runs.length ?
-                    `${data.runs.length} lần chạy · chưa có mô hình nào hoàn tất` :
-                    'Chưa có mô hình nào hoàn tất.';
+                empty.textContent = 'Dataset này chưa có job nào.';
                 container.appendChild(empty);
                 return;
             }
-            for (const run of models) {
+            for (const run of jobs) {
+                // Every job of the dataset is listed, so a failed or still-running one is
+                // visible too; only a job with files to show is clickable.
+                const openable = run.artifact_count > 0;
                 const button = document.createElement('button');
                 button.type = 'button';
                 button.className = 'recon-button recon-run';
+                button.disabled = !openable;
+                const top = document.createElement('span');
+                top.className = 'recon-run-top';
                 const runName = document.createElement('strong');
                 runName.textContent = `${run.pipeline}/${run.run_name}`;
-                const runCreated = new Date(run.created < 1e12 ? run.created * 1000 : run.created);
+                const state = document.createElement('span');
+                state.className = 'recon-run-state';
+                state.dataset.state = run.status;
+                state.textContent = run.status;
+                top.append(runName, state);
                 const detail = document.createElement('span');
-                const artifactLabel =
-                    `${run.artifact_count} artifact${run.artifact_count === 1 ? '' : 's'}`;
-                detail.textContent =
-                    `${runCreated.toLocaleString('en-US')} · ${artifactLabel} · ${formatBytes(run.bytes)}`;
-                button.append(runName, detail);
-                button.addEventListener('click', () => this.loadRecentRunArtifacts(run));
+                detail.textContent = [
+                    new Date(run.created < 1e12 ? run.created * 1000 : run.created)
+                    .toLocaleString('en-US'),
+                    `${run.artifact_count} artifact${run.artifact_count === 1 ? '' : 's'}`,
+                    formatBytes(run.bytes)
+                ].join(' · ');
+                button.append(top, detail);
+                if (openable) {
+                    button.addEventListener('click', () => this.loadRecentRunArtifacts(run));
+                }
                 container.appendChild(button);
             }
         } catch (error) {

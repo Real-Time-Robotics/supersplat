@@ -109,7 +109,8 @@ class CreateView {
                     <div class="recon-recent-heading">
                         <div>
                             <strong>Recent datasets</strong>
-                            <span>Reuse source images, or delete a dataset you no longer need</span>
+                            <span>Pick one to reuse its images, or delete it. Jobs and files
+                                  are in Artifacts.</span>
                         </div>
                         <button class="recon-button recon-refresh-runs" type="button"
                                 aria-label="Refresh recent datasets">↻</button>
