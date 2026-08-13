@@ -1,7 +1,7 @@
 import { platform } from 'playcanvas';
 
 import { Events } from './events';
-import { Shortcuts, ShortcutBinding } from './shortcuts';
+import { Shortcuts, checkMod, ShortcutBinding } from './shortcuts';
 
 // Mac uses different symbols for modifier keys
 const isMac = platform.name === 'osx';
@@ -72,22 +72,6 @@ const defaultShortcuts: Record<string, ShortcutBinding> = {
     'camera.modifier.slow': { codes: ['AltLeft', 'AltRight'], held: true, shift: 'optional' }
 };
 
-/**
- * True when `event` is the chord bound to `id`.
- */
-const matchesShortcut = (id: string, event: KeyboardEvent): boolean => {
-    const binding = defaultShortcuts[id];
-    if (!binding) return false;
-    const keyHit = binding.keys?.some(key => key.toLowerCase() === event.key.toLowerCase()) ||
-        binding.codes?.includes(event.code) || false;
-    const modOk = (state: string | undefined, pressed: boolean) => (
-        state === 'required' ? pressed : state === 'optional' ? true : !pressed);
-    return keyHit &&
-        modOk(binding.ctrl, event.ctrlKey || event.metaKey) &&
-        modOk(binding.shift, event.shiftKey) &&
-        modOk(binding.alt, event.altKey);
-};
-
 class ShortcutManager {
     private bindings: Record<string, ShortcutBinding>;
 
@@ -121,6 +105,20 @@ class ShortcutManager {
      */
     get(id: string): ShortcutBinding | undefined {
         return this.bindings[id];
+    }
+
+    /**
+     * True when `event` is the chord currently bound to `id`.
+     */
+    matches(id: string, event: KeyboardEvent): boolean {
+        const binding = this.bindings[id];
+        if (!binding) return false;
+        const keyHit = binding.keys?.some(key => key.toLowerCase() === event.key.toLowerCase()) ||
+            binding.codes?.includes(event.code) || false;
+        return keyHit &&
+            checkMod(binding.ctrl, event.ctrlKey || event.metaKey) &&
+            checkMod(binding.shift, event.shiftKey) &&
+            checkMod(binding.alt, event.altKey);
     }
 
     /**
@@ -158,4 +156,4 @@ class ShortcutManager {
     }
 }
 
-export { ShortcutManager, matchesShortcut };
+export { ShortcutManager };

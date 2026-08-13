@@ -1,7 +1,7 @@
 import { Container } from '@playcanvas/pcui';
 
 import { Events } from '../../events';
-import { matchesShortcut } from '../../shortcut-manager';
+import { ShortcutManager } from '../../shortcut-manager';
 import { i18n } from '../localization';
 import { ReconstructionArtifacts } from './artifacts';
 import { ReconstructionAuth } from './auth';
@@ -78,8 +78,9 @@ class ReconstructionPanel extends Container {
             if (event.target === this.dom) setVisible(false);
         });
 
+        const shortcutManager: ShortcutManager = events.invoke('shortcutManager');
         this.dom.addEventListener('keydown', (event: KeyboardEvent) => {
-            if (matchesShortcut('reconstructionPanel.toggleVisible', event)) {
+            if (shortcutManager.matches('reconstructionPanel.toggleVisible', event)) {
                 event.preventDefault();
                 event.stopPropagation();
                 setVisible(false);
