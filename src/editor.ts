@@ -10,6 +10,7 @@ import { MappedReadFileSystem } from './io';
 import { ModelElement } from './model/model-element';
 import { Scene } from './scene';
 import { Splat } from './splat';
+import { dcDecode } from './splat-math';
 import { writeSplatFile } from './splat-serialize';
 
 const removeExtension = (filename: string) => {
@@ -22,10 +23,9 @@ const registerEditorEvents = (events: Events, editHistory: EditHistory, scene: S
     const vec2 = new Vec3();
     const vec4 = new Vec4();
     const mat = new Mat4();
-    const SH_C0 = 0.28209479177387814;
 
     const decodeColorChannel = (value: number) => {
-        return Math.min(1, Math.max(0, 0.5 + value * SH_C0));
+        return Math.min(1, Math.max(0, dcDecode(value)));
     };
 
     // get the list of selected splats (currently limited to just a single one)
