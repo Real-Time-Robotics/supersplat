@@ -45,7 +45,6 @@ class DashboardShell {
     readonly customPrice: HTMLElement;
     readonly tabButtons: HTMLButtonElement[];
     readonly stage: HTMLElement;
-    private active: DashboardTab = 'create';
 
     constructor(host: HTMLElement) {
         const root = document.createElement('div');
@@ -112,8 +111,6 @@ class DashboardShell {
         this.stage = root.querySelector('.recon-stage');
 
         for (const button of this.tabButtons) {
-            // Prepended rather than inlined in the template: the imported svg is a data
-            // URI that has to be decoded and parsed, not dropped into innerHTML.
             const icon = TABS.find(entry => entry.tab === button.dataset.tab)?.icon;
             if (icon) {
                 const glyph = createSvg(icon);
@@ -127,7 +124,6 @@ class DashboardShell {
     }
 
     setTab(tab: DashboardTab) {
-        this.active = tab;
         for (const button of this.tabButtons) {
             const selected = button.dataset.tab === tab;
             button.classList.toggle('active', selected);
@@ -138,14 +134,6 @@ class DashboardShell {
         }
     }
 
-    get currentTab() {
-        return this.active;
-    }
-
-    /**
-     * Signed out there is no credit to read and no tab worth reaching, so the chrome is
-     * withheld rather than shown disabled.
-     */
     setSignedIn(signedIn: boolean) {
         this.root.classList.toggle('signed-in', signedIn);
     }

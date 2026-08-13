@@ -56,10 +56,6 @@ class ReconstructionView {
 
     // -- shell ---------------------------------------------------------------
 
-    get dashboard() {
-        return this.shell.root;
-    }
-
     get title() {
         return this.shell.title;
     }
@@ -98,10 +94,6 @@ class ReconstructionView {
 
     get customPrice() {
         return this.shell.customPrice;
-    }
-
-    get tabButtons() {
-        return this.shell.tabButtons;
     }
 
     // -- auth ----------------------------------------------------------------
@@ -173,36 +165,8 @@ class ReconstructionView {
         return [this.create.refreshRunsButton, this.artifacts.refreshButton];
     }
 
-    get runsPanel() {
-        return this.create.uploads.root;
-    }
-
-    get runList() {
-        return this.create.uploads.list;
-    }
-
-    get runsNote() {
-        return this.create.uploads.note;
-    }
-
     get newRunButton() {
         return this.create.uploads.newRunButton;
-    }
-
-    get composePanel() {
-        return this.create.composePanel;
-    }
-
-    get runFixed() {
-        return this.create.runFixed;
-    }
-
-    get runFixedTitle() {
-        return this.create.runFixedTitle;
-    }
-
-    get runFixedDetail() {
-        return this.create.runFixedDetail;
     }
 
     // -- artifacts -----------------------------------------------------------

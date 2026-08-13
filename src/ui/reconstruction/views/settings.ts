@@ -4,7 +4,6 @@
 class SettingsView {
     readonly root: HTMLElement;
     readonly accountLabel: HTMLElement;
-    readonly signOutButton: HTMLButtonElement;
 
     constructor(host: HTMLElement) {
         const root = document.createElement('section');
@@ -36,7 +35,6 @@ class SettingsView {
 
         this.root = root;
         this.accountLabel = root.querySelector('.recon-account-label');
-        this.signOutButton = root.querySelector('.recon-sign-out');
     }
 }
 
