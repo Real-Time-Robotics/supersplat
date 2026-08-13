@@ -104,7 +104,7 @@ describe('ReconstructionUpload keyed transfers', () => {
         assert.equal(upload.active, 0);
     });
 
-    it('keeps a rate window per run, so interleaved ticks still yield a rate', async () => {
+    it('meters each run from its own bytes, not from whatever ticked before it', async () => {
         const deps = hangingDeps();
         const upload = new ReconstructionUpload(deps);
         const seen = new Map<string, TransferRate[]>();
@@ -122,17 +122,19 @@ describe('ReconstructionUpload keyed transfers', () => {
         await settle();
 
         deps.tick('ds-a', 100);
-        deps.tick('ds-b', 100);
+        deps.tick('ds-b', 5000);
         await after(500);
         deps.tick('ds-a', 600);
-        deps.tick('ds-b', 300);
+        deps.tick('ds-b', 5500);
 
         const rateA = seen.get('run-a').at(-1);
         const rateB = seen.get('run-b').at(-1);
-        assert.ok(rateA.bytesPerSecond > 0, 'run-a should have its own window');
-        assert.ok(rateB.bytesPerSecond > 0, 'run-b should have its own window');
-        assert.ok(rateA.bytesPerSecond > rateB.bytesPerSecond,
-            `expected run-a to read faster, got ${rateA.bytesPerSecond} vs ${rateB.bytesPerSecond}`);
+
+        for (const [key, rate] of [['run-a', rateA], ['run-b', rateB]] as const) {
+            assert.ok(rate.bytesPerSecond > 0, `${key} should have a rate at all`);
+            assert.ok(rate.bytesPerSecond <= 1000,
+                `${key} moved 500 B in >=500 ms, so <=1000 B/s, got ${rate.bytesPerSecond}`);
+        }
 
         upload.pauseAll();
         await Promise.all([a, b]);

@@ -16,19 +16,13 @@ const MIN_ELAPSED_S = 0.4;
  * Rate over a sliding window of progress ticks. One meter per concurrent transfer.
  */
 class RateMeter {
-    private key = '';
     private samples: { time: number; loaded: number }[] = [];
 
     constructor(private readonly now: () => number = () => performance.now()) {}
 
-    sample(key: string, loaded: number, total: number): TransferRate {
+    sample(loaded: number, total: number): TransferRate {
         const now = this.now();
-        if (this.key !== key) {
-            this.key = key;
-            this.samples = [{ time: now, loaded }];
-        } else {
-            this.samples.push({ time: now, loaded });
-        }
+        this.samples.push({ time: now, loaded });
         while (this.samples.length > 2 && now - this.samples[0].time > WINDOW_MS) {
             this.samples.shift();
         }
@@ -39,11 +33,6 @@ class RateMeter {
         const etaSeconds = total > loaded && bytesPerSecond > 0 ?
             (total - loaded) / bytesPerSecond : 0;
         return { loaded, total, bytesPerSecond, etaSeconds };
-    }
-
-    reset() {
-        this.key = '';
-        this.samples = [];
     }
 }
 

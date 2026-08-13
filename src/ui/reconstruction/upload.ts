@@ -138,7 +138,7 @@ class ReconstructionUpload {
             meter = new RateMeter();
             this.rates.set(key, meter);
         }
-        const rate = meter.sample(key, loaded, total);
+        const rate = meter.sample(loaded, total);
         const transferred = total > 0 ?
             `${formatBytes(loaded)} / ${formatBytes(total)}` :
             formatBytes(loaded);
