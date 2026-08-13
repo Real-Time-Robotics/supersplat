@@ -4,10 +4,10 @@
 
 import {
     BufferedReadStream,
-    ReadFileSystem,
-    ReadSource,
     ReadStream,
-    UrlReadFileSystem
+    UrlReadFileSystem,
+    type ReadFileSystem,
+    type ReadSource
 } from '@playcanvas/splat-transform';
 
 // Read blob in 4MB chunks to balance async overhead vs memory usage

@@ -5,20 +5,24 @@
 import {
     getInputFormat,
     readFile,
+    readPly,
     sortMortonOrder,
     createChunkDataPool,
     materializeToDataTable,
     selectLod,
     Column,
-    ColumnType,
     DataTable,
-    Options,
-    ChunkSource,
-    ReadFileSystem,
     Transform,
-    ZipReadFileSystem
+    ZipReadFileSystem,
+    type ChunkSource,
+    type ColumnType,
+    type Options,
+    type ReadFileSystem
 } from '@playcanvas/splat-transform';
 import { GSplatData } from 'playcanvas';
+
+import { probeDenseCloud, readVertexTable } from './openmvs-ply';
+import { isPointCloud, pointCloudBudget, promotePointCloud } from './point-cloud';
 
 type LoadResult = {
     gsplatData: GSplatData;
@@ -29,9 +33,8 @@ type LoadResult = {
 // or null to cancel the load.
 type PickLod = (lodCounts: readonly number[]) => Promise<number | null>;
 
-// maximum splat count considered reasonable to load, used to select a default
-// LOD level for multi-LOD formats (e.g. LCC)
 const LOD_MAX_SPLATS = 20_000_000;
+
 
 // pick the most detailed LOD under the splat limit, or the least detailed
 // when all levels exceed it
@@ -132,6 +135,29 @@ const materializeFirst = async (sources: ChunkSource[], pickLod?: PickLod): Prom
 };
 
 /**
+ * Read a PLY, which may be an OpenMVS dense cloud: those carry per-point visibility
+ * as `property list`, which splat-transform's header parser rejects outright.
+ */
+const readPlyTable = async (filename: string, fileSystem: ReadFileSystem,
+    pickLod?: PickLod): Promise<DataTable | null> => {
+    const source = await fileSystem.createSource(filename);
+    try {
+        const denseCloud = await probeDenseCloud(source);
+        if (denseCloud) {
+            try {
+                return await readVertexTable(source, denseCloud, pointCloudBudget());
+            } finally {
+                source.close();
+            }
+        }
+        return await materializeFirst([await readPly(source, createChunkDataPool())], pickLod);
+    } catch (error) {
+        source.close();
+        throw error;
+    }
+};
+
+/**
  * Load a file using splat-transform and convert to GSplatData.
  * Returns null if the user cancels LOD selection.
  * @param filename - The filename to load
@@ -165,16 +191,15 @@ const loadGSplatData = async (filename: string, fileSystem: ReadFileSystem, skip
         }
     }
 
-    // Read the file using splat-transform
-    const sources = await readFile({
-        filename,
-        inputFormat,
-        options: defaultOptions,
-        params: [],
-        fileSystem
-    });
-
-    const dataTable = await materializeFirst(sources, pickLod);
+    let dataTable = inputFormat === 'ply' ?
+        await readPlyTable(filename, fileSystem, pickLod) :
+        await materializeFirst(await readFile({
+            filename,
+            inputFormat,
+            options: defaultOptions,
+            params: [],
+            fileSystem
+        }), pickLod);
     if (!dataTable) {
         return null;
     }
@@ -192,6 +217,10 @@ const loadGSplatData = async (filename: string, fileSystem: ReadFileSystem, skip
         }
         sortMortonOrder(dataTable, indices);
         dataTable.permuteRowsInPlace(indices);
+    }
+
+    if (isPointCloud(dataTable)) {
+        dataTable = promotePointCloud(dataTable, undefined, pointCloudBudget());
     }
 
     // Convert to GSplatData

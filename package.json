@@ -22,6 +22,7 @@
         "deploy": "npm run build && wrangler deploy",
         "test:backend": "node --experimental-transform-types --import ./scripts/ts-resolve.mjs --test \"src/backend/*.test.ts\"",
         "test:ui": "node --experimental-transform-types --import ./scripts/ts-resolve.mjs --test \"src/ui/**/*.test.ts\"",
+        "test:io": "node --experimental-transform-types --import ./scripts/ts-resolve.mjs --test \"src/io/**/*.test.ts\"",
         "test:auth-session": "node --import ./scripts/ts-resolve.mjs --test scripts/test-auth-session.mjs",
         "test:session-durable": "node --import ./scripts/ts-resolve.mjs --test scripts/test-session-durable.mjs",
         "test:gateway-proxy": "node --import ./scripts/ts-resolve.mjs --test scripts/test-gateway-proxy.mjs",

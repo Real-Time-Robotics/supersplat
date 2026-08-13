@@ -60,6 +60,7 @@ npx eslint src worker
 step "tests"
 npm run test:ui
 npm run test:backend
+npm run test:io
 npm run test:auth-session
 npm run test:session-durable
 npm run test:gateway-proxy
