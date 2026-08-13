@@ -31,13 +31,7 @@ import { Events } from '../../events';
 
 type PickedFolder = { named: Named[]; fingerprint: string; record: UploadRecord | null };
 
-/**
- * How many datasets may stream to the store at once. The SDK already runs concurrent PUTs
- * inside one uploadDataset call, and a browser allows only about six connections per host,
- * so a third dataset does not add throughput — it just splits the same pipe further and
- * makes every eta worse. Runs past the cap sit in 'queued' and drain as slots free.
- */
-const MAX_CONCURRENT_UPLOADS = 2;
+const MAX_CONCURRENT_UPLOADS = 5;
 
 class ReconstructionWorkflow {
     private files: File[] = [];
@@ -209,8 +203,6 @@ class ReconstructionWorkflow {
         const records = await this.upload.openSessions().catch(() => [] as UploadRecord[]);
         if (generation !== this.sessionGeneration) return;
         const known = new Set(this.runs.list().map(run => run.datasetId).filter(Boolean));
-        // A session we still hold the folder for is resumable from that folder, so offering
-        // it again as a "pick the folder" row would duplicate a run already on the list.
         const held = new Set(Array.from(this.picked.values()).map(folder => folder.fingerprint));
         for (const record of records) {
             if (known.has(record.datasetId) || held.has(record.fingerprint)) continue;
@@ -272,9 +264,6 @@ class ReconstructionWorkflow {
     }
 
     async cancelJob() {
-        // The button belongs to the shared card, which shows the selected run — so that is
-        // the run being cancelled. Scoping it matters once several runs are live: a global
-        // flag would make the next unrelated failure report itself as cancelled.
         const target = this.runs.selected();
         this.view.cancelButton.disabled = true;
         this.view.resetStartLabel();
@@ -702,8 +691,7 @@ class ReconstructionWorkflow {
         const generation = this.sessionGeneration;
         if (this.submitting.has(run.id)) return;
         const transferring = this.picked.has(run.id);
-        // Only bytes are rationed. A run reusing an uploaded dataset goes straight to
-        // quoting, so it must not wait behind someone else's upload.
+        // Only bytes are rationed. A run reusing an uploaded dataset must not wait behind someone else's upload.
         if (transferring && this.upload.active >= MAX_CONCURRENT_UPLOADS) {
             this.coordinator.transition(run.id, 'queued', { detail: '' });
             this.selectRun(run.id);
@@ -766,10 +754,6 @@ class ReconstructionWorkflow {
                 return;
             }
             this.submitting.delete(run.id);
-            // ReconstructionJob paints the shared card unguarded, so only the selected run
-            // may hold the watcher. Submitting one run while looking at another must not
-            // redirect the card to the newcomer; the coordinator polls it either way and
-            // its own row keeps updating.
             if (this.runs.selected()?.id === run.id) this.watchRun(submitted);
         } catch (error) {
             if (generation !== this.sessionGeneration) return;

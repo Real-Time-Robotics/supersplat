@@ -73,9 +73,7 @@ const defaultShortcuts: Record<string, ShortcutBinding> = {
 };
 
 /**
- * True when `event` is the chord bound to `id`. For handlers that have to run inside a
- * .blocks-shortcuts subtree, which the global table deliberately never reaches — they
- * ask here instead of hardcoding the key and drifting when a binding changes.
+ * True when `event` is the chord bound to `id`.
  */
 const matchesShortcut = (id: string, event: KeyboardEvent): boolean => {
     const binding = defaultShortcuts[id];
