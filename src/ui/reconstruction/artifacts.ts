@@ -51,7 +51,6 @@ class ReconstructionArtifacts {
     private sessionGeneration = 0;
     private pickedDatasetId: string | null = null;
     private readonly artifactLocations = new Map<string, HTMLElement>();
-    private readonly pickRows = new Map<string, HTMLElement>();
     private readonly datasets: ReconstructionDatasets;
 
     constructor(
@@ -94,8 +93,8 @@ class ReconstructionArtifacts {
         this.cancelDownload();
         this.activeDatasetId = null;
         this.activeScope = null;
+        this.pickedDatasetId = null;
         this.artifactLocations.clear();
-        this.pickRows.clear();
         this.view.recentRuns.textContent = '';
         this.view.datasetTree.textContent = '';
         this.view.artifactList.textContent = '';
@@ -136,7 +135,6 @@ class ReconstructionArtifacts {
      */
     private renderDatasetPicker(datasets: RecentDataset[]) {
         this.view.recentRuns.textContent = '';
-        this.pickRows.clear();
         if (!datasets.length) {
             const empty = document.createElement('span');
             empty.textContent = 'No reconstruction datasets yet.';
@@ -146,6 +144,7 @@ class ReconstructionArtifacts {
         for (const dataset of datasets) {
             const row = document.createElement('div');
             row.className = 'recon-pick';
+            row.dataset.datasetId = dataset.dataset_id;
             const name = dataset.label || dataset.dataset_id;
 
             const info = document.createElement('div');
@@ -183,7 +182,6 @@ class ReconstructionArtifacts {
 
             row.append(info, actions);
             this.paintPick(row, dataset.dataset_id === this.pickedDatasetId);
-            this.pickRows.set(dataset.dataset_id, row);
             this.view.recentRuns.appendChild(row);
         }
     }
@@ -193,13 +191,17 @@ class ReconstructionArtifacts {
      */
     setPickedDataset(datasetId: string | null) {
         this.pickedDatasetId = datasetId;
-        for (const [id, row] of this.pickRows) this.paintPick(row, id === datasetId);
+        for (const child of this.view.recentRuns.children) {
+            const row = child as HTMLElement;
+            if (row.dataset.datasetId) {
+                this.paintPick(row, row.dataset.datasetId === datasetId);
+            }
+        }
     }
 
     private paintPick(row: HTMLElement, picked: boolean) {
         row.classList.toggle('active', picked);
-        if (picked) row.setAttribute('aria-current', 'true');
-        else row.removeAttribute('aria-current');
+        row.setAttribute('aria-current', String(picked));
     }
 
     /** Artifacts' tree: a row per dataset, expanding to the jobs it produced. */

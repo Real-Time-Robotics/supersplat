@@ -1298,7 +1298,6 @@
     justify-content: space-between;
     gap: 8px;
     padding: 6px 8px;
-    // A tone below the buttons standing on it
     background-color: $bcg-darker;
     border-left: 2px solid transparent;
     border-radius: 2px;
@@ -1317,7 +1316,8 @@
     }
 }
 
-.recon-pick-info {
+.recon-pick-info,
+.recon-dataset-heading .recon-dataset-info {
     display: flex;
     min-width: 0;
     flex-direction: column;
@@ -1352,13 +1352,6 @@
     align-items: center;
     gap: 6px;
     margin-bottom: 5px;
-
-    .recon-dataset-info {
-        display: flex;
-        min-width: 0;
-        flex-direction: column;
-        gap: 2px;
-    }
 
     strong {
         overflow: hidden;
