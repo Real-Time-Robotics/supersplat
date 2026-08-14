@@ -27,6 +27,7 @@ import { isPointCloud, pointCloudBudget, promotePointCloud } from './point-cloud
 type LoadResult = {
     gsplatData: GSplatData;
     transform: Transform;
+    pointCloud: boolean;
 };
 
 // invoked when a file contains multiple LODs. returns the LOD index to load,
@@ -185,7 +186,11 @@ const loadGSplatData = async (filename: string, fileSystem: ReadFileSystem, skip
             if (!dataTable) {
                 return null;
             }
-            return { gsplatData: dataTableToGSplatData(dataTable), transform: dataTable.transform };
+            return {
+                gsplatData: dataTableToGSplatData(dataTable),
+                transform: dataTable.transform,
+                pointCloud: false
+            };
         } finally {
             zipFs.close();
         }
@@ -219,12 +224,13 @@ const loadGSplatData = async (filename: string, fileSystem: ReadFileSystem, skip
         dataTable.permuteRowsInPlace(indices);
     }
 
-    if (isPointCloud(dataTable)) {
+    const pointCloud = isPointCloud(dataTable);
+    if (pointCloud) {
         dataTable = promotePointCloud(dataTable, undefined, pointCloudBudget());
     }
 
     // Convert to GSplatData
-    return { gsplatData: dataTableToGSplatData(dataTable), transform: dataTable.transform };
+    return { gsplatData: dataTableToGSplatData(dataTable), transform: dataTable.transform, pointCloud };
 };
 
 /**

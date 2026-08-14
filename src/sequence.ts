@@ -8,6 +8,7 @@ import { Splat } from './splat';
 type FrameData = {
     asset: Asset;
     rotation: Quat;
+    pointCloud: boolean;
 };
 
 // A source of animation frames. getFrame produces a ready gsplat Asset (plus the
@@ -46,11 +47,12 @@ class PlyFrameSource implements FrameSource {
         fileSystem.addFile(file.name, file);
 
         // skipReorder: animation frames prioritise load speed over morton ordering
-        const { gsplatData, transform } = await loadGSplatData(file.name, fileSystem, true);
+        const { gsplatData, transform, pointCloud } = await loadGSplatData(
+            file.name, fileSystem, true);
         validateGSplatData(gsplatData);
 
         const asset = this.scene.assetLoader.createGSplatAsset(gsplatData, file.name);
-        return { asset, rotation: transform.rotation };
+        return { asset, rotation: transform.rotation, pointCloud };
     }
 
     destroy() {}
@@ -75,7 +77,7 @@ const registerSequenceEvents = (events: Events, scene: Scene) => {
     // apply a frame's data to the persistent splat, creating it on the first frame
     const applyFrame = async (data: FrameData) => {
         if (!splat) {
-            splat = new Splat(data.asset, data.rotation);
+            splat = new Splat(data.asset, data.rotation, data.pointCloud);
             await scene.add(splat);
         } else {
             // in-place swap: preserves entity transform, visual props and selection
