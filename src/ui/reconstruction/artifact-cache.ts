@@ -5,10 +5,8 @@ type CacheScope =
 type IndexEntry = { size: number; seq: number };
 
 const CACHE_NAME = 'genesis-artifacts-v1';
-// Track sizes without reading cached bodies.
-const SIZE_HEADER = 'x-genesis-cached-bytes';
 const INDEX_KEY = 'genesis.artifact-cache.index';
-const DEFAULT_CEILING_BYTES = 4 * 1024 ** 3;
+const DEFAULT_CEILING_BYTES = 16 * 1024 ** 3;
 // Reserve headroom because browser quotas are approximate.
 const QUOTA_SHARE = 0.8;
 
@@ -53,15 +51,12 @@ class ArtifactCache {
         return caches.open(CACHE_NAME);
     }
 
+    /** A cached body is a disk handle, so measuring it beats trusting a declared size. */
     private async sizeOf(response: Response): Promise<number> {
-        for (const header of [SIZE_HEADER, 'content-length']) {
-            const declared = Number(response.headers.get(header));
-            if (Number.isFinite(declared) && declared > 0) return declared;
-        }
         try {
             return (await response.clone().blob()).size;
         } catch {
-            return 0;
+            return Number(response.headers.get('content-length')) || 0;
         }
     }
 
@@ -88,7 +83,7 @@ class ArtifactCache {
         return cacheKeyFor(scope, name) in this.readIndex();
     }
 
-    async read(scope: CacheScope, name: string): Promise<Response | null> {
+    async read(scope: CacheScope, name: string): Promise<Blob | null> {
         const key = cacheKeyFor(scope, name);
         const index = this.readIndex();
         const hit = await (await this.open()).match(key);
@@ -99,33 +94,74 @@ class ArtifactCache {
             }
             return null;
         }
-        index[key] = {
-            size: index[key]?.size || await this.sizeOf(hit),
-            seq: this.nextSeq(index)
-        };
+        const blob = await hit.blob();
+        index[key] = { size: blob.size, seq: this.nextSeq(index) };
         this.writeIndex(index);
-        return hit;
+        return blob;
     }
 
-    async write(scope: CacheScope, name: string, response: Response): Promise<void> {
-        const key = cacheKeyFor(scope, name);
-        const contentType = response.headers.get('content-type') ?? '';
-        let bytes: Uint8Array<ArrayBuffer>;
+    /**
+     * Take a response body into the cache and hand back the cached copy, so the bytes
+     * go from the network to disk without ever being a JS value. `onBytes` reports each
+     * chunk as it passes. Null means the cache declined before reading anything, so the
+     * body is still the caller's to use; once bytes flow, failure throws instead.
+     */
+    async store(scope: CacheScope, name: string, response: Response, expectedSize: number,
+        onBytes: (count: number) => void): Promise<Blob | null> {
+        if (!response.body) return null;
+        let cache: Cache;
         try {
-            bytes = new Uint8Array(await response.arrayBuffer());
+            cache = await this.open();
         } catch {
-            return;
+            return null;
         }
         const budget = await this.budget();
-        if (bytes.byteLength > budget) return;
-        await this.evictTo(budget - bytes.byteLength, key);
-        if (await this.put(key, bytes, contentType)) return;
-        await this.evictOldestHalf(key);
-        await this.put(key, bytes, contentType);
+        if (expectedSize > budget) return null;
+
+        const key = cacheKeyFor(scope, name);
+        const headers = new Headers();
+        const contentType = response.headers.get('Content-Type');
+        if (contentType) headers.set('Content-Type', contentType);
+        const counted = response.body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
+            transform(chunk, controller) {
+                onBytes(chunk.byteLength);
+                controller.enqueue(chunk);
+            }
+        }));
+        try {
+            await cache.put(key, new Response(counted, { headers }));
+        } catch (error) {
+            // The body is spent, so make room for the retry that has to happen elsewhere.
+            if (isQuotaError(error)) await this.evictOldestHalf(key);
+            throw error;
+        }
+        const hit = await cache.match(key);
+        if (!hit) throw new Error('The cache dropped the artifact as it was stored.');
+        const blob = await hit.blob();
+        const index = this.readIndex();
+        index[key] = { size: blob.size, seq: this.nextSeq(index) };
+        this.writeIndex(index);
+        // Trim after the write, not before: a cancelled download must not cost the user
+        // entries that nothing replaced.
+        await this.evictTo(budget - blob.size, key);
+        return blob;
     }
 
     async remove(scope: CacheScope, name: string): Promise<void> {
         await this.forget(cacheKeyFor(scope, name));
+    }
+
+    /** Every entry of one job or run, for when the server no longer has it either. */
+    async removeScope(scope: CacheScope): Promise<void> {
+        // Keep the empty name's trailing '/': `created: 111` must not match `created: 1110`.
+        const prefix = cacheKeyFor(scope, '');
+        const index = this.readIndex();
+        const gone = Object.keys(index).filter(key => key.startsWith(prefix));
+        if (!gone.length) return;
+        const cache = await this.open();
+        await Promise.all(gone.map(key => cache.delete(key)));
+        for (const key of gone) delete index[key];
+        this.writeIndex(index);
     }
 
     async clear(): Promise<void> {
@@ -161,22 +197,6 @@ class ArtifactCache {
         const index = this.readIndex();
         delete index[key];
         this.writeIndex(index);
-    }
-
-    private async put(key: string, bytes: Uint8Array<ArrayBuffer>,
-        contentType = ''): Promise<boolean> {
-        const headers = new Headers({ [SIZE_HEADER]: String(bytes.byteLength) });
-        if (contentType) headers.set('Content-Type', contentType);
-        try {
-            await (await this.open()).put(key, new Response(bytes, { headers }));
-        } catch (error) {
-            if (!isQuotaError(error)) throw error;
-            return false;
-        }
-        const index = this.readIndex();
-        index[key] = { size: bytes.byteLength, seq: this.nextSeq(index) };
-        this.writeIndex(index);
-        return true;
     }
 
     private async evictTo(target: number, exempt: string): Promise<void> {

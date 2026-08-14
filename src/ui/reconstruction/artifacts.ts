@@ -4,10 +4,10 @@ import { onSessionEnded, reconFetch } from './http';
 import type { ProgressVisual } from './progress';
 import type { Artifact, ArtifactSource, RecentDataset, RecentRun } from './types';
 import { gp } from './upload';
+import { RateMeter, formatTransferDetail } from './upload-rate';
 import {
     OPENABLE_ARTIFACT_EXTENSIONS,
     formatBytes,
-    formatDuration,
     messageOf,
     readJson
 } from './utils';
@@ -36,6 +36,12 @@ const scopeOf = (source: ArtifactSource): CacheScope => (source.type === 'job' ?
         runName: source.run.run_name,
         created: source.run.created
     });
+
+/** Transfer size: what the server declares, else what the listing recorded. */
+const totalBytes = (response: Response, artifact: Artifact): number => {
+    return Number(response.headers.get('Content-Length')) ||
+        Math.max(0, Number(artifact.size) || 0);
+};
 
 /** The gateway sends epoch seconds; older rows can carry milliseconds. */
 const datasetCreated = (dataset: RecentDataset): Date => new Date(
@@ -388,24 +394,22 @@ class ReconstructionArtifacts {
         const filename = artifact.name.split('/').pop() || 'genesis-artifact';
         try {
             const scope = scopeOf(source);
-            let response = await artifactCache.read(scope, artifact.name);
-            const cached = response !== null;
-            artifact.local = cached;
+            let blob = await artifactCache.read(scope, artifact.name);
+            artifact.local = blob !== null;
             this.updateArtifactLocation(artifact);
-            if (!response) {
+            if (!blob) {
                 const url = source.type === 'job' ?
                     await gp.getArtifactUrl(source.jobId, artifact.name,
                         { signal: controller.signal }) :
                     await gp.getRunArtifactUrl(source.run.dataset_id, source.run.pipeline,
                         source.run.run_name, artifact.name, { signal: controller.signal });
-                response = await fetch(url, { signal: controller.signal });
-                if (!response.ok) throw new Error(`Artifact storage returned ${response.status}`);
+                const fetched = await this.fetchArtifact(url, scope, artifact,
+                    controller.signal, report);
+                blob = fetched.blob;
+                artifact.local = fetched.cached;
+                this.updateArtifactLocation(artifact);
+                await this.refreshCacheUsage();
             }
-            const blob = await this.readDownload(response, artifact, controller.signal, report);
-            if (!cached) await artifactCache.write(scope, artifact.name, new Response(blob));
-            artifact.local = true;
-            this.updateArtifactLocation(artifact);
-            await this.refreshCacheUsage();
             if (OPENABLE_ARTIFACT_EXTENSIONS.test(filename)) {
                 report(
                     'Opening artifact',
@@ -436,14 +440,17 @@ class ReconstructionArtifacts {
             );
             return { status: 'downloaded' };
         } catch (error) {
+            // Cache.put reports an aborted body as a NetworkError, not an AbortError
+            const cancelled = controller.signal.aborted ||
+                (error as DOMException)?.name === 'AbortError';
             if (this.activeDownload === controller) {
-                if ((error as DOMException)?.name === 'AbortError') {
+                if (cancelled) {
                     report('Download cancelled', filename, { mode: 'idle' });
                 } else {
                     report('Could not download artifact', messageOf(error), { mode: 'failed' });
                 }
             }
-            return (error as DOMException)?.name === 'AbortError' ?
+            return cancelled ?
                 { status: 'cancelled' } :
                 { status: 'failed', message: messageOf(error) };
         } finally {
@@ -532,62 +539,84 @@ class ReconstructionArtifacts {
         await this.refreshCacheUsage();
     }
 
-    private async readDownload(
-        response: Response,
+    private async fetchArtifact(
+        url: string,
+        scope: CacheScope,
         artifact: Artifact,
         signal: AbortSignal,
         report: (title: string, detail: string, visual: ProgressVisual) => void
+    ): Promise<{ blob: Blob; cached: boolean }> {
+        const response = await fetch(url, { signal });
+        if (!response.ok) throw new Error(`Artifact storage returned ${response.status}`);
+        const total = totalBytes(response, artifact);
+        const meter = this.progressMeter(artifact, total, report);
+
+        const cached = await artifactCache.store(scope, artifact.name, response, total,
+            bytes => meter.tick(bytes));
+        if (cached) {
+            meter.done();
+            return { blob: cached, cached: true };
+        }
+        return { blob: await this.readDownload(response, signal, meter), cached: false };
+    }
+
+    /**
+     * Throttled transfer progress, shared by both read paths so they report alike.
+     */
+    private progressMeter(
+        artifact: Artifact,
+        total: number,
+        report: (title: string, detail: string, visual: ProgressVisual) => void
+    ) {
+        const title = `Downloading: ${artifact.name}`;
+        const rates = new RateMeter();
+        let loaded = 0;
+        let lastRendered = 0;
+        report(title,
+            total > 0 ? `0 B / ${formatBytes(total)} · estimating…` : 'Starting download…',
+            total > 0 ? { mode: 'determinate', value: 0 } : { mode: 'indeterminate' });
+
+        return {
+            tick(bytes: number) {
+                loaded += bytes;
+                const now = performance.now();
+                if (now - lastRendered < 125) return;
+                lastRendered = now;
+                report(title, formatTransferDetail(rates.sample(loaded, total)),
+                    total > 0 ?
+                        { mode: 'determinate', value: (loaded / total) * 100 } :
+                        { mode: 'indeterminate' });
+            },
+            done() {
+                report(title, `${formatBytes(loaded)} / ${formatBytes(total || loaded)} · complete`,
+                    { mode: 'done' });
+            }
+        };
+    }
+
+    private async readDownload(
+        response: Response,
+        signal: AbortSignal,
+        meter: { tick: (bytes: number) => void; done: () => void }
     ): Promise<Blob> {
-        const headerSize = Number(response.headers.get('Content-Length') || 0);
-        const total = headerSize > 0 ? headerSize : Math.max(0, Number(artifact.size) || 0);
         const contentType = response.headers.get('Content-Type') || 'application/octet-stream';
         if (!response.body) return response.blob();
 
         const reader = response.body.getReader();
         const chunks: Uint8Array<ArrayBuffer>[] = [];
-        const started = performance.now();
-        const samples: { time: number; loaded: number }[] = [{ time: started, loaded: 0 }];
-        let loaded = 0;
-        let lastRendered = 0;
-        const operation = artifact.local ? 'Loading local copy' : 'Downloading';
-        report(`${operation}: ${artifact.name}`,
-            total > 0 ? `0 B / ${formatBytes(total)} · estimating…` : 'Starting download…',
-            total > 0 ? { mode: 'determinate', value: 0 } : { mode: 'indeterminate' });
-
         try {
             for (;;) {
                 if (signal.aborted) throw new DOMException('Download cancelled', 'AbortError');
                 const { done, value } = await reader.read();
                 if (done) break;
                 chunks.push(new Uint8Array(value));
-                loaded += value.byteLength;
-                const now = performance.now();
-                samples.push({ time: now, loaded });
-                while (samples.length > 2 && now - samples[0].time > 8000) samples.shift();
-                if (now - lastRendered < 125) continue;
-                lastRendered = now;
-                const first = samples[0];
-                const elapsed = (now - first.time) / 1000;
-                const speed = elapsed >= 0.4 ? (loaded - first.loaded) / elapsed : 0;
-                const eta = total > loaded && speed > 0 ? (total - loaded) / speed : 0;
-                const transferred = total > 0 ?
-                    `${formatBytes(loaded)} / ${formatBytes(total)}` :
-                    formatBytes(loaded);
-                const speedAndEta = speed > 0 ?
-                    ` · ${formatBytes(speed)}/s${total > 0 ? ` · ${formatDuration(eta)}` : ''}` :
-                    ' · estimating…';
-                report(`${operation}: ${artifact.name}`, transferred + speedAndEta,
-                    total > 0 ?
-                        { mode: 'determinate', value: (loaded / total) * 100 } :
-                        { mode: 'indeterminate' });
+                meter.tick(value.byteLength);
             }
         } catch (error) {
             await reader.cancel().catch((): void => {});
             throw error;
         }
-        report(`${operation}: ${artifact.name}`,
-            `${formatBytes(loaded)} / ${formatBytes(total || loaded)} · complete`,
-            { mode: 'done' });
+        meter.done();
         return new Blob(chunks, { type: contentType });
     }
 }

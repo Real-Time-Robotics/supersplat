@@ -6,6 +6,7 @@ import { ArtifactCache, cacheKeyFor } from './artifact-cache';
 class FakeCache {
     store = new Map<string, { body: Uint8Array; headers: Record<string, string> }>();
     limit = Infinity;
+    failNextPut: Error | null = null;
 
     async match(key: string) {
         const hit = this.store.get(key);
@@ -13,6 +14,11 @@ class FakeCache {
     }
 
     async put(key: string, response: Response) {
+        if (this.failNextPut) {
+            const error = this.failNextPut;
+            this.failNextPut = null;
+            throw error;
+        }
         const headers = Object.fromEntries(response.headers as any);
         const body = new Uint8Array(await response.arrayBuffer());
         const others = [...this.store.entries()]
@@ -59,7 +65,13 @@ const install = () => {
 const scope = {
     kind: 'run', datasetId: 'ds1', pipeline: 'splat', runName: 'standard', created: 111
 } as const;
-const bodyOf = (size: number) => new Response(new Uint8Array(size));
+const responseOf = (size: number, headers?: Record<string, string>) => new Response(
+    new Blob([new Uint8Array(size)]).stream(), { headers });
+
+/** Seed the cache the way production does: a response body, streamed in. */
+const seed = (artifacts: ArtifactCache, name: string, size: number, declared = size) => {
+    return artifacts.store(scope, name, responseOf(size), declared, () => {});
+};
 
 beforeEach(install);
 
@@ -70,35 +82,95 @@ test('the cache key includes created so a rerun cannot serve the old model', () 
     assert.match(first, /^https:\/\/artifact\.local\//);
 });
 
-test('a written artifact reads back', async () => {
+test('a stored artifact reads back', async () => {
     const artifacts = new ArtifactCache(64);
-    await artifacts.write(scope, 'a.ply', bodyOf(10));
+    await seed(artifacts, 'a.ply', 10);
     assert.ok(artifacts.has(scope, 'a.ply'));
-    assert.equal((await (await artifacts.read(scope, 'a.ply')).arrayBuffer()).byteLength, 10);
+    assert.equal((await artifacts.read(scope, 'a.ply'))?.size, 10);
 });
 
 test('exceeding the budget evicts the least recently used entry first', async () => {
     const artifacts = new ArtifactCache(30);
-    await artifacts.write(scope, 'old.ply', bodyOf(10));
-    await artifacts.write(scope, 'mid.ply', bodyOf(10));
+    await seed(artifacts, 'old.ply', 10);
+    await seed(artifacts, 'mid.ply', 10);
     await artifacts.read(scope, 'old.ply');          // old.ply is now the most recent
-    await artifacts.write(scope, 'new.ply', bodyOf(15));
+    await seed(artifacts, 'new.ply', 15);
     assert.equal(artifacts.has(scope, 'mid.ply'), false, 'mid.ply was least recently used');
     assert.ok(artifacts.has(scope, 'old.ply'));
     assert.ok(artifacts.has(scope, 'new.ply'));
 });
 
-test('QuotaExceededError never propagates to the caller', async () => {
+test('a body is measured by what arrived, not by what the server declared', async () => {
     const artifacts = new ArtifactCache(1024);
-    cache.limit = 5;
-    await artifacts.write(scope, 'big.ply', bodyOf(100));   // must not throw
+
+    const cached = await seed(artifacts, 'stream.ply', 50, 40);
+
+    assert.equal(cached?.size, 50);
+    assert.equal((await artifacts.usage()).bytes, 50);
+});
+
+test('every byte is reported as it passes, without buffering the body', async () => {
+    const artifacts = new ArtifactCache(1024);
+    let counted = 0;
+
+    await artifacts.store(scope, 'stream.ply', responseOf(50), 50, (bytes) => {
+        counted += bytes;
+    });
+
+    assert.equal(counted, 50);
+});
+
+test('an artifact larger than the budget is declined with its body untouched', async () => {
+    const artifacts = new ArtifactCache(1024);
+    const response = responseOf(10);
+
+    const cached = await artifacts.store(scope, 'big.ply', response, 2048, () => {});
+
+    assert.equal(cached, null);
     assert.equal(artifacts.has(scope, 'big.ply'), false);
+    assert.equal(response.bodyUsed, false, 'the caller still has to be able to read it');
+    assert.equal((await response.blob()).size, 10);
+});
+
+test('an artifact of unknown size is still streamed rather than declined', async () => {
+    const artifacts = new ArtifactCache(1024);
+
+    const cached = await seed(artifacts, 'unsized.ply', 50, 0);
+
+    assert.equal(cached?.size, 50);
+    assert.ok(artifacts.has(scope, 'unsized.ply'));
+});
+
+test('a quota refusal frees room for the retry instead of storing a partial entry', async () => {
+    const artifacts = new ArtifactCache(1024);
+    await seed(artifacts, 'old.ply', 10);
+    await seed(artifacts, 'newer.ply', 10);
+    cache.limit = 5;
+
+    await assert.rejects(seed(artifacts, 'big.ply', 100));
+
+    assert.equal(artifacts.has(scope, 'big.ply'), false);
+    assert.equal(artifacts.has(scope, 'old.ply'), false, 'the oldest half made way');
+    assert.ok(artifacts.has(scope, 'newer.ply'));
+});
+
+test('a cancelled download costs the user nothing already cached', async () => {
+    const artifacts = new ArtifactCache(30);
+    await seed(artifacts, 'old.ply', 10);
+    await seed(artifacts, 'newer.ply', 10);
+    cache.failNextPut = new DOMException('aborted', 'NetworkError');
+
+    await assert.rejects(seed(artifacts, 'incoming.ply', 15));
+
+    assert.ok(artifacts.has(scope, 'old.ply'), 'eviction must not run ahead of the write');
+    assert.ok(artifacts.has(scope, 'newer.ply'));
+    assert.equal((await artifacts.usage()).bytes, 20);
 });
 
 test('remove drops one entry and clear drops all', async () => {
     const artifacts = new ArtifactCache(1024);
-    await artifacts.write(scope, 'a.ply', bodyOf(10));
-    await artifacts.write(scope, 'b.ply', bodyOf(10));
+    await seed(artifacts, 'a.ply', 10);
+    await seed(artifacts, 'b.ply', 10);
     await artifacts.remove(scope, 'a.ply');
     assert.equal(artifacts.has(scope, 'a.ply'), false);
     assert.ok(artifacts.has(scope, 'b.ply'));
@@ -113,7 +185,7 @@ test('the budget never exceeds 80 percent of the browser quota', async () => {
 
 test('startup reconciles an index that drifted from the cache', async () => {
     const artifacts = new ArtifactCache(1024);
-    await artifacts.write(scope, 'a.ply', bodyOf(10));
+    await seed(artifacts, 'a.ply', 10);
     await cache.delete(cacheKeyFor(scope, 'a.ply'));     // cache lost it, index still lists it
     const reopened = new ArtifactCache(1024);
     await reopened.reconcile();
@@ -122,7 +194,7 @@ test('startup reconciles an index that drifted from the cache', async () => {
 
 test('a body whose index entry was lost is measured, not counted as free', async () => {
     const store = new ArtifactCache(1024);
-    await store.write(scope, 'model.ply', bodyOf(400));
+    await seed(store, 'model.ply', 400);
     localStorage.removeItem('genesis.artifact-cache.index');
 
     await store.reconcile();
@@ -133,8 +205,8 @@ test('a body whose index entry was lost is measured, not counted as free', async
 
 test('reconcile keeps what the index already knew and measures only the rest', async () => {
     const store = new ArtifactCache(4096);
-    await store.write(scope, 'a.ply', bodyOf(100));
-    await store.write(scope, 'b.ply', bodyOf(200));
+    await seed(store, 'a.ply', 100);
+    await seed(store, 'b.ply', 200);
     const index = JSON.parse(localStorage.getItem('genesis.artifact-cache.index'));
     delete index[cacheKeyFor(scope, 'b.ply')];
     localStorage.setItem('genesis.artifact-cache.index', JSON.stringify(index));
@@ -156,7 +228,7 @@ test('an entry with no content-length is still sized correctly', async () => {
 
 test('an index entry whose body is gone is dropped', async () => {
     const store = new ArtifactCache(4096);
-    await store.write(scope, 'a.ply', bodyOf(100));
+    await seed(store, 'a.ply', 100);
     cache.store.clear();
 
     await store.reconcile();
@@ -170,7 +242,7 @@ test('eviction after a reconcile drops the oldest recovered entry, not a random 
     cache.seedLegacy(cacheKeyFor(scope, 'newer.ply'), 400);
     await store.reconcile();
 
-    await store.write(scope, 'incoming.ply', bodyOf(400));
+    await seed(store, 'incoming.ply', 400);
 
     assert.equal(store.has(scope, 'old.ply'), false);
     assert.equal(store.has(scope, 'newer.ply'), true);
@@ -182,7 +254,7 @@ test('a large entry recovered without an index is not treated as weightless', as
     cache.seedLegacy(cacheKeyFor(scope, 'huge.ply'), 900);
     await store.reconcile();
 
-    await store.write(scope, 'incoming.ply', bodyOf(300));
+    await seed(store, 'incoming.ply', 300);
 
     assert.equal((await store.usage()).bytes, 300);
     assert.equal(store.has(scope, 'huge.ply'), false, 'a 900-byte entry cannot count as 0');
@@ -190,10 +262,9 @@ test('a large entry recovered without an index is not treated as weightless', as
 
 test('a cached artifact keeps its content type', async () => {
     const store = new ArtifactCache(4096);
-    await store.write(scope, 'model.ply', new Response(new Uint8Array(8), {
-        headers: { 'Content-Type': 'application/octet-stream' }
-    }));
+    await store.store(scope, 'model.ply',
+        responseOf(8, { 'Content-Type': 'application/octet-stream' }), 8, () => {});
 
     const hit = await store.read(scope, 'model.ply');
-    assert.equal(hit?.headers.get('content-type'), 'application/octet-stream');
+    assert.equal(hit?.type, 'application/octet-stream');
 });
