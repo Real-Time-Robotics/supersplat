@@ -77,7 +77,7 @@ type JobFailure = {
     retryable: boolean;
 };
 
-type JobGpu = JobGpuEvent;
+type JobGpu = Omit<JobGpuEvent, 'pull'> & { pull?: JobPullProgress | null };
 
 type JobStatus = {
     terminal: boolean;

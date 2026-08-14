@@ -30,7 +30,7 @@ import type { ReconstructionView } from './view';
  * The box reports layers finishing and nothing finer -- no bytes, no rate -- so the ring
  * counts layers against the total its image was published with.
  */
-const loadingState = (pull?: JobPullProgress): [string, string, ProgressVisual] => {
+const loadingState = (pull?: JobPullProgress | null): [string, string, ProgressVisual] => {
     if (!pull) {
         return ['Đang khởi tạo GPU',
             'Máy đã đặt xong và đang tải image pipeline. Bước này thường mất vài phút.',
