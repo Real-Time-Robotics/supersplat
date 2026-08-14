@@ -1,6 +1,7 @@
 import type {
     JobHeartbeatEvent,
     JobProgressEvent,
+    JobPullProgress,
     StageEvent
 } from './types';
 import { formatBytes } from './utils';
@@ -35,6 +36,33 @@ const STAGE_LABELS: Record<string, string> = {
     dsm: 'Building elevation map',
     publish_results: 'Uploading results'
 };
+
+const PULL_PHASE: Record<JobPullProgress['phase'], string> = {
+    'waiting': 'đang chờ',
+    'pulling fs layer': 'bắt đầu',
+    'downloading': 'đang tải',
+    'verifying checksum': 'đang kiểm tra',
+    'download complete': 'tải xong',
+    'extracting': 'đang giải nén',
+    'pull complete': 'xong',
+    'loaded': 'xong',
+    'error': 'lỗi'
+};
+
+/** What a box's image pull is called. The card and the run row must agree on this. */
+const pullTitle = (pull: JobPullProgress): string => {
+    if (pull.phase === 'error') return 'Tải image lỗi';
+    if (pull.phase === 'loaded') return 'Đã tải xong image';
+    return 'Đang tải image';
+};
+
+/**
+ * Layers finished. A pass reads a 2-3 line tail, so a layer finishing between passes is
+ * missed: the count is a floor, and clamping keeps a stale total from reading over 100%.
+ */
+const pullLayersDone = (pull: JobPullProgress): number => (
+    pull.layers_total ? Math.min(pull.layers_done, pull.layers_total) : pull.layers_done
+);
 
 const clampPercent = (value: number) => Math.max(0, Math.min(100, value));
 
@@ -358,5 +386,8 @@ class ReconstructionProgress {
     }
 }
 
-export { ReconstructionProgress, formatProgressAmount, stageLabel };
+export {
+    PULL_PHASE, ReconstructionProgress, formatProgressAmount, pullLayersDone, pullTitle,
+    stageLabel
+};
 export type { ProgressVisual };

@@ -12,6 +12,17 @@ const messageOf = (error: unknown) => (
     error instanceof Error ? error.message : String(error)
 );
 
+/** An SSE frame's JSON object, or null for anything a typed reader can't use. */
+const eventData = <T>(event: Event): T | null => {
+    if (!(event instanceof MessageEvent)) return null;
+    try {
+        const data = JSON.parse(event.data) as unknown;
+        return typeof data === 'object' && data !== null ? data as T : null;
+    } catch {
+        return null;
+    }
+};
+
 const formatBytes = (bytes: number) => {
     if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
     const units = ['B', 'KB', 'MB', 'GB', 'TB'];
@@ -52,6 +63,7 @@ export {
     PIPELINE_KEY,
     PREPARED_DATASET_KEY,
     delay,
+    eventData,
     formatBytes,
     formatDuration,
     messageOf,

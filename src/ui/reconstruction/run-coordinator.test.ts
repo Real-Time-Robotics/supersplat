@@ -12,7 +12,8 @@ const run = (id: string, patch = {}) => ({
     preset: 'standard',
     runName: 'standard',
     submitKey: null,
-    label: id,
+    datasetLabel: id,
+    label: '',
     jobId: null,
     percent: 0,
     detail: '',
@@ -394,37 +395,47 @@ test('an external job releasing the quota lets the waiting run start', async () 
     assert.equal(store.list()[0].state, 'running');
 });
 
-test('every running run is polled, selected or not', async () => {
+test('a running run is left alone until its stream ends', async () => {
     const store = new RunStore();
     store.upsert(run('a', { state: 'running', jobId: 'j1' }));
-    store.upsert(run('b', { state: 'running', jobId: 'j2' }));
-    store.select('a');
-    const asked: string[] = [];
-    coordinate(store, async () => 'x', async (id) => {
-        asked.push(id);
+    let asks = 0;
+    coordinate(store, async () => 'x', async () => {
+        asks += 1;
         return jobRunning;
     });
 
+    coordinator.sync();
+    clock.fire();
     await coordinator.pass();
 
-    assert.deepEqual(asked.sort(), ['j1', 'j2'],
-        'the run on screen is watched too -- a dead stream must not hide it');
+    assert.equal(asks, 0, 'progress arrives on the stream; nothing here asks for it');
+    assert.equal(clock.interval(), 0, 'and a running run keeps no timer alive');
 });
 
-test('an unselected run that finishes is settled', async () => {
+test('an unselected run whose stream ended is settled', async () => {
     const store = new RunStore();
     store.upsert(run('a', { state: 'running', jobId: 'j1' }));
     store.upsert(run('b', { state: 'running', jobId: 'j2' }));
     store.select('a');
     coordinate(store, async () => 'x', async id => (id === 'j2' ? jobDone : jobRunning));
 
-    await coordinator.pass();
+    assert.equal(await coordinator.close('b'), true);
 
     assert.equal(store.list().find(r => r.id === 'b').state, 'done');
     assert.equal(store.list().find(r => r.id === 'a').state, 'running');
 });
 
-test('a poll and a stream reaching the same terminal settle it once', async () => {
+test('a stream that ends on a job the server still calls live settles nothing', async () => {
+    const store = new RunStore();
+    store.upsert(run('a', { state: 'running', jobId: 'j1' }));
+    coordinate(store, async () => 'x', async () => jobRunning);
+
+    assert.equal(await coordinator.close('a'), false,
+        'the worker went quiet; the caller has to watch again, not call it finished');
+    assert.equal(store.list()[0].state, 'running');
+});
+
+test('a close and a stream reaching the same terminal settle it once', async () => {
     const store = new RunStore();
     store.upsert(run('a', { state: 'running', jobId: 'j1' }));
     const settled: string[] = [];
@@ -436,8 +447,8 @@ test('a poll and a stream reaching the same terminal settle it once', async () =
         timers: clock.timers
     });
 
-    await coordinator.pass();                                   // the poll notices
-    coordinator.settle('a', 'done', { percent: 100 });          // the stream notices too
+    await coordinator.close('a');                               // the end frame is read
+    coordinator.settle('a', 'done', { percent: 100 });          // the watcher notices too
 
     assert.deepEqual(settled, ['a:done'], 'one settlement, one successor submitted');
 });
@@ -449,7 +460,7 @@ test('a run whose status call fails is not declared failed', async () => {
         throw new Error('offline');
     });
 
-    await coordinator.pass();
+    assert.equal(await coordinator.close('a'), false);
 
     assert.equal(store.list()[0].state, 'running', 'a dropped connection is not an outcome');
 });
@@ -480,7 +491,7 @@ test('a cancelled run is not resubmitted', async () => {
         status: 'cancelled',
         failure: { code: 'cancelled_by_user' } }));
 
-    await coordinator.pass();
+    await coordinator.close('a');
 
     assert.equal(store.list()[0].state, 'cancelled');
     assert.equal(submits, 0);
@@ -488,7 +499,7 @@ test('a cancelled run is not resubmitted', async () => {
 
 test('stopping the coordinator ends every timer', () => {
     const store = new RunStore();
-    store.upsert(run('a', { state: 'running', jobId: 'j1' }));
+    store.upsert(run('a', { state: 'waiting-slot', submitKey: 'k1' }));
     coordinate(store, async () => 'x');
     coordinator.sync();
     assert.ok(clock.pending.size > 0);

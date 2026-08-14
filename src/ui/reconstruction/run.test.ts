@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { runCard, runControls, runPollDetail, type Run, type RunState } from './run.ts';
+import { jobDetail, runCard, runControls, type Run, type RunState } from './run.ts';
 import type { JobStatus } from './types.ts';
 
 const STATES: RunState[] = [
@@ -17,7 +17,8 @@ const run = (state: RunState): Run => ({
     preset: 'standard',
     runName: 'standard',
     submitKey: null,
-    label: 'r1',
+    datasetLabel: 'r1',
+    label: '',
     jobId: null,
     percent: 0,
     detail: ''
@@ -75,14 +76,14 @@ const stage = (step: string, index: number, total: number) => ({
 });
 
 test('an unwatched run reads its stage, not the bare status word', () => {
-    const detail = runPollDetail(job({ current_stage: stage('feature_extraction', 2, 7) }));
+    const detail = jobDetail(job({ current_stage: stage('feature_extraction', 2, 7) }));
     assert.match(detail, /2\/7/);
     assert.match(detail, /Finding image features/);
     assert.doesNotMatch(detail, /feature_extraction/);
 });
 
 test('a rented box in the queue is named while the job has no stage yet', () => {
-    const detail = runPollDetail(job({
+    const detail = jobDetail(job({
         status: 'queued',
         gpu: { state: 'loading', provider: 'vast', since: '2026-08-13T00:00:00Z' }
     }));
@@ -91,7 +92,7 @@ test('a rented box in the queue is named while the job has no stage yet', () => 
 });
 
 test('stage progress rides along with the stage', () => {
-    const detail = runPollDetail(job({
+    const detail = jobDetail(job({
         current_stage: stage('training', 1, 3),
         progress: {
             stage: 'training',
@@ -105,6 +106,21 @@ test('stage progress rides along with the stage', () => {
     assert.match(detail, /4,000 \/ 30,000 iterations/);
 });
 
+test('a progress event left over from the previous stage is not shown against this one', () => {
+    const detail = jobDetail(job({
+        current_stage: stage('clean', 2, 3),
+        progress: {
+            stage: 'training',
+            mode: 'determinate',
+            current: 30000,
+            total: 30000,
+            unit: 'iterations',
+            observed_at: '2026-08-13T00:00:00Z'
+        }
+    }));
+    assert.equal(detail, '2/3 Optimizing Gaussian splat');
+});
+
 test('a status with nothing to unpack still says something', () => {
-    assert.equal(runPollDetail(job({ status: 'assigning' })), 'assigning');
+    assert.equal(jobDetail(job({ status: 'assigning' })), 'assigning');
 });

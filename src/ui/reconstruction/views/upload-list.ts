@@ -1,4 +1,4 @@
-import { runControls, type Run, type RunAction, type RunState } from '../run';
+import { runControls, runTitle, type Run, type RunAction, type RunState } from '../run';
 import { formatEtaShort, formatRate, type TransferRate } from '../upload-rate';
 
 type RunHandlers = {
@@ -62,7 +62,7 @@ type RowNodes = {
 
 /** Everything a row's structure depends on; anything else is patched into the nodes. */
 const signatureOf = (run: Run, selected: boolean, controls: RunAction[]): string => [
-    run.state, run.pipeline, run.runName || run.preset, selected, controls.join(',')
+    run.state, run.pipeline, runTitle(run), selected, controls.join(',')
 ].join('|');
 
 /**
@@ -179,7 +179,8 @@ class UploadList {
         top.className = 'recon-run-top';
         const name = document.createElement('span');
         name.className = 'recon-run-name';
-        name.textContent = run.runName || run.preset;
+        name.textContent = runTitle(run);
+        name.title = `Luồng ${run.runName || run.preset}`;
         const chip = document.createElement('span');
         chip.className = 'recon-run-chip';
         chip.textContent = run.pipeline === 'splat' ? '3DGS' : 'MESH';

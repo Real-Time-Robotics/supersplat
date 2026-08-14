@@ -20,6 +20,8 @@ class CreateView {
     readonly folderInput: HTMLInputElement;
     readonly imageInput: HTMLInputElement;
     readonly fileSummary: HTMLElement;
+    readonly datasetNameInput: HTMLInputElement;
+    readonly runNameInput: HTMLInputElement;
     readonly recentRuns: HTMLElement;
     readonly refreshRunsButton: HTMLButtonElement;
     readonly startButton: HTMLButtonElement;
@@ -115,6 +117,18 @@ class CreateView {
                     <div class="recon-recent-list"><span>Loading…</span></div>
                 </div>
                 <div class="recon-file-summary">No images selected</div>
+                <div class="recon-naming">
+                    <label for="recon-dataset-name">Tên bộ ảnh
+                        <input id="recon-dataset-name" class="recon-dataset-name" type="text"
+                               maxlength="200" autocomplete="off"
+                               title="Chỉ là tên hiển thị; không đổi gì trên kho lưu trữ">
+                    </label>
+                    <label for="recon-run-name">Tên luồng
+                        <input id="recon-run-name" class="recon-run-name-input" type="text"
+                               maxlength="200" autocomplete="off"
+                               title="Chỉ là tên hiển thị; không đổi gì trên kho lưu trữ">
+                    </label>
+                </div>
             </div>
             <footer class="recon-footer">
                 <button class="recon-button recon-primary recon-start" type="button" disabled>Create Gaussian Splat</button>
@@ -138,6 +152,8 @@ class CreateView {
         this.folderInput = root.querySelector('.recon-folder-input');
         this.imageInput = root.querySelector('.recon-image-input');
         this.fileSummary = root.querySelector('.recon-file-summary');
+        this.datasetNameInput = root.querySelector('.recon-dataset-name');
+        this.runNameInput = root.querySelector('.recon-run-name-input');
         this.recentRuns = root.querySelector('.recon-recent-list');
         this.refreshRunsButton = root.querySelector('.recon-refresh-runs');
         this.startButton = root.querySelector('.recon-start');

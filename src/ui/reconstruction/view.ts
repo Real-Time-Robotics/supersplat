@@ -1,5 +1,5 @@
 import { ProgressVisual, ReconstructionProgress } from './progress';
-import type { Run } from './run';
+import { runTitle, type Run } from './run';
 import type {
     JobHeartbeatEvent,
     JobProgressEvent,
@@ -30,6 +30,8 @@ class ReconstructionView {
     private readonly settings: SettingsView;
     readonly progress: ReconstructionProgress;
     private pipeline: ReconstructionPipeline = 'splat';
+    /** The upload's own name, parked while an existing dataset borrows the field. */
+    private typedName: string | null = null;
 
     constructor(readonly root: HTMLElement) {
         this.shell = new DashboardShell(root);
@@ -148,6 +150,14 @@ class ReconstructionView {
         return this.create.fileSummary;
     }
 
+    get datasetNameInput() {
+        return this.create.datasetNameInput;
+    }
+
+    get runNameInput() {
+        return this.create.runNameInput;
+    }
+
     get pipelineButtons() {
         return this.create.pipelineButtons;
     }
@@ -205,11 +215,31 @@ class ReconstructionView {
     showCompose(run: Run | null) {
         this.create.showCompose(run === null);
         if (!run) return;
-        this.create.runFixedTitle.textContent = run.runName || run.preset;
+        this.create.runFixedTitle.textContent = runTitle(run);
         this.create.runFixedDetail.textContent = [
             run.pipeline === 'splat' ? '3D Gaussian Splatting' : 'Photogrammetry',
-            run.datasetId ? `dataset ${run.datasetId}` : 'chưa có dataset'
+            run.datasetLabel || (run.datasetId ? `dataset ${run.datasetId}` : 'chưa có dataset')
         ].join(' · ');
+    }
+
+    /**
+     * A reused R2 dataset already has a name, and it is renamed where it is listed rather
+     * than here — the composer's field is for the upload it is about to make.
+     */
+    setNameEditable(editable: boolean, label = '') {
+        const input = this.create.datasetNameInput;
+        input.disabled = !editable;
+        if (!editable) {
+            // Keep what the user typed: picking an existing dataset borrows the field to show
+            // that dataset's name, and un-picking must not leave its name on the next upload.
+            if (this.typedName === null) this.typedName = input.value;
+            input.value = label;
+            return;
+        }
+        if (this.typedName !== null) {
+            input.value = this.typedName;
+            this.typedName = null;
+        }
     }
 
     setTab(tab: PanelTab) {
@@ -285,9 +315,12 @@ class ReconstructionView {
         this.create.startButton.disabled = busy || !canStart;
         this.create.imageInput.disabled = busy;
         this.create.folderInput.disabled = busy;
+        this.create.runNameInput.disabled = busy;
         for (const button of this.create.pipelineButtons) button.disabled = busy;
         for (const button of this.create.sourceButtons) button.disabled = busy;
-        this.root.querySelectorAll<HTMLButtonElement>('.recon-run, .recon-use-dataset, .recon-delete-dataset')
+        this.root.querySelectorAll<HTMLButtonElement>(
+            '.recon-run, .recon-use-dataset, .recon-delete-dataset, ' +
+            '.recon-job-delete, .recon-artifact-delete')
         .forEach((button) => {
             button.disabled = busy;
         });

@@ -1,7 +1,8 @@
 import { type CacheScope, artifactCache } from './artifact-cache';
-import { ReconstructionDatasets } from './datasets';
+import { ReconstructionDatasets, confirmDestructive, deleteOrThrow } from './datasets';
 import { onSessionEnded, reconFetch } from './http';
 import type { ProgressVisual } from './progress';
+import { editableName } from './rename';
 import type { Artifact, ArtifactSource, RecentDataset, RecentRun } from './types';
 import { gp } from './upload';
 import { RateMeter, formatTransferDetail } from './upload-rate';
@@ -50,6 +51,9 @@ const datasetCreated = (dataset: RecentDataset): Date => new Date(
 const countOf = (counts: Record<string, number> | undefined): number => Object
 .values(counts || {}).reduce((sum, count) => sum + count, 0);
 
+/** What to call a run on screen: the user's name, else where it landed on the store. */
+const titleOf = (run: RecentRun): string => run.label || `${run.pipeline}/${run.run_name}`;
+
 class ReconstructionArtifacts {
     private activeDownload: AbortController | null = null;
     private activeDatasetId: string | null = null;
@@ -73,9 +77,7 @@ class ReconstructionArtifacts {
             async (datasetId) => {
                 if (this.activeDatasetId === datasetId) {
                     this.activeDatasetId = null;
-                    this.view.artifactPanel.hidden = true;
-                    this.view.artifactList.textContent = '';
-                    this.artifactLocations.clear();
+                    this.closeArtifactPanel();
                 }
                 await onDatasetDeleted(datasetId);
                 await this.refreshRecentRuns();
@@ -98,13 +100,10 @@ class ReconstructionArtifacts {
         this.sessionGeneration++;
         this.cancelDownload();
         this.activeDatasetId = null;
-        this.activeScope = null;
         this.pickedDatasetId = null;
-        this.artifactLocations.clear();
+        this.closeArtifactPanel();
         this.view.recentRuns.textContent = '';
         this.view.datasetTree.textContent = '';
-        this.view.artifactList.textContent = '';
-        this.view.artifactPanel.hidden = true;
         this.setRefreshDisabled(false);
     }
 
@@ -157,13 +156,13 @@ class ReconstructionArtifacts {
             info.className = 'recon-pick-info';
             const created = document.createElement('strong');
             created.className = 'recon-pick-created';
-            created.textContent = datasetCreated(dataset).toLocaleString('en-US');
-            created.title = `Dataset ${dataset.dataset_id}`;
+            created.append(this.renameableDataset(dataset));
             const detail = document.createElement('span');
             detail.className = 'recon-pick-detail';
             detail.textContent = [
                 `${dataset.image_count.toLocaleString()} images`,
-                formatBytes(dataset.bytes)
+                formatBytes(dataset.bytes),
+                datasetCreated(dataset).toLocaleString('en-US')
             ].join(' · ');
             info.append(created, detail);
 
@@ -190,6 +189,17 @@ class ReconstructionArtifacts {
             this.paintPick(row, dataset.dataset_id === this.pickedDatasetId);
             this.view.recentRuns.appendChild(row);
         }
+    }
+
+    private renameableDataset(dataset: RecentDataset): HTMLElement {
+        return editableName(dataset.label, { kind: 'dataset', datasetId: dataset.dataset_id }, {
+            placeholder: dataset.dataset_id,
+            onRenamed: (label) => {
+                dataset.label = label;
+            },
+            onError: message => this.view.progress.showNotice(
+                `Không đổi được tên bộ ảnh: ${message}`, 8000)
+        });
     }
 
     /**
@@ -227,8 +237,7 @@ class ReconstructionArtifacts {
             const info = document.createElement('div');
             info.className = 'recon-dataset-info';
             const name = document.createElement('strong');
-            name.textContent = dataset.label || dataset.dataset_id;
-            name.title = dataset.dataset_id;
+            name.append(this.renameableDataset(dataset));
             const detail = document.createElement('span');
             const runs = countOf(dataset.run_counts);
             detail.textContent = [
@@ -289,41 +298,117 @@ class ReconstructionArtifacts {
                 container.appendChild(empty);
                 return;
             }
-            for (const run of jobs) {
-                // Every job of the dataset is listed, so a failed or still-running one is
-                // visible too; only a job with files to show is clickable.
-                const openable = run.artifact_count > 0;
-                const button = document.createElement('button');
-                button.type = 'button';
-                button.className = 'recon-button recon-run';
-                button.disabled = !openable;
-                const top = document.createElement('span');
-                top.className = 'recon-run-top';
-                const runName = document.createElement('strong');
-                runName.textContent = `${run.pipeline}/${run.run_name}`;
-                const state = document.createElement('span');
-                state.className = 'recon-run-state';
-                state.dataset.state = run.status;
-                state.textContent = run.status;
-                top.append(runName, state);
-                const detail = document.createElement('span');
-                detail.textContent = [
-                    new Date(run.created < 1e12 ? run.created * 1000 : run.created)
-                    .toLocaleString('en-US'),
-                    `${run.artifact_count} artifact${run.artifact_count === 1 ? '' : 's'}`,
-                    formatBytes(run.bytes)
-                ].join(' · ');
-                button.append(top, detail);
-                if (openable) {
-                    button.addEventListener('click', () => this.loadRecentRunArtifacts(run));
-                }
-                container.appendChild(button);
-            }
+            for (const run of jobs) container.appendChild(this.jobRow(run));
         } catch (error) {
             if (generation !== this.sessionGeneration) return;
             trigger.disabled = false;
             trigger.textContent = `Không tải được: ${messageOf(error)}`;
         }
+    }
+
+    private jobRow(run: RecentRun): HTMLElement {
+        const row = document.createElement('div');
+        row.className = 'recon-job-row';
+
+        const openable = run.artifact_count > 0;
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'recon-button recon-run';
+        button.disabled = !openable;
+        const top = document.createElement('span');
+        top.className = 'recon-run-top';
+        const runName = document.createElement('strong');
+        runName.textContent = titleOf(run);
+        runName.title = `${run.pipeline}/${run.run_name}`;
+        const state = document.createElement('span');
+        state.className = 'recon-run-state';
+        state.dataset.state = run.status;
+        state.textContent = run.status;
+        top.append(runName, state);
+        const detail = document.createElement('span');
+        detail.textContent = [
+            new Date(run.created < 1e12 ? run.created * 1000 : run.created)
+            .toLocaleString('en-US'),
+            `${run.artifact_count} artifact${run.artifact_count === 1 ? '' : 's'}`,
+            formatBytes(run.bytes)
+        ].join(' · ');
+        button.append(top, detail);
+        if (openable) {
+            button.addEventListener('click', () => this.loadRecentRunArtifacts(run));
+        }
+
+        const actions = document.createElement('div');
+        actions.className = 'recon-job-actions';
+        // A run whose job row is already gone can still be opened and deleted; only the
+        // rename needs the job that wrote it, so that is the one affordance it loses.
+        if (run.job_id) {
+            const rename = editableName(run.label, { kind: 'job', jobId: run.job_id }, {
+                placeholder: `${run.pipeline}/${run.run_name}`,
+                onRenamed: (label) => {
+                    run.label = label;
+                    runName.textContent = titleOf(run);
+                },
+                onError: message => this.view.progress.showNotice(
+                    `Không đổi được tên luồng: ${message}`, 8000)
+            });
+            rename.classList.add('recon-job-rename');
+            actions.append(rename);
+        }
+        const remove = document.createElement('button');
+        remove.type = 'button';
+        remove.className = 'recon-button recon-job-delete';
+        remove.textContent = '✕';
+        remove.title = 'Xoá luồng này: artifact và log của nó';
+        remove.setAttribute('aria-label', remove.title);
+        remove.addEventListener('click', () => this.requestRunDelete(run));
+        actions.append(remove);
+
+        row.append(button, actions);
+        return row;
+    }
+
+    /** Delete a run: its artifacts, and the jobs and logs that made them. */
+    private async requestRunDelete(run: RecentRun) {
+        const name = titleOf(run);
+        const confirmed = await confirmDestructive(this.events, {
+            header: 'Xoá luồng này?',
+            message: `Xoá “${name}” cùng toàn bộ artifact và log của nó?`,
+            warning: {
+                text: `${run.artifact_count} tệp (${formatBytes(run.bytes)}) sẽ bị xoá vĩnh viễn. Ảnh gốc của bộ ảnh vẫn được giữ.`
+            }
+        });
+        if (!confirmed) return;
+
+        try {
+            await deleteOrThrow(
+                `/api/reconstruction/datasets/${encodeURIComponent(run.dataset_id)}` +
+                `/runs/${encodeURIComponent(run.pipeline)}/${encodeURIComponent(run.run_name)}`,
+                'Luồng này đang chạy. Huỷ nó trước khi xoá.');
+            this.forgetRun(run);
+            this.view.progress.showNotice(`Đã xoá “${name}”.`, 6000);
+            await this.refreshRecentRuns();
+        } catch (error) {
+            this.view.progress.showNotice(`Không xoá được: ${messageOf(error)}`, 8000);
+        }
+    }
+
+    /** Drop what is on screen (and cached) for a run that no longer exists. */
+    private forgetRun(run: RecentRun) {
+        artifactCache.removeScope(scopeOf({ type: 'run', run, label: '' }))
+        .then(() => this.refreshCacheUsage())
+        .catch((): void => undefined);
+        if (this.activeScope?.kind === 'run' &&
+            this.activeScope.runName === run.run_name &&
+            this.activeScope.pipeline === run.pipeline &&
+            this.activeScope.datasetId === run.dataset_id) this.closeArtifactPanel();
+    }
+
+    /** Empty the artifact pane, for when what it was showing is gone. */
+    private closeArtifactPanel() {
+        this.activeScope = null;
+        this.view.artifactPanel.hidden = true;
+        this.view.artifactList.textContent = '';
+        this.artifactLocations.clear();
     }
 
     showArtifacts(artifacts: Artifact[], source: ArtifactSource) {
@@ -367,10 +452,53 @@ class ReconstructionArtifacts {
                 event.preventDefault();
                 this.evictArtifact(artifact);
             });
+            const remove = document.createElement('button');
+            remove.type = 'button';
+            remove.className = 'recon-button recon-artifact-delete';
+            remove.textContent = '✕';
+            remove.title = `Xoá ${artifact.name} khỏi kho lưu trữ`;
+            remove.setAttribute('aria-label', remove.title);
+            remove.addEventListener('click',
+                () => this.requestArtifactDelete(artifact, source, row, remove));
             this.artifactLocations.set(artifact.name, location);
             this.updateArtifactLocation(artifact);
-            row.append(info, action, location);
+            row.append(info, action, location, remove);
             this.view.artifactList.appendChild(row);
+        }
+    }
+
+    /** Delete one file of a run, leaving the rest of it alone. */
+    private async requestArtifactDelete(artifact: Artifact, source: ArtifactSource,
+        row: HTMLElement, trigger: HTMLButtonElement) {
+        const confirmed = await confirmDestructive(this.events, {
+            header: 'Xoá tệp này?',
+            message: `Xoá “${artifact.name}” (${formatBytes(artifact.size)}) khỏi kho lưu trữ?`,
+            warning: artifact.primary ?
+                { text: 'Đây là tệp chính của luồng; xoá xong luồng sẽ không mở được nữa.' } :
+                undefined
+        });
+        if (!confirmed) return;
+
+        const route = source.type === 'job' ?
+            `/api/reconstruction/jobs/${encodeURIComponent(source.jobId)}` +
+                `/artifacts/${encodeURIComponent(artifact.name)}` :
+            `/api/reconstruction/datasets/${encodeURIComponent(source.run.dataset_id)}` +
+                `/runs/${encodeURIComponent(source.run.pipeline)}` +
+                `/${encodeURIComponent(source.run.run_name)}` +
+                `/artifacts/${encodeURIComponent(artifact.name)}`;
+        trigger.disabled = true;
+        try {
+            await deleteOrThrow(route, 'Luồng này đang chạy. Huỷ nó trước khi xoá tệp.');
+            // scopeOf(source), not activeScope: the panel can have moved on while the
+            // confirm was open, and the eviction has to follow the file that was deleted.
+            await artifactCache.remove(scopeOf(source), artifact.name);
+            this.artifactLocations.delete(artifact.name);
+            row.remove();
+            await this.refreshCacheUsage();
+            this.view.progress.showNotice(`Đã xoá ${artifact.name}.`, 6000);
+        } catch (error) {
+            trigger.disabled = false;
+            this.view.progress.showNotice(`Không xoá được: ${messageOf(error)}`, 8000);
         }
     }
 

@@ -1,9 +1,8 @@
 import { newRunName } from './names';
-import { runPollDetail, type Run, type RunState } from './run';
+import { jobDetail, type Run, type RunState } from './run';
 import type { RunPatch, RunStore } from './run-store';
 import type { JobStatus } from './types';
 
-const RUN_POLL_MS = 15_000;
 const WAIT_MIN_MS = 5_000;
 const WAIT_MAX_MS = 60_000;
 
@@ -149,38 +148,37 @@ class RunCoordinator {
         }
     }
 
-    async pass(): Promise<void> {
+    /**
+     * Read one run's outcome and settle it. Called when its event stream ends, never on a timer.
+     */
+    async close(id: string): Promise<boolean> {
         const generation = this.#generation;
-        if (this.#stopped) return;
-        const watched = this.#runs.list()
-        .filter(run => run.state === 'running' && run.jobId !== null);
-        const snapshots = await Promise.all(watched.map(async run => ({
-            run,
-            job: await this.#deps.fetchJob(run.jobId as string).catch((): null => null)
-        })));
-        if (this.#stopped || this.#generation !== generation) return;
-        for (const { run, job } of snapshots) {
-            if (!job) continue;
-            const terminal = RunCoordinator.terminalOf(job);
-            if (terminal) {
-                this.settle(run.id, terminal.state, terminal.patch);
-            } else {
-                this.#runs.update(run.id, { detail: runPollDetail(job) });
-            }
+        const run = this.#runs.list().find(other => other.id === id);
+        if (this.#stopped || !run?.jobId) return false;
+        const job = await this.#deps.fetchJob(run.jobId).catch((): null => null);
+        if (this.#stopped || this.#generation !== generation || !job) return false;
+        const terminal = RunCoordinator.terminalOf(job);
+        if (!terminal) {
+            this.#runs.update(id, { detail: jobDetail(job) });
+            return false;
         }
-        if (this.#waiting()) {
-            await this.submitReady();
-            this.#waitDelay = this.#waiting() ?
-                Math.min(this.#waitDelay * 2, WAIT_MAX_MS) : WAIT_MIN_MS;
-            this.sync();
-        }
+        this.settle(id, terminal.state, terminal.patch);
+        await this.submitReady();
+        return true;
+    }
+
+    /** One admission retry: the runs parked on the plan's concurrency cap. */
+    async pass(): Promise<void> {
+        if (this.#stopped || !this.#waiting()) return;
+        await this.submitReady();
+        this.#waitDelay = this.#waiting() ?
+            Math.min(this.#waitDelay * 2, WAIT_MAX_MS) : WAIT_MIN_MS;
+        this.sync();
     }
 
     sync(): void {
         if (this.#stopped) return;
-        const running = this.#runs.list().some(run => run.state === 'running');
-        const waiting = this.#waiting();
-        const wanted = running ? RUN_POLL_MS : waiting ? this.#waitDelay : 0;
+        const wanted = this.#waiting() ? this.#waitDelay : 0;
         if (wanted === this.#interval) return;
         this.#clear();
         if (wanted === 0) return;

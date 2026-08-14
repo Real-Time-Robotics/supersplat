@@ -1,4 +1,4 @@
-import type { JobDatasetEvent } from 'genesis-recon';
+import type { JobDatasetEvent, JobGpuEvent, JobPullProgress } from 'genesis-recon';
 
 type ReconstructionPipeline = 'splat' | 'photogrammetry';
 
@@ -77,12 +77,7 @@ type JobFailure = {
     retryable: boolean;
 };
 
-/** The rented box a job is waiting on. Absent while it waits on the owned fleet. */
-type JobGpu = {
-    state: 'creating' | 'loading' | 'running';
-    provider: string;
-    since: string;
-};
+type JobGpu = JobGpuEvent;
 
 type JobStatus = {
     terminal: boolean;
@@ -112,7 +107,12 @@ type RecentRun = {
     dataset_label: string;
     image_count: number;
     pipeline: string;
+    /** The run's directory on the store. Stable; not what the user sees. */
     run_name: string;
+    /** What the user calls it; '' means show run_name. */
+    label: string;
+    /** The job that wrote it, for renaming. Null once its row is gone. */
+    job_id: string | null;
     status: string;
     created: number;
     artifact_count: number;
@@ -150,6 +150,7 @@ export type {
     JobGpu,
     JobHeartbeatEvent,
     JobProgressEvent,
+    JobPullProgress,
     JobStatus,
     PricingCatalog,
     PricingPack,

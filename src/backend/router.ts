@@ -189,6 +189,9 @@ const runNameFieldFor = async (gp: any, pipeline: string): Promise<string> => {
 
 const segmentsOf = (pathname: string): string[] => pathname.slice(RECON_PREFIX.length + 1).split('/').map(decodeURIComponent);
 
+/** The display name out of a request body. The gateway does the trimming and capping. */
+const labelOf = (body: any): string => String(body?.label ?? '');
+
 const submitJob = async (request: Request, gp: any): Promise<Response> => {
     const body = await bodyOf(request);
     const datasetId = String(body.datasetId || '');
@@ -205,15 +208,22 @@ const submitJob = async (request: Request, gp: any): Promise<Response> => {
     ]);
     const config = buildJobConfig({ presetConfig, pipeline, datasetId, runNameField, runName });
     const idempotencyKey = String(body.idempotencyKey || crypto.randomUUID());
-    const jobId = await gp.submitJob(pipeline, config, { idempotencyKey });
+    // `label` is what the user calls the run; `runName` is where it lands on the store.
+    const jobId = await gp.submitJob(pipeline, config,
+        { idempotencyKey, label: labelOf(body) || undefined });
     return json({ jobId, idempotencyKey }, 202);
 };
 
+const STREAM_KINDS = new Set(['log', 'stage', 'progress', 'gpu', 'artifact', 'dataset', 'end']);
+
 const streamJobEvents = async (request: Request, env: Env, session: Credential,
-    jobId: string): Promise<Response> => {
+    jobId: string, search: URLSearchParams): Promise<Response> => {
     const lastEventId = request.headers.get('last-event-id');
+    const kinds = (search.get('events') || '').split(',').filter(k => STREAM_KINDS.has(k));
+    const url = new URL(`/v1/jobs/${encodeURIComponent(jobId)}/stream`, env.GENESIS_BASE_URL);
+    if (kinds.length) url.searchParams.set('events', kinds.join(','));
     const upstream = await fetch(
-        new URL(`/v1/jobs/${encodeURIComponent(jobId)}/stream`, env.GENESIS_BASE_URL),
+        url,
         {
             headers: {
                 Authorization: `Bearer ${session.token}`,
@@ -292,14 +302,36 @@ const reconRoute = async (request: Request, env: Env, session: Credential,
         if (third === 'quote' && method === 'GET') {
             return json(await gp.quote(second, pipelineFor(search.get('pipeline'))));
         }
-        if (third === 'runs' && !fourth && method === 'GET') {
-            return json({
-                dataset_id: second,
-                runs: await gp.listRuns(second)
-            });
+        if (third === 'runs') {
+            if (!fourth && method === 'GET') {
+                return json({
+                    dataset_id: second,
+                    runs: await gp.listRuns(second)
+                });
+            }
+            // One place to validate the pipeline segment, so no run route can forget to.
+            const [pipeline, runName] = fourth && fifth ?
+                [pipelineFor(fourth), fifth] : [null, null];
+            if (pipeline && runName) {
+                if (!segments[5] && method === 'DELETE') {
+                    await gp.deleteRun(second, pipeline, runName);
+                    return new Response(null, { status: 204 });
+                }
+                if (segments[5] === 'artifacts') {
+                    if (!segments[6] && method === 'GET') {
+                        return json({
+                            artifacts: await gp.listRunArtifacts(second, pipeline, runName)
+                        });
+                    }
+                    if (segments[6] && method === 'DELETE') {
+                        await gp.deleteRunArtifact(second, pipeline, runName, segments[6]);
+                        return new Response(null, { status: 204 });
+                    }
+                }
+            }
         }
-        if (third === 'runs' && fourth && fifth && segments[5] === 'artifacts' && method === 'GET') {
-            return json({ artifacts: await gp.listRunArtifacts(second, fourth, fifth) });
+        if (!third && method === 'PUT') {
+            return json({ label: await gp.setDatasetLabel(second, labelOf(await bodyOf(request))) });
         }
         if (!third && method === 'DELETE') {
             await gp.deleteDataset(second);
@@ -313,8 +345,15 @@ const reconRoute = async (request: Request, env: Env, session: Credential,
             await gp.cancelJob(second);
             return new Response(null, { status: 204 });
         }
+        if (second && third === 'label' && method === 'PUT') {
+            return json({ label: await gp.setJobLabel(second, labelOf(await bodyOf(request))) });
+        }
         if (second && third === 'events' && method === 'GET') {
-            return streamJobEvents(request, env, session, second);
+            return streamJobEvents(request, env, session, second, search);
+        }
+        if (second && third === 'artifacts' && fourth && method === 'DELETE') {
+            await gp.deleteArtifact(second, fourth);
+            return new Response(null, { status: 204 });
         }
         if (second && !third && method === 'GET') {
             const job = await gp.getJob(second);
@@ -323,6 +362,10 @@ const reconRoute = async (request: Request, env: Env, session: Credential,
                 await gp.listArtifacts(second).catch((): any[] => []) :
                 [];
             return json({ job, artifacts });
+        }
+        if (second && !third && method === 'DELETE') {
+            await gp.deleteJob(second);
+            return new Response(null, { status: 204 });
         }
     }
 

@@ -1,7 +1,8 @@
 import type { ReconstructionArtifacts } from './artifacts';
 import type { ReconstructionBilling } from './billing';
 import { reconFetch } from './http';
-import type { ProgressVisual } from './progress';
+import { PULL_PHASE, pullLayersDone, pullTitle, type ProgressVisual } from './progress';
+import { jobDetail } from './run';
 import type {
     Artifact,
     ArtifactSource,
@@ -11,6 +12,7 @@ import type {
     JobGpu,
     JobHeartbeatEvent,
     JobProgressEvent,
+    JobPullProgress,
     JobStatus,
     ReconstructionPipeline,
     StageEvent
@@ -19,9 +21,44 @@ import {
     JOB_NOT_FOUND_GRACE,
     OPENABLE_ARTIFACT_EXTENSIONS,
     delay,
+    eventData,
     readJson
 } from './utils';
 import type { ReconstructionView } from './view';
+
+/**
+ * The box reports layers finishing and nothing finer -- no bytes, no rate -- so the ring
+ * counts layers against the total its image was published with.
+ */
+const loadingState = (pull?: JobPullProgress): [string, string, ProgressVisual] => {
+    if (!pull) {
+        return ['Đang khởi tạo GPU',
+            'Máy đã đặt xong và đang tải image pipeline. Bước này thường mất vài phút.',
+            { mode: 'indeterminate', center: '2/3' }];
+    }
+    if (pull.phase === 'error') {
+        return [pullTitle(pull),
+            'Máy vừa thuê không tải được image pipeline. Hệ thống sẽ thử máy khác.',
+            { mode: 'indeterminate', center: '!' }];
+    }
+    if (pull.phase === 'loaded') {
+        return [pullTitle(pull), 'Máy đang khởi động container để nhận job.',
+            { mode: 'determinate', value: 100 }];
+    }
+    const at = pull.layer ? ` (${pull.layer.slice(0, 8)} ${PULL_PHASE[pull.phase]})` : '';
+    if (!pull.layers_total) {
+        return [pullTitle(pull), `Máy đã tải xong ${pull.layers_done} layer${at}.`,
+            { mode: 'indeterminate', center: '2/3' }];
+    }
+    const done = pullLayersDone(pull);
+    return [pullTitle(pull),
+        `Máy đang tải image pipeline: ${done}/${pull.layers_total} layer${at}.`,
+        {
+            mode: 'determinate',
+            value: (done / pull.layers_total) * 100,
+            center: `${done}/${pull.layers_total}`
+        }];
+};
 
 const queuedState = (gpu: JobGpu | null | undefined): [string, string, ProgressVisual] => {
     switch (gpu?.state) {
@@ -30,9 +67,7 @@ const queuedState = (gpu: JobGpu | null | undefined): [string, string, ProgressV
                 `Fleet đã hết chỗ nên hệ thống đang đặt một máy GPU trên ${gpu.provider}.`,
                 { mode: 'indeterminate', center: '1/3' }];
         case 'loading':
-            return ['Đang khởi tạo GPU',
-                'Máy đã đặt xong và đang tải image pipeline. Bước này thường mất vài phút.',
-                { mode: 'indeterminate', center: '2/3' }];
+            return loadingState(gpu.pull);
         case 'running':
             return ['GPU đã sẵn sàng',
                 'Đang bàn giao job cho máy vừa thuê.',
@@ -45,6 +80,9 @@ const queuedState = (gpu: JobGpu | null | undefined): [string, string, ProgressV
 };
 
 type WatchOutcome = 'done' | 'detached';
+
+/** How the watched job reports its row detail back to the run list. */
+type DetailSink = (detail: string) => void;
 
 class ReconstructionJobError extends Error {
     constructor(
@@ -137,16 +175,6 @@ const terminalError = (job: JobStatus) => {
     }
 };
 
-const eventData = <T>(event: Event): T | null => {
-    if (!(event instanceof MessageEvent)) return null;
-    try {
-        const data = JSON.parse(event.data) as unknown;
-        return typeof data === 'object' && data !== null ? data as T : null;
-    } catch {
-        return null;
-    }
-};
-
 class ReconstructionJob {
     private activeJobId: string | null = null;
     private activeEvents: EventSource | null = null;
@@ -155,6 +183,10 @@ class ReconstructionJob {
     private lastStage: StageEvent | null = null;
     private lastProgress: JobProgressEvent | null = null;
     private lastHeartbeat: JobHeartbeatEvent | null = null;
+    private lastGpu: JobGpu | null = null;
+    private lastStatusWord = '';
+    private lastTerminal = false;
+    private detailSink: DetailSink | null = null;
     private eventStreamUnavailable = false;
     private deliveryActive = false;
     private availablePrimary: Artifact | null = null;
@@ -172,8 +204,9 @@ class ReconstructionJob {
         this.view.openPrimaryButton.addEventListener('click', () => this.togglePrimaryOpen());
     }
 
+    /** `runName` is the directory on the store; `name` is what the user calls the run. */
     async submit(datasetId: string, pipeline: ReconstructionPipeline,
-        runName: string, idempotencyKey: string): Promise<string> {
+        runName: string, idempotencyKey: string, label = ''): Promise<string> {
         const response = await reconFetch('/api/reconstruction/jobs', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -182,6 +215,7 @@ class ReconstructionJob {
                 pipeline,
                 preset: 'standard',
                 runName,
+                label,
                 idempotencyKey
             })
         });
@@ -197,12 +231,16 @@ class ReconstructionJob {
         return data.jobId;
     }
 
-    attach(jobId: string): Promise<WatchOutcome> {
+    attach(jobId: string, onDetail: DetailSink | null = null): Promise<WatchOutcome> {
         const generation = ++this.watchGeneration;
         this.cancelled = false;
         this.lastStage = null;
         this.lastProgress = null;
         this.lastHeartbeat = null;
+        this.lastGpu = null;
+        this.lastStatusWord = '';
+        this.lastTerminal = false;
+        this.detailSink = onDetail;
         this.eventStreamUnavailable = false;
         this.deliveryActive = false;
         this.availablePrimary = null;
@@ -237,6 +275,7 @@ class ReconstructionJob {
         this.activeEvents?.close();
         this.activeEvents = null;
         this.activeJobId = null;
+        this.detailSink = null;
         this.view.setWorkerStatus(null);
         this.view.resetStartLabel();
         this.view.cancelButton.hidden = true;
@@ -282,18 +321,27 @@ class ReconstructionJob {
             this.lastStage = stage;
             this.view.setStage(stage);
             this.observeStage(stage);
+            this.reportDetail();
         });
         source.addEventListener('progress', (event) => {
             const progress = eventData<JobProgressEvent>(event);
             if (!progress) return;
             this.lastProgress = progress;
             this.view.setStageProgress(progress);
+            this.reportDetail();
         });
         source.addEventListener('heartbeat', (event) => {
             const heartbeat = eventData<JobHeartbeatEvent>(event);
             if (!heartbeat) return;
             this.lastHeartbeat = heartbeat;
             this.view.setWorkerStatus(heartbeat);
+        });
+        source.addEventListener('gpu', (event) => {
+            const gpu = eventData<JobGpu>(event);
+            if (!gpu) return;
+            this.lastGpu = gpu;
+            if (!this.lastStage) this.view.setState(...queuedState(gpu));
+            this.reportDetail();
         });
         source.addEventListener('artifact', (event) => {
             const artifact = eventData<JobArtifactAvailableEvent>(event);
@@ -335,6 +383,10 @@ class ReconstructionJob {
     }
 
     private renderPending(job: JobStatus, artifacts: Artifact[]) {
+        this.lastStatusWord = job.status;
+        this.lastTerminal = job.terminal;
+        // Only fill the gap: a gpu frame that already arrived is newer than this read.
+        this.lastGpu = this.lastGpu ?? job.gpu ?? null;
         if (this.cancelled) {
             this.view.setState('Đang huỷ luồng',
                 'Đã gửi yêu cầu dừng. Đang chờ máy chủ xác nhận job đã kết thúc.',
@@ -351,7 +403,7 @@ class ReconstructionJob {
             );
         } else if (!hasProgressSnapshot && (!this.lastStage || this.lastStage.phase === 'end')) {
             if (job.status === 'queued') {
-                this.view.setState(...queuedState(job.gpu));
+                this.view.setState(...queuedState(this.lastGpu));
             } else {
                 this.view.setState(`Job: ${job.status}`,
                     'The pipeline is active; waiting for the next stage event.',
@@ -359,6 +411,18 @@ class ReconstructionJob {
             }
         }
         this.applySnapshot(job);
+        this.reportDetail();
+    }
+
+    /** The single funnel from the card's state to the run row's line. */
+    private reportDetail() {
+        if (!this.detailSink || this.lastTerminal) return;
+        this.detailSink(jobDetail({
+            status: this.lastStatusWord,
+            gpu: this.lastGpu,
+            current_stage: this.lastStage,
+            progress: this.lastProgress
+        }));
     }
 
     private async waitForJob(jobId: string, generation: number): Promise<WatchOutcome> {

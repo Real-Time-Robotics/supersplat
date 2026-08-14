@@ -5,8 +5,10 @@ import { onSessionEnded, reconFetch } from './http';
 import { ReconstructionJob, ReconstructionJobError } from './job';
 import { folderFingerprint, normalizeObjectName } from './names';
 import type { ProgressVisual } from './progress';
+import { defaultName } from './rename';
 import { runCard, type Run, type RunAction } from './run';
 import { RunCoordinator } from './run-coordinator';
+import { RunFeeds } from './run-feed';
 import { RunStore } from './run-store';
 import type {
     Artifact,
@@ -23,6 +25,7 @@ import {
     IMAGE_EXTENSIONS,
     PIPELINE_KEY,
     PREPARED_DATASET_KEY,
+    delay,
     messageOf,
     readJson
 } from './utils';
@@ -43,6 +46,8 @@ class ReconstructionWorkflow {
     }) | null = null;
     private pipeline: ReconstructionPipeline = 'splat';
     private pendingResume: UploadRecord | null = null;
+    /** The last dataset name this app filled in, so a name the user typed is never replaced. */
+    private suggestedName = '';
     private watchGeneration = 0;
     private sessionGeneration = 0;
     /** Runs whose start is in flight; guards a double Start on one run, not concurrency. */
@@ -55,6 +60,7 @@ class ReconstructionWorkflow {
     private readonly job: ReconstructionJob;
     private readonly runs = new RunStore();
     private readonly coordinator: RunCoordinator;
+    private readonly feeds: RunFeeds;
 
     constructor(
         private readonly events: Events,
@@ -67,6 +73,16 @@ class ReconstructionWorkflow {
         this.coordinator = new RunCoordinator(this.runs, {
             submit: run => this.submitRun(run),
             fetchJob: jobId => this.readJob(jobId)
+        });
+        this.feeds = new RunFeeds({
+            open: jobId => new EventSource(
+                `/api/reconstruction/jobs/${encodeURIComponent(jobId)}/events` +
+                '?events=stage,progress,gpu,end'),
+            seed: jobId => this.readJob(jobId),
+            onDetail: (runId, detail) => this.runs.update(runId, { detail }),
+            onEnded: (runId, _jobId, settled) => {
+                this.settleEndedRun(runId, settled).catch((): void => undefined);
+            }
         });
         onSessionEnded(() => this.endSession());
 
@@ -112,6 +128,7 @@ class ReconstructionWorkflow {
             if (event.key === 'Enter' || event.key === ' ') view.imageInput.click();
         });
 
+        this.suggestName();
         this.restorePreparedDataset();
     }
 
@@ -122,6 +139,7 @@ class ReconstructionWorkflow {
     handleDatasetDeleted(datasetId: string) {
         if (this.preparedDataset?.datasetId !== datasetId) return;
         this.clearPreparedDataset();
+        this.view.setNameEditable(true);
         if (this.files.length === 0) {
             this.view.fileSummary.textContent = 'No images selected';
             this.view.startButton.disabled = true;
@@ -142,6 +160,7 @@ class ReconstructionWorkflow {
         this.view.checkoutLink.hidden = true;
         this.view.fileSummary.textContent =
             `${datasetLabel} · ${dataset.image_count.toLocaleString()} existing images`;
+        this.view.setNameEditable(false, datasetLabel);
         this.view.setState(
             'Checking existing dataset',
             `Quoting ${this.pipelineName} without uploading the images again.`,
@@ -186,6 +205,7 @@ class ReconstructionWorkflow {
         this.sessionGeneration++;
         this.watchGeneration++;
         this.coordinator.stop();
+        this.feeds.stop();
         this.upload.pauseAll();
         this.job.detach();
         this.artifacts.cancelDownload();
@@ -217,7 +237,8 @@ class ReconstructionWorkflow {
                 preset: record.preset,
                 runName: record.preset,
                 submitKey: null,
-                label: record.label,
+                datasetLabel: record.label,
+                label: record.label,   // the name it was uploaded under; renameable once it runs
                 jobId: null,
                 percent: 0,
                 detail
@@ -297,6 +318,7 @@ class ReconstructionWorkflow {
             };
             this.view.fileSummary.textContent = `Dataset ${value.datasetId} is already uploaded · ready to reuse`;
             this.view.startButton.disabled = false;
+            this.view.setNameEditable(false, value.datasetId);
             this.artifacts.setPickedDataset(value.datasetId);
         } catch {
             localStorage.removeItem(PREPARED_DATASET_KEY);
@@ -397,6 +419,8 @@ class ReconstructionWorkflow {
         this.fingerprint = folderFingerprint(
             this.named.map(f => ({ name: f.name, size: f.data.size })));
         this.clearPreparedDataset();
+        this.view.setNameEditable(true);
+        this.suggestName();
 
         const bytes = candidates.reduce((sum, file) => sum + file.size, 0);
         const size = bytes >= 1024 ** 3 ?
@@ -472,6 +496,32 @@ class ReconstructionWorkflow {
         this.view.imageInput.value = '';
         this.view.fileSummary.textContent = 'No images selected';
         this.view.startButton.disabled = !this.canStart;
+        this.view.runNameInput.value = '';
+        this.view.setNameEditable(true);
+        this.suggestedName = '';
+        this.view.datasetNameInput.value = '';
+        this.suggestName();
+    }
+
+    /**
+     * Fill in a name the user can keep, without ever overwriting one they typed: only a
+     * field still holding this app's own last suggestion is replaced.
+     */
+    private suggestName() {
+        const input = this.view.datasetNameInput;
+        if (input.value && input.value !== this.suggestedName) return;
+        this.suggestedName = defaultName('SuperSplat');
+        input.value = this.suggestedName;
+    }
+
+    /** The dataset name to store for a fresh upload. */
+    private datasetName(): string {
+        return this.view.datasetNameInput.value.trim() || this.suggestedName;
+    }
+
+    /** What to call the run. Blank means "same as the dataset" -- one name to type, not two. */
+    private runName(): string {
+        return this.view.runNameInput.value.trim() || this.datasetName();
     }
 
     private renderRuns() {
@@ -489,6 +539,33 @@ class ReconstructionWorkflow {
         });
         this.view.showCompose(this.runs.selected());
         this.coordinator.sync();
+        this.syncFeeds();
+    }
+
+    /** A stream per running run, minus the one the shared card already streams. */
+    private syncFeeds() {
+        this.feeds.sync(this.runs.list(), this.job.watching);
+    }
+
+    /**
+     * A run's stream is over. `settled` false means only the stream ended — the gateway lost
+     * the worker, or the socket died — so re-reading the row would just say `running` again;
+     * say so on the row instead of reopening, which only earns another `end`.
+     */
+    private async settleEndedRun(runId: string, settled: boolean) {
+        const generation = this.sessionGeneration;
+        // A job's own end frame can beat its row's flip to terminal by a moment.
+        for (const wait of settled ? [0, 2_000, 5_000, 10_000] : [0]) {
+            if (wait) await delay(wait);
+            if (generation !== this.sessionGeneration) return;
+            if (!this.runs.list().some(run => run.id === runId)) return;
+            if (await this.coordinator.close(runId)) return;
+        }
+        if (generation !== this.sessionGeneration) return;
+        this.feeds.drop(runId);   // else sync counts the closed feed as coverage
+        this.runs.update(runId, {
+            detail: 'Mất liên lạc với luồng. Nhấn làm mới để xem trạng thái mới nhất.'
+        });
     }
 
     private selectRun(id: string) {
@@ -503,19 +580,21 @@ class ReconstructionWorkflow {
             this.job.detach();
             this.view.setState('Ready',
                 'Chọn một bộ ảnh chụp quanh vật thể hoặc không gian.', { mode: 'idle' });
-            return;
-        }
-        if (run.state === 'running' && run.jobId) {
+        } else if (run.state === 'running' && run.jobId) {
             if (this.job.watching !== run.jobId) this.watchRun(run);
-            return;
+        } else {
+            this.job.detach();
+            this.view.setState(...runCard(run));
         }
-        this.job.detach();
-        this.view.setState(...runCard(run));
+        // The card just took over a stream, or gave one back; the feeds cover the rest.
+        this.syncFeeds();
     }
 
     private newRun() {
         this.runs.select(null);       // emits, so the list and the pickers re-render
         this.view.setTab('create');
+        this.releaseComposeFolder();  // a fresh composer, with a fresh suggested name
+        this.clearPreparedDataset();
         this.showSelected();
     }
 
@@ -617,7 +696,8 @@ class ReconstructionWorkflow {
             preset: 'standard',
             runName: 'standard',
             submitKey: null,
-            label: resuming?.label ?? `SuperSplat ${new Date().toLocaleString('en-US')}`,
+            datasetLabel: resuming?.label ?? this.datasetName(),
+            label: this.runName(),
             jobId: null,
             percent: 0,
             detail: ''
@@ -670,7 +750,8 @@ class ReconstructionWorkflow {
 
     private submitRun(run: Run): Promise<string> {
         return this.job.submit(run.datasetId as string,
-            run.pipeline as ReconstructionPipeline, run.runName, run.submitKey as string);
+            run.pipeline as ReconstructionPipeline, run.runName, run.submitKey as string,
+            run.label);
     }
 
     private reconstruct() {
@@ -784,7 +865,8 @@ class ReconstructionWorkflow {
     private async watchRun(run: Run) {
         const generation = ++this.watchGeneration;
         try {
-            const outcome = await this.job.attach(run.jobId as string);
+            const outcome = await this.job.attach(run.jobId as string,
+                detail => this.runs.update(run.id, { detail }));
             if (generation !== this.watchGeneration) return;
             if (outcome === 'detached') return;
             this.coordinator.settle(run.id, 'done', { percent: 100, detail: '' });

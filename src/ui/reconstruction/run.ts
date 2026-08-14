@@ -1,4 +1,6 @@
-import { formatProgressAmount, stageLabel, type ProgressVisual } from './progress';
+import {
+    formatProgressAmount, pullLayersDone, pullTitle, stageLabel, type ProgressVisual
+} from './progress';
 import type { JobGpu, JobStatus } from './types';
 
 type RunState =
@@ -19,9 +21,10 @@ type Run = {
     datasetId: string | null;
     pipeline: string;
     preset: string;
-    /** Seeded to the preset, replaced by the minted name at submit time (newRunName). */
     runName: string;
     submitKey: string | null;
+    datasetLabel: string;
+    /** What the user calls this run. Display only; runName owns where its output lands. */
     label: string;
     jobId: string | null;
     percent: number;
@@ -52,11 +55,14 @@ const runControls = (run: Run, hasFolder: boolean): RunAction[] => {
     }
 };
 
+/** What to call a run on screen: the user's name, else the directory it writes to. */
+const runTitle = (run: Run): string => run.label || run.runName || run.preset;
+
 /**
  * The shared progress card for a run nothing is streaming. One card serves every run.
  */
 const runCard = (run: Run): [string, string, ProgressVisual] => {
-    const name = run.runName || run.preset;
+    const name = runTitle(run);
     switch (run.state) {
         case 'queued':
             return ['Đang chờ tải lên',
@@ -95,24 +101,38 @@ const GPU_TEXT: Record<JobGpu['state'], string> = {
     running: 'GPU đã sẵn sàng'
 };
 
+/** A row gets one line for the box: its image pull once that reports, else its state. */
+const gpuDetail = (gpu: JobGpu): string => {
+    const pull = gpu.pull;
+    if (!pull) return GPU_TEXT[gpu.state];
+    if (pull.phase === 'error' || pull.phase === 'loaded') return pullTitle(pull);
+    return pull.layers_total ?
+        `${pullTitle(pull)} ${pullLayersDone(pull)}/${pull.layers_total}` :
+        `${pullTitle(pull)} (${pull.layers_done} layer)`;
+};
+
+/** What a row's detail is built from: a polled JobStatus, or a stream's running state. */
+type RunDetailSource = Pick<JobStatus, 'status' | 'gpu' | 'current_stage' | 'progress'>;
+
 /**
- * The row detail for a run no stream is attached to. Only the selected run gets an SSE
- * stream, so for every other one this is the whole progress the user can see — built from
- * the status the poll already read rather than from the bare status word.
+ * The row detail for a run, rebuilt on every event its stream delivers.
  */
-const runPollDetail = (job: JobStatus): string => {
+const jobDetail = (job: RunDetailSource): string => {
     const parts: string[] = [];
-    if (job.gpu) parts.push(GPU_TEXT[job.gpu.state]);
+    if (job.gpu) parts.push(gpuDetail(job.gpu));
     const stage = job.current_stage;
     if (stage) {
         parts.push(stage.total > 0 ?
             `${stage.index}/${stage.total} ${stageLabel(stage.step)}` :
             stageLabel(stage.step));
     }
-    const amount = job.progress ? formatProgressAmount(job.progress) : '';
+    // A progress event outlives the stage that emitted it; pairing them keeps the last
+    // count of a finished stage off the next one's row.
+    const amount = job.progress && (!stage || job.progress.stage === stage.step) ?
+        formatProgressAmount(job.progress) : '';
     if (amount) parts.push(amount);
     return parts.join(' · ') || job.status;
 };
 
-export { runCard, runControls, runKey, runPollDetail };
-export type { Run, RunAction, RunState };
+export { jobDetail, runCard, runControls, runKey, runTitle };
+export type { Run, RunAction, RunDetailSource, RunState };
