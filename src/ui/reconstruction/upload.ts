@@ -5,7 +5,7 @@ import { reconFetch } from './http';
 import type { ProgressVisual } from './progress';
 import { Transfer } from './transfer';
 import type { UploadProgress } from './types';
-import { RateMeter, formatRate, type TransferRate } from './upload-rate';
+import { RateMeter, formatTransferDetail, type TransferRate } from './upload-rate';
 import { UploadRecords, type UploadRecord } from './upload-records';
 import { delay, formatBytes, formatDuration, readJson } from './utils';
 
@@ -139,14 +139,7 @@ class ReconstructionUpload {
             this.rates.set(key, meter);
         }
         const rate = meter.sample(loaded, total);
-        const transferred = total > 0 ?
-            `${formatBytes(loaded)} / ${formatBytes(total)}` :
-            formatBytes(loaded);
-        const eta = total > 0 ? ` · ${formatDuration(rate.etaSeconds)}` : '';
-        const estimate = rate.bytesPerSecond > 0 ?
-            ` · ${formatRate(rate.bytesPerSecond)}${eta}` :
-            ' · estimating…';
-        return [transferred + estimate + suffix, rate];
+        return [formatTransferDetail(rate) + suffix, rate];
     }
 
     private updateStorageProgress(key: string, progress: UploadProgress,

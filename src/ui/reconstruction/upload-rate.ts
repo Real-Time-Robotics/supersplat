@@ -1,4 +1,4 @@
-import { formatBytes } from './utils';
+import { formatBytes, formatDuration } from './utils';
 
 /** Bytes moved so far plus the rate derived from them. Zero rate means "not known yet". */
 type TransferRate = {
@@ -41,6 +41,16 @@ const formatRate = (bytesPerSecond: number) => (
     bytesPerSecond > 0 ? `${formatBytes(bytesPerSecond)}/s` : ''
 );
 
+/** "12 MB / 40 MB · 5 MB/s · 6s", or the placeholder until a rate is known. */
+const formatTransferDetail = (rate: TransferRate): string => {
+    const transferred = rate.total > 0 ?
+        `${formatBytes(rate.loaded)} / ${formatBytes(rate.total)}` :
+        formatBytes(rate.loaded);
+    if (rate.bytesPerSecond <= 0) return `${transferred} · estimating…`;
+    const eta = rate.total > 0 ? ` · ${formatDuration(rate.etaSeconds)}` : '';
+    return `${transferred} · ${formatRate(rate.bytesPerSecond)}${eta}`;
+};
+
 /**
  * The compact form for an upload row
  */
@@ -54,5 +64,5 @@ const formatEtaShort = (seconds: number) => {
     return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 };
 
-export { RateMeter, formatEtaShort, formatRate };
+export { RateMeter, formatEtaShort, formatRate, formatTransferDetail };
 export type { TransferRate };
