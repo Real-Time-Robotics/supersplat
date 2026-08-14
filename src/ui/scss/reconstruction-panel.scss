@@ -1,14 +1,14 @@
 @use 'colors.scss' as *;
 
 #reconstruction-panel {
-    top: 50%;
-    right: 102px;
-    width: 380px;
-    height: min(640px, calc(100% - 224px));
-    max-height: min(640px, calc(100% - 224px));
+    position: absolute;
+    inset: 0;
+    display: none;
     box-sizing: border-box;
-    transform: translate(0, -50%);
-    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    background-color: $bcg-darken;
 
     strong,
     span,
@@ -31,33 +31,27 @@
     &:not(.pcui-hidden) {
         display: flex;
     }
-
-    > .panel-header {
-        flex: 0 0 auto;
-    }
 }
 
-.reconstruction-panel-close {
-    width: 26px;
-    height: 26px;
-    padding: 0 !important;
-    border: 0;
-    font-family: Arial, sans-serif !important;
-    font-size: 20px !important;
-    line-height: 1;
-    background: transparent;
-}
-
-.recon-body {
+.recon-dashboard {
+    // Derived from the space available rather than pinned to one width: the editor runs
+    // on laptops and on ultrawides, and 100% here is already the overlay minus its
+    // padding, so the card can never outgrow the viewport.
+    position: relative;
     display: flex;
-    flex-direction: column;
-    flex: 1 1 auto;
-    min-height: 0;
     box-sizing: border-box;
-    padding: 12px;
+    width: min(940px, 100%);
+    height: min(700px, 100%);
+    min-width: 0;
+    flex-direction: column;
     overflow: hidden;
     color: $text-primary;
     background-color: $bcg-primary;
+    border-radius: 12px;
+    filter: drop-shadow(5px 5px 10px rgba(0, 0, 0, 0.8));
+
+    // needed to get drop-shadow working on safari
+    will-change: transform;
 
     button,
     input {
@@ -65,7 +59,187 @@
     }
 }
 
-.recon-intro,
+.recon-topbar {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 10px;
+    padding: 7px 8px 7px 12px;
+    background-color: $bcg-dark;
+}
+
+.recon-topbar-icon {
+    color: $clr-hilight;
+    font-family: pc-icon;
+    font-size: 13px;
+    font-weight: bold;
+}
+
+.recon-topbar-title {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    color: $text-primary;
+    font-weight: bold;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.recon-topbar-close {
+    width: 26px;
+    height: 26px;
+    flex: 0 0 auto;
+    padding: 0;
+    color: $text-secondary;
+    font-family: Arial, sans-serif;
+    font-size: 20px;
+    line-height: 1;
+    background: transparent;
+    border: 0;
+    border-radius: 4px;
+    cursor: pointer;
+
+    &:hover {
+        color: $clr-active;
+        background-color: $bcg-darkest;
+    }
+
+    &:focus-visible {
+        outline: 1px solid $clr-hilight;
+        outline-offset: -2px;
+    }
+}
+
+.recon-main {
+    display: flex;
+    flex: 1 1 auto;
+    min-height: 0;
+
+    &[hidden] {
+        display: none !important;
+    }
+}
+
+.recon-sidebar {
+    display: flex;
+    flex: 0 0 auto;
+    box-sizing: border-box;
+    width: 136px;
+    flex-direction: column;
+    gap: 4px;
+    padding: 10px 8px;
+    background-color: $bcg-darkest;
+    border-right: 1px solid $bcg-lighter;
+}
+
+.recon-nav {
+    display: flex;
+    min-height: 30px;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    color: $text-secondary;
+    text-align: left;
+    background: transparent;
+    border: 0;
+    border-radius: 4px;
+    cursor: pointer;
+
+    &:hover {
+        color: $text-primary;
+        background-color: $bcg-dark;
+    }
+
+    &:focus-visible {
+        outline: 1px solid $clr-hilight;
+        outline-offset: -2px;
+    }
+
+    &.active {
+        color: $clr-active;
+        background-color: $bcg-dark;
+        box-shadow: inset 2px 0 0 0 $clr-hilight;
+
+        .recon-nav-icon {
+            color: $clr-hilight;
+        }
+    }
+}
+
+.recon-nav-icon {
+    width: 16px;
+    height: 16px;
+    flex: 0 0 auto;
+    color: inherit;
+}
+
+.recon-nav-label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.recon-stage {
+    display: flex;
+    flex: 1 1 auto;
+    box-sizing: border-box;
+    min-width: 0;
+    flex-direction: column;
+    padding: 12px;
+    overflow: hidden;
+}
+
+.recon-panels {
+    display: flex;
+    flex: 0 1 auto;
+    min-height: 0;
+    flex-direction: column;
+}
+
+// Signed out there is no balance to read and no tab worth reaching.
+.recon-dashboard:not(.signed-in) {
+    .recon-credit,
+    .recon-sidebar {
+        display: none;
+    }
+}
+
+// Narrow or short viewports get the whole area: a centred card with 24px of backdrop
+// around it wastes the little room there is, and the sidebar becomes a top strip.
+@media (max-width: 900px), (max-height: 560px) {
+    #reconstruction-panel {
+        padding: 0;
+    }
+
+    .recon-dashboard {
+        width: 100%;
+        height: 100%;
+        border-radius: 0;
+    }
+
+    .recon-main {
+        flex-direction: column;
+    }
+
+    .recon-sidebar {
+        width: 100%;
+        flex-direction: row;
+        border-right: 0;
+        border-bottom: 1px solid $bcg-lighter;
+    }
+
+    .recon-nav {
+        flex: 1 1 0;
+        justify-content: center;
+        text-align: center;
+
+        &.active {
+            box-shadow: inset 0 -2px 0 0 $clr-hilight;
+        }
+    }
+}
+
 .recon-section-heading {
     display: flex;
     flex-direction: column;
@@ -79,10 +253,6 @@
     span {
         color: $text-secondary;
     }
-}
-
-.recon-intro {
-    margin-bottom: 10px;
 }
 
 .recon-button {
@@ -125,40 +295,50 @@
     }
 }
 
+// Lives in the topbar, so it is readable from every tab rather than only from Create.
 .recon-credit {
     display: flex;
+    flex: 0 0 auto;
     align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-    margin-bottom: 10px;
-    padding: 6px 8px;
-    background-color: $bcg-dark;
-    border-radius: 2px;
-}
+    gap: 7px;
+    color: $text-secondary;
+    font-size: 10px;
 
-.recon-auth,
-.recon-app {
-    min-height: 0;
+    i {
+        width: 6px;
+        height: 6px;
+        background-color: #5ad48a;
+        border-radius: 50%;
+    }
 
-    &[hidden] {
-        display: none !important;
+    strong {
+        color: $text-primary;
+        font-weight: normal;
+        font-variant-numeric: tabular-nums;
     }
 }
 
 .recon-auth {
     display: flex;
     flex: 1 1 auto;
+    box-sizing: border-box;
+    min-height: 0;
     flex-direction: column;
     justify-content: flex-start;
     gap: 10px;
+    padding: 16px;
     overflow: auto;
+
+    &[hidden] {
+        display: none !important;
+    }
 }
 
 .recon-auth-hero {
     position: relative;
     display: flex;
-    min-height: 142px;
-    flex: 0 0 142px;
+    min-height: 96px;
+    flex: 0 1 142px;
     align-items: flex-end;
     overflow: hidden;
     background-image:
@@ -189,6 +369,25 @@
         color: rgba(255, 255, 255, 0.78);
         line-height: 1.4;
     }
+}
+
+.recon-auth-card {
+    display: flex;
+    box-sizing: border-box;
+    width: min(420px, 100%);
+    flex: 0 0 auto;
+    flex-direction: column;
+    gap: 12px;
+    margin: auto;
+    padding: 12px;
+    background-color: $bcg-darker;
+    border-radius: 4px;
+}
+
+.recon-auth-legal {
+    color: $text-secondary;
+    font-size: 10px;
+    text-align: center;
 }
 
 .recon-auth-tabs {
@@ -223,27 +422,32 @@
     display: flex;
     box-sizing: border-box;
     height: 100%;
+    grid-area: 1 / 1;
     flex-direction: column;
-    gap: 10px;
+    justify-content: center;
+    gap: 9px;
 
     &[hidden] {
-        display: none;
+        visibility: hidden;
+        pointer-events: none;
     }
 
     label {
         display: flex;
         flex-direction: column;
-        gap: 5px;
+        gap: 6px;
         color: $text-secondary;
-        font-size: 11px;
+        font-size: 12px;
+        line-height: 1.25;
     }
 
     input {
         box-sizing: border-box;
         width: 100%;
-        height: 32px;
-        padding: 5px 8px;
+        height: 34px;
+        padding: 6px 10px;
         color: $text-primary;
+        font-size: 13px;
         background-color: $bcg-darkest;
         border: 1px solid $bcg-dark;
         border-radius: 2px;
@@ -257,19 +461,20 @@
     > p {
         margin: -2px 0 0;
         color: $text-secondary;
-        font-size: 10px;
+        font-size: 11px;
         line-height: 1.4;
     }
 
     > .recon-primary {
-        margin-top: auto;
+        min-height: 34px;
+        margin-top: 3px;
+        font-size: 13px;
     }
 }
 
 .recon-auth-stage {
-    height: 280px;
-    min-height: 280px;
-    flex: 0 0 280px;
+    display: grid;
+    flex: 0 0 auto;
 }
 
 .recon-auth-names {
@@ -291,52 +496,12 @@
     position: absolute;
     top: 1px;
     right: 1px;
-    height: 30px;
+    height: 32px;
     padding: 0 8px;
     color: $text-secondary;
     background: transparent;
     border: 0;
     cursor: pointer;
-}
-
-.recon-auth-created {
-    display: flex;
-    box-sizing: border-box;
-    height: 100%;
-    flex-direction: column;
-    gap: 8px;
-    padding: 10px;
-    background-color: $bcg-darkest;
-    border-radius: 2px;
-
-    &[hidden] {
-        display: none;
-    }
-
-    > p {
-        margin: 0;
-        color: $text-secondary;
-    }
-
-    > div {
-        display: flex;
-        gap: 6px;
-    }
-
-    code {
-        min-width: 0;
-        flex: 1 1 auto;
-        padding: 7px;
-        overflow: auto;
-        color: $text-primary;
-        background-color: $bcg-primary;
-        user-select: all;
-        white-space: nowrap;
-    }
-
-    > .recon-auth-continue {
-        margin-top: auto;
-    }
 }
 
 .recon-auth-status {
@@ -350,30 +515,25 @@
     }
 }
 
-.recon-app {
-    display: flex;
-    flex: 1 1 auto;
-    flex-direction: column;
-    min-height: 0;
-}
-
 .recon-account {
     display: flex;
-    align-items: center;
+    align-items: flex-end;
     justify-content: space-between;
     gap: 8px;
-    margin-bottom: 9px;
-    color: $text-secondary;
-    font-size: 10px;
+    margin-bottom: 14px;
 
-    > span {
+    > .recon-section-heading {
         min-width: 0;
+        margin-bottom: 0;
+    }
+
+    span {
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
     }
 
-    strong {
+    strong strong {
         color: $text-primary;
         font-weight: normal;
     }
@@ -385,25 +545,6 @@
     color: $text-secondary;
     font-size: 10px;
     white-space: nowrap;
-}
-
-.recon-credit-balance {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-
-    i {
-        width: 6px;
-        height: 6px;
-        border-radius: 50%;
-        background-color: #5ad48a;
-    }
-
-    strong {
-        color: $text-primary;
-        font-weight: normal;
-        font-variant-numeric: tabular-nums;
-    }
 }
 
 .recon-buy-credits {
@@ -420,59 +561,32 @@
 
 .recon-pricing {
     display: none;
-    flex: 0 1 auto;
-    max-height: 250px;
-    margin-bottom: 10px;
+    position: absolute;
+    z-index: 2;
+    top: 40px;
+    right: 10px;
+    box-sizing: border-box;
+    width: min(420px, calc(100% - 20px));
+    max-height: min(340px, calc(100% - 60px));
     padding: 10px;
     overflow: auto;
     background-color: $bcg-darkest;
-    border-radius: 2px;
+    border: 1px solid $bcg-lighter;
+    border-radius: 6px;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.6);
 
     &.open {
         display: block;
     }
 }
 
-.recon-tabs {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    flex: 0 0 auto;
-    margin-bottom: 9px;
-    border-bottom: 1px solid $bcg-lighter;
-}
-
-.recon-tab {
-    min-height: 30px;
-    padding: 4px 8px;
-    color: $text-secondary;
-    background: transparent;
-    border: 0;
-    border-bottom: 2px solid transparent;
-    cursor: pointer;
-
-    &:hover {
-        color: $text-primary;
-        background-color: $bcg-dark;
-    }
-
-    &:focus-visible {
-        outline: 1px solid $clr-hilight;
-        outline-offset: -2px;
-    }
-
-    &.active {
-        color: $text-primary;
-        border-bottom-color: $clr-hilight;
-    }
-}
-
 .recon-shared-progress {
     flex: 0 0 auto;
-    margin-bottom: 8px;
+    margin-top: 8px;
 }
 
 .recon-tab-panel {
-    flex: 1 1 auto;
+    flex: 0 1 auto;
     min-height: 0;
     padding-right: 2px;
     overflow: auto;
@@ -581,14 +695,100 @@
     }
 }
 
-.recon-pipeline-picker {
+.recon-pipeline-picker,
+.recon-source-picker {
     margin-bottom: 10px;
 }
 
-.recon-pipeline-options {
+.recon-pipeline-options,
+.recon-source-options {
     display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 7px;
     margin-top: 7px;
+}
+
+@media (max-width: 620px) {
+    .recon-pipeline-options,
+    .recon-source-options {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}
+
+.recon-source-card {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 18px;
+    align-items: center;
+    gap: 9px;
+    width: 100%;
+    min-height: 48px;
+    padding: 8px 9px;
+    color: $text-secondary;
+    text-align: left;
+    background-color: $bcg-darkest;
+    border: 1px solid $bcg-light;
+    border-radius: 3px;
+    cursor: pointer;
+
+    &:hover {
+        border-color: $clr-icon-hilight;
+    }
+
+    &:focus-visible {
+        outline: 1px solid $clr-hilight;
+        outline-offset: 1px;
+    }
+
+    &:disabled {
+        color: $clr-disabled;
+        cursor: default;
+    }
+
+    &.active {
+        color: $text-primary;
+        border-color: $clr-hilight;
+    }
+}
+
+.recon-source-copy {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 2px;
+
+    strong {
+        color: $text-primary;
+        font-weight: bold;
+    }
+
+    small {
+        color: $text-secondary;
+    }
+}
+
+.recon-source-check {
+    color: $clr-hilight;
+    font-weight: bold;
+    text-align: center;
+    visibility: hidden;
+
+    .recon-source-card.active & {
+        visibility: visible;
+    }
+}
+
+.recon-source-pane {
+    margin-bottom: 9px;
+
+    &[hidden] {
+        display: none;
+    }
+
+    &[data-source='dataset'] {
+        padding: 9px;
+        background-color: $bcg-darkest;
+        border-radius: 2px;
+    }
 }
 
 .recon-pipeline-card {
@@ -933,12 +1133,16 @@
 
 .recon-artifact {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto 20px;
+    grid-template-columns: minmax(0, 1fr) auto 20px 24px;
     align-items: center;
     gap: 7px;
     padding: 7px 8px;
     background-color: $bcg-dark;
     border-left: 2px solid transparent;
+
+    &:hover {
+        background-color: $bcg-primary;
+    }
 
     &.primary {
         border-left-color: $clr-hilight;
@@ -984,9 +1188,12 @@
     height: 20px;
     box-sizing: border-box;
     border-radius: 50%;
-    font-family: Arial, sans-serif;
-    font-size: 12px;
-    font-weight: bold;
+
+    svg {
+        display: block;
+        width: 12px;
+        height: 12px;
+    }
 
     &.local {
         color: $clr-active;
@@ -996,7 +1203,6 @@
     &.remote {
         color: $text-secondary;
         background-color: $bcg-darkest;
-        font-size: 13px;
     }
 }
 
@@ -1023,19 +1229,23 @@
 
 .recon-footer {
     display: flex;
-    justify-content: flex-end;
-    gap: 5px;
+    flex-direction: column;
+    gap: 7px;
+    margin-top: 10px;
+    padding-top: 9px;
+    border-top: 1px solid $bcg-lighter;
+
+    &[hidden] {
+        display: none;
+    }
+}
+
+.recon-start {
+    min-height: 34px;
 }
 
 .recon-note {
-    padding-top: 7px;
-    border-top: 1px solid $bcg-lighter;
-}
-
-.recon-recent {
-    padding: 9px;
-    background-color: $bcg-darkest;
-    border-radius: 2px;
+    margin: 0;
 }
 
 .recon-recent-heading {
@@ -1067,7 +1277,8 @@
     font-size: 17px;
 }
 
-.recon-recent-list {
+.recon-recent-list,
+.recon-tree-list {
     display: flex;
     flex-direction: column;
     gap: 4px;
@@ -1075,6 +1286,58 @@
     > span {
         color: $text-secondary;
     }
+}
+
+.recon-tree-list {
+    margin-bottom: 10px;
+}
+
+.recon-pick {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 6px 8px;
+    background-color: $bcg-darker;
+    border-left: 2px solid transparent;
+    border-radius: 2px;
+
+    &:hover {
+        background-color: $bcg-dark;
+    }
+
+    &.active {
+        background-color: rgba($clr-hilight, 0.1);
+        border-left-color: $clr-hilight;
+
+        &:hover {
+            background-color: rgba($clr-hilight, 0.16);
+        }
+    }
+}
+
+.recon-pick-info,
+.recon-dataset-heading .recon-dataset-info {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.recon-pick-created {
+    min-width: 0;
+    overflow: hidden;
+    color: $text-primary;
+    font-variant-numeric: tabular-nums;
+    font-weight: normal;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.recon-pick-detail {
+    color: $text-secondary;
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
 }
 
 .recon-dataset {
@@ -1089,13 +1352,6 @@
     align-items: center;
     gap: 6px;
     margin-bottom: 5px;
-
-    .recon-dataset-info {
-        display: flex;
-        min-width: 0;
-        flex-direction: column;
-        gap: 2px;
-    }
 
     strong {
         overflow: hidden;
@@ -1119,6 +1375,11 @@
 .recon-use-dataset {
     padding: 5px 7px;
     font-size: 10px;
+
+    // Orange on a dark row barely lifts on hover, so the ring carries the state.
+    &:hover {
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.45);
+    }
 }
 
 .recon-dataset-models {
@@ -1158,17 +1419,143 @@
 
 .recon-delete-dataset {
     align-self: stretch;
-    padding: 5px 7px;
+    padding: 4px 7px;
     color: $text-secondary;
     font-size: 10px;
+    background-color: transparent;
+    border: 1px solid $bcg-lighter;
 
     &:hover,
     &:focus-visible {
-        color: $error;
+        color: $clr-active;
+        background-color: rgba($error, 0.75);
+        border-color: transparent;
+    }
+}
+
+// A job under a dataset: the row opens it, the trailing controls rename and delete it.
+.recon-job-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 4px;
+}
+
+.recon-job-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.recon-job-rename .recon-editable-text,
+.recon-job-rename .recon-editable-input {
+    max-width: 120px;
+    font-size: 10px;
+}
+
+.recon-job-delete,
+.recon-artifact-delete {
+    width: 24px;
+    min-height: 24px;
+    padding: 0;
+    color: $text-secondary;
+    font-size: 11px;
+    line-height: 1;
+    background-color: transparent;
+
+    &:hover,
+    &:focus-visible {
+        color: $clr-active;
+        background-color: rgba($error, 0.75);
+    }
+}
+
+// The name is a button until it is clicked, then the input takes its place. Both are sized
+// the same so the row does not jump between the two.
+.recon-editable {
+    display: inline-flex;
+    max-width: 100%;
+    min-width: 0;
+}
+
+.recon-editable-text {
+    max-width: 100%;
+    padding: 1px 4px;
+    overflow: hidden;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 3px;
+    cursor: text;
+
+    &:hover,
+    &:focus-visible {
+        border-color: $bcg-lighter;
+    }
+
+    &.unnamed {
+        color: $text-secondary;
+        font-style: italic;
+    }
+}
+
+.recon-editable-input {
+    width: 100%;
+    min-width: 0;
+    padding: 1px 4px;
+    color: $text-primary;
+    font: inherit;
+    background-color: $bcg-darkest;
+    border: 1px solid $clr-hilight;
+    border-radius: 3px;
+}
+
+// The two names a new run carries: the dataset's, and the run's own.
+.recon-naming {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin-top: 8px;
+
+    label {
+        display: flex;
+        min-width: 0;
+        flex-direction: column;
+        gap: 3px;
+        color: $text-secondary;
+        font-size: 10px;
+    }
+
+    input {
+        min-width: 0;
+        padding: 5px 7px;
+        color: $text-primary;
+        font-size: 11px;
+        background-color: $bcg-darkest;
+        border: 1px solid $bcg-lighter;
+        border-radius: 3px;
+
+        &:focus-visible {
+            outline: 1px solid $clr-hilight;
+            outline-offset: -2px;
+        }
+
+        &:disabled {
+            color: $clr-disabled;
+            background-color: $bcg-darker;
+        }
     }
 }
 
 @media (max-width: 640px) {
+    .recon-naming {
+        grid-template-columns: 1fr;
+    }
+
     #reconstruction-panel {
         top: 64px;
         bottom: 64px;
@@ -1183,40 +1570,318 @@
 
 .recon-runs {
     display: flex;
+    flex: 0 0 auto;
     flex-direction: column;
-    gap: 0.5rem;
+    gap: 6px;
+    margin-bottom: 10px;
+
+    &[hidden] {
+        display: none;
+    }
+}
+
+// This heading carries the new-run button, so it stops being a plain block here.
+.recon-runs > .recon-section-heading {
+    display: grid;
+    align-items: baseline;
+    grid-template-columns: auto 1fr auto;
+    gap: 6px;
+}
+
+.recon-new-run {
+    justify-self: end;
+    padding: 2px 8px;
+    white-space: nowrap;
+}
+
+// Stands in for the pickers once the selected run has committed to a dataset + pipeline.
+.recon-run-fixed {
+    display: grid;
+    gap: 4px;
+    margin-bottom: 10px;
+    padding: 10px;
+    background-color: $bcg-dark;
+    border-radius: 2px;
+
+    &[hidden] {
+        display: none;
+    }
+
+    > .recon-run-fixed-detail {
+        color: $text-secondary;
+    }
+}
+
+.recon-api {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+}
+
+.recon-api-status {
+    margin: 0;
+    color: $text-secondary;
+    line-height: 1.4;
 }
 
 .recon-run-list {
     display: flex;
+    max-height: 232px;
     flex-direction: column;
-    gap: 0.25rem;
+    gap: 3px;
+    padding-right: 2px;
+    overflow-y: auto;
+    scrollbar-gutter: stable;
 }
 
 .recon-run-row {
     display: grid;
-    grid-template-columns: 1fr auto auto auto;
-    gap: 0.5rem;
-    align-items: center;
-    padding: 0.5rem 0.75rem;
-    border: 1px solid transparent;
-    border-radius: 0.375rem;
-    background: none;
-    color: inherit;
-    text-align: left;
-    cursor: pointer;
+    grid-template-columns: 14px minmax(0, 1fr) auto auto;
+    gap: 3px 8px;
+    padding: 7px 8px;
+    border-left: 2px solid transparent;
+    background-color: $bcg-dark;
+    border-radius: 2px;
 
     &.active {
-        border-color: currentColor;
+        border-left-color: $clr-hilight;
+        background-color: $bcg-darker;
     }
 }
 
-.recon-run-label {
+.recon-run-mark {
+    grid-row: 1;
+    grid-column: 1;
+    align-self: center;
+    color: $text-secondary;
+    font-size: 11px;
+    text-align: center;
+
+    .recon-run-row[data-state='uploading'] &,
+    .recon-run-row[data-state='running'] & {
+        color: $clr-icon-hilight;
+    }
+
+    .recon-run-row[data-state='done'] & {
+        color: #5ad48a;
+    }
+
+    .recon-run-row[data-state='failed'] &,
+    .recon-run-row[data-state='cancelled'] & {
+        color: $error;
+    }
+}
+
+.recon-run-select {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    grid-row: 1;
+    grid-column: 2;
+    gap: 2px;
+    padding: 0;
+    border: 0;
+    color: inherit;
+    text-align: left;
+    background: none;
+    cursor: pointer;
+
+    &:focus-visible {
+        outline: 1px solid $clr-hilight;
+        outline-offset: 1px;
+    }
+}
+
+.recon-run-stats {
+    display: flex;
+    grid-row: 1;
+    grid-column: 3;
+    min-width: 62px;
+    flex-direction: column;
+    align-items: flex-end;
+    justify-content: center;
+    gap: 1px;
+    color: $text-secondary;
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.recon-run-percent {
+    color: $text-primary;
+    font-size: 11px;
+}
+
+.recon-run-rate,
+.recon-run-eta {
+    &:empty {
+        display: none;
+    }
+}
+
+.recon-run-top {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 7px;
+}
+
+.recon-run-name {
+    overflow: hidden;
+    color: $text-primary;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.recon-run-chip {
+    flex: 0 0 auto;
+    padding: 1px 5px;
+    color: $text-secondary;
+    font-size: 9px;
+    letter-spacing: 0.06em;
+    background-color: $bcg-darkest;
+    border-radius: 2px;
+}
+
+.recon-run-meta {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 6px;
+    color: $text-secondary;
+    font-size: 11px;
+}
+
+.recon-run-detail {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+
+    // Always in the markup so a detail change patches a row instead of rebuilding it.
+    &:empty {
+        display: none;
+    }
+}
+
+.recon-run-state {
+    flex: 0 0 auto;
+    font-weight: bold;
+
+    &[data-state='uploading'] {
+        color: #6fb6ff;
+    }
+
+    &[data-state='paused'] {
+        color: #d7b45a;
+    }
+
+    &[data-state='waiting-slot'] {
+        color: $clr-disabled;
+    }
+
+    &[data-state='running'] {
+        color: #55c07a;
+    }
+
+    &[data-state='failed'] {
+        color: $error;
+    }
+
+    // Job statuses from the gateway, which uses its own vocabulary for the same column.
+    &[data-state='done'] {
+        color: #55c07a;
+    }
+
+    &[data-state='queued'] {
+        color: $clr-disabled;
+    }
+
+    &[data-state='cancelled'] {
+        color: $clr-disabled;
+    }
+}
+
+.recon-run-actions {
+    display: flex;
+    align-items: center;
+    align-self: center;
+    grid-row: 1;
+    grid-column: 4;
+    gap: 3px;
+}
+
+.recon-run-action {
+    width: 22px;
+    min-height: 22px;
+    height: 22px;
+    padding: 0;
+    color: $text-secondary;
+    font-size: 11px;
+    background-color: transparent;
+}
+
+.recon-run-text-action {
+    min-height: 22px;
+    padding: 2px 8px;
+    font-size: 11px;
+}
+
+.recon-run-danger:hover {
+    color: $error;
+}
+
+.recon-run-bar {
+    display: block;
+    width: 100%;
+    height: 2px;
+    margin-top: 2px;
+    overflow: hidden;
+    background-color: $bcg-darkest;
+    border-radius: 1px;
+
+    i {
+        display: block;
+        height: 100%;
+        background-color: $clr-hilight;
+        transition: width 0.2s linear;
+    }
+}
+
+.recon-cache-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+    padding-top: 0.5rem;
+    border-top: 1px solid rgb(255 255 255 / 12%);
+    font-size: 0.8em;
+    opacity: 0.85;
+}
+
+.recon-cache-usage {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 
-.recon-run-state[data-state='failed'] {
-    opacity: 0.8;
+.recon-cache-clear {
+    flex: none;
+    padding: 0.2rem 0.5rem;
+    border: 1px solid currentColor;
+    border-radius: 0.375rem;
+    background: none;
+    color: inherit;
+    font-size: inherit;
+    cursor: pointer;
+
+    &:disabled {
+        opacity: 0.4;
+        cursor: default;
+    }
+}
+
+.recon-artifact-location[role='button'] {
+    cursor: pointer;
 }

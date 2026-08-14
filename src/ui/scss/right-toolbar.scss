@@ -94,8 +94,17 @@
         }
     }
 
-    #right-toolbar-reconstruction-panel svg {
-        width: 22px;
-        height: 22px;
+    // An inline svg sits on the text baseline, so descender space pushes it off centre —
+    // visibly so at 22px. Only this fork's button is corrected; the upstream ones keep
+    // their layout so the file stays easy to sync.
+    #right-toolbar-reconstruction-panel {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+
+        svg {
+            width: 22px;
+            height: 22px;
+        }
     }
 }

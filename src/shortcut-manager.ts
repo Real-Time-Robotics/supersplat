@@ -1,7 +1,7 @@
 import { platform } from 'playcanvas';
 
 import { Events } from './events';
-import { Shortcuts, ShortcutBinding } from './shortcuts';
+import { Shortcuts, checkMod, ShortcutBinding } from './shortcuts';
 
 // Mac uses different symbols for modifier keys
 const isMac = platform.name === 'osx';
@@ -59,6 +59,7 @@ const defaultShortcuts: Record<string, ShortcutBinding> = {
     'edit.redo': { keys: ['z'], ctrl: 'required', shift: 'required', repeat: true, capture: true },
     'dataPanel.toggle': { keys: ['d'], ctrl: 'required', capture: true },
     'timelinePanel.toggle': { keys: ['t'], ctrl: 'required', capture: true },
+    'reconstructionPanel.toggleVisible': { keys: ['m'], ctrl: 'required', capture: true },
 
     // Camera fly keys - use physical positions (codes) for WASD layout on non-QWERTY keyboards
     'camera.fly.forward': { codes: ['KeyW'], held: true, shift: 'optional', alt: 'optional' },
@@ -104,6 +105,20 @@ class ShortcutManager {
      */
     get(id: string): ShortcutBinding | undefined {
         return this.bindings[id];
+    }
+
+    /**
+     * True when `event` is the chord currently bound to `id`.
+     */
+    matches(id: string, event: KeyboardEvent): boolean {
+        const binding = this.bindings[id];
+        if (!binding) return false;
+        const keyHit = binding.keys?.some(key => key.toLowerCase() === event.key.toLowerCase()) ||
+            binding.codes?.includes(event.code) || false;
+        return keyHit &&
+            checkMod(binding.ctrl, event.ctrlKey || event.metaKey) &&
+            checkMod(binding.shift, event.shiftKey) &&
+            checkMod(binding.alt, event.altKey);
     }
 
     /**

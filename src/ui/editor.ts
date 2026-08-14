@@ -16,7 +16,7 @@ import logo from './playcanvas-logo.png';
 import { Popup, ShowOptions } from './popup';
 import { Progress } from './progress';
 import { PublishSettingsDialog } from './publish-settings-dialog';
-import { ReconstructionPanel } from './reconstruction-panel';
+import { ReconstructionPanel } from './reconstruction/panel';
 import { RightToolbar } from './right-toolbar';
 import { ScenePanel } from './scene-panel';
 import { SettingsPanel } from './settings-panel';

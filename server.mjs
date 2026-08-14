@@ -1,22 +1,16 @@
-import { createHash, randomUUID } from 'node:crypto';
-import { createReadStream } from 'node:fs';
-import { mkdir, open as openFile, readFile, rename, rm, stat } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
+import { createServer } from 'node:http';
 import path from 'node:path';
 import { Readable } from 'node:stream';
-import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
 
-import express from 'express';
-import { ApiError, Client } from 'genesis-recon';
-
-import { currentLogPath, errorSummary, initLogging, instrumentFetch, logger } from './server-log.mjs';
+import { sessionNamespace } from './scripts/session-namespace.mjs';
+import { handle } from './src/backend/router.ts';
 
 const rootDir = path.dirname(fileURLToPath(import.meta.url));
-const artifactCacheDir = path.join(rootDir, '.artifact-cache');
-const logDir = path.join(rootDir, '.server-logs');
-const envPath = path.join(rootDir, '.env.local');
+const distDir = path.join(rootDir, 'dist');
 
-const parseEnv = (text) => Object.fromEntries(
+const parseEnv = text => Object.fromEntries(
     text.split(/\r?\n/)
     .map(line => line.trim())
     .filter(line => line && !line.startsWith('#') && line.includes('='))
@@ -28,868 +22,90 @@ const parseEnv = (text) => Object.fromEntries(
 
 let localEnv = {};
 try {
-    localEnv = parseEnv(await readFile(envPath, 'utf8'));
+    localEnv = parseEnv(await readFile(path.join(rootDir, '.env.local'), 'utf8'));
 } catch {
-    // Environment variables are also supported, so a local file is optional.
 }
 
-const baseUrl = process.env.GENESIS_BASE_URL || localEnv.GENESIS_BASE_URL || 'https://recons.rtrobotics.com';
+const env = {
+    GENESIS_BASE_URL: process.env.GENESIS_BASE_URL || localEnv.GENESIS_BASE_URL ||
+        'https://recons.rtrobotics.com'
+};
+env.RECON_SESSIONS = sessionNamespace(env);
 const port = Number(process.env.PORT || localEnv.PORT || 3000);
-const sessionCookie = 'genesis_reconstruction_session';
-const sessionLifetimeMs = 7 * 24 * 60 * 60 * 1000;
 
-await Promise.all([
-    mkdir(artifactCacheDir, { recursive: true }),
-    initLogging(logDir)
-]);
-
-// The proxy and the artifact cache both hand work to streams that outlive their request,
-// so an unawaited rejection would otherwise vanish silently.
-process.on('unhandledRejection', (reason) => {
-    logger.fail('process.unhandled_rejection', reason);
-});
-process.on('uncaughtException', (error) => {
-    logger.fail('process.uncaught_exception', error);
-});
-
-const app = express();
-const jobContexts = new Map();
-const sessions = new Map();
-
-const RUN_CACHE_TTL_MS = 60_000;
-
-const cachedRuns = async (session, gp, datasetId) => {
-    const hit = session.runs.get(datasetId);
-    if (hit && Date.now() - hit.at < RUN_CACHE_TTL_MS) return hit.runs;
-    const runs = await gp.listRuns(datasetId);
-    session.runs.set(datasetId, { runs, at: Date.now() });
-    return runs;
+const CONTENT_TYPES = {
+    '.css': 'text/css',
+    '.html': 'text/html; charset=utf-8',
+    '.jpg': 'image/jpeg',
+    '.js': 'text/javascript',
+    '.json': 'application/json',
+    '.map': 'application/json',
+    '.mjs': 'text/javascript',
+    '.png': 'image/png',
+    '.svg': 'image/svg+xml',
+    '.wasm': 'application/wasm',
+    '.webp': 'image/webp'
 };
 
-const invalidateRuns = (datasetId) => {
-    for (const session of sessions.values()) session.runs.delete(datasetId);
-};
-
-app.disable('x-powered-by');
-
-const HOP_BY_HOP = new Set([
-    'connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization',
-    'te', 'trailer', 'transfer-encoding', 'upgrade',
-    'content-encoding', 'content-length'
-]);
-const FORWARDED_REQUEST_HEADERS = ['content-type', 'accept', 'idempotency-key', 'last-event-id'];
-
-app.use('/api/gp', (req, res, next) => {
-    proxyToGateway(req, res).catch(next);
-});
-
-app.use(express.json({ limit: '1mb' }));
-
-const asyncRoute = (handler) => (req, res, next) => {
-    Promise.resolve(handler(req, res, next)).catch(next);
-};
-
-class HttpError extends Error {
-    constructor(status, message, code = 'local_error') {
-        super(message);
-        this.status = status;
-        this.code = code;
-    }
-}
-
-const reconstructionPipelines = new Set(['splat', 'photogrammetry']);
-const pipelineFor = (value, fallback = 'splat') => {
-    const pipeline = String(value || fallback);
-    if (!reconstructionPipelines.has(pipeline)) {
-        throw new HttpError(400, `Unsupported reconstruction pipeline: ${pipeline}`, 'invalid_pipeline');
-    }
-    return pipeline;
-};
-
-const photogrammetryUploadOverrides = {
-    run_downscale: true,
-    run_feature: true,
-    run_matching: true,
-    run_mapper: true,
-    run_sor: true,
-    downscale_factor: 4,
-    image_subdir: 'images_4',
-    sparse_subdir: 'sparse/0_geo',
-    geo_register: true,
-    run_georef: true,
-    run_ortho: true
-};
-
-const withRunName = (config, runNameField, runName) => {
-    const [head, ...rest] = runNameField.split('.');
-    if (rest.length === 0) return { ...config, [head]: runName };
-    return { ...config, [head]: withRunName(config[head] ?? {}, rest.join('.'), runName) };
-};
-
-const runNameFieldFor = async (gp, pipeline) => {
-    const info = (await gp.listPipelines()).find(p => p.name === pipeline);
-    if (!info?.run_name_field) {
-        throw new HttpError(502, `Genesis did not say where ${pipeline} keeps its run name.`,
-            'run_name_field_unknown');
-    }
-    return info.run_name_field;
-};
-
-const cookiesFor = req => Object.fromEntries(
-    String(req.headers.cookie || '')
-    .split(';')
-    .map(part => part.trim())
-    .filter(Boolean)
-    .map((part) => {
-        const split = part.indexOf('=');
-        if (split < 0) return [part, ''];
-        return [part.slice(0, split), decodeURIComponent(part.slice(split + 1))];
-    })
-);
-
-const sessionFor = (req) => {
-    const id = cookiesFor(req)[sessionCookie];
-    const session = id ? sessions.get(id) : null;
-    if (!session) return null;
-    if (session.expiresAt <= Date.now()) {
-        sessions.delete(id);
-        return null;
-    }
-    session.expiresAt = Date.now() + sessionLifetimeMs;
-    return session;
-};
-
-const requireSession = (req) => {
-    const session = sessionFor(req);
-    if (!session) throw new HttpError(401, 'Open Reconstruction and sign in or enter an API key.', 'authentication_required');
-    return session;
-};
-
-const gatewayOrigin = (() => {
-    try {
-        return new URL(baseUrl).origin;
-    } catch {
-        return '';
-    }
-})();
-
-const makeClient = (apiKey, context = {}) => new Client(baseUrl, apiKey, {
-    fetch: instrumentFetch(globalThis.fetch.bind(globalThis), { gatewayOrigin, context })
-});
-
-const clientFor = req => makeClient(requireSession(req).apiKey);
-
-const proxyToGateway = async (req, res) => {
-    const session = requireSession(req);
-    const target = new URL(req.url, baseUrl);
-    if (target.origin !== gatewayOrigin || !target.pathname.startsWith('/v1/')) {
-        throw new HttpError(404, 'Proxy path not allowed.', 'proxy_path_denied');
-    }
-    const headers = new Headers({ Authorization: `Bearer ${session.apiKey}` });
-    for (const name of FORWARDED_REQUEST_HEADERS) {
-        const value = req.headers[name];
-        if (value) headers.set(name, String(value));
-    }
+const toRequest = (req) => {
+    const url = new URL(req.url, `http://${req.headers.host ?? '127.0.0.1'}`);
     const hasBody = req.method !== 'GET' && req.method !== 'HEAD';
-    const abort = new AbortController();
-    res.on('close', () => abort.abort());
+    return new Request(url, {
+        method: req.method,
+        headers: req.headers,
+        ...(hasBody ? { body: Readable.toWeb(req), duplex: 'half' } : {})
+    });
+};
 
-    let upstream;
-    try {
-        upstream = await fetch(target, {
-            method: req.method,
-            headers,
-            signal: abort.signal,
-            ...(hasBody ? { body: req, duplex: 'half' } : {})
-        });
-    } catch (error) {
-        if (abort.signal.aborted) return;   // the browser hung up; nothing to answer
-        throw new HttpError(502, `Genesis is unreachable: ${errorSummary(error)}`, 'gateway_unreachable');
-    }
-
-    for (const [name, value] of upstream.headers) {
-        if (!HOP_BY_HOP.has(name.toLowerCase())) res.setHeader(name, value);
-    }
-    res.status(upstream.status);
-    if (!upstream.body) {
+const send = async (res, response) => {
+    res.writeHead(response.status, Object.fromEntries(response.headers));
+    if (!response.body) {
         res.end();
         return;
     }
-    res.flushHeaders();
-    try {
-        await pipeline(Readable.fromWeb(upstream.body), res);
-    } catch (error) {
-        // The reader hanging up is the normal end of an SSE stream, not a fault.
-        if (!abort.signal.aborted) {
-            logger.warn('proxy.stream_failed', { summary: errorSummary(error) });
-        }
-        if (!res.writableEnded) res.end();
-    }
+    for await (const chunk of Readable.fromWeb(response.body)) res.write(chunk);
+    res.end();
 };
 
-const cookieAttributes = (req, maxAge) => {
-    const attributes = [
-        `${sessionCookie}=`,
-        'HttpOnly',
-        'SameSite=Strict',
-        'Path=/',
-        `Max-Age=${maxAge}`
-    ];
-    const forwardedProtocol = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim();
-    if (req.secure || forwardedProtocol === 'https') attributes.push('Secure');
-    return attributes;
-};
-
-const establishSession = (req, res, apiKey, account = {}) => {
-    const id = randomUUID();
-    const session = {
-        id,
-        apiKey,
-        account: {
-            label: String(account.label || 'API key user'),
-            customerId: String(account.customerId || '')
-        },
-        runs: new Map(),
-        expiresAt: Date.now() + sessionLifetimeMs
-    };
-    sessions.set(id, session);
-    const attributes = cookieAttributes(req, Math.floor(sessionLifetimeMs / 1000));
-    attributes[0] = `${sessionCookie}=${encodeURIComponent(id)}`;
-    res.setHeader('Set-Cookie', attributes.join('; '));
-    return session;
-};
-
-const clearSession = (req, res) => {
-    const id = cookiesFor(req)[sessionCookie];
-    if (id) sessions.delete(id);
-    res.setHeader('Set-Cookie', cookieAttributes(req, 0).join('; '));
-};
-
-const errorDetail = (payload, fallback) => {
-    const detail = payload?.detail ?? payload?.error_description ?? payload?.error ?? fallback;
-    if (typeof detail === 'string') return detail;
-    if (detail && typeof detail.message === 'string') return detail.message;
-    return fallback;
-};
-
-const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-const validateLogin = (email, password) => {
-    if (!emailPattern.test(email) || email.length > 255) {
-        throw new HttpError(400, 'Enter a valid email address.', 'invalid_email');
-    }
-    if (!password || password.length > 256) {
-        throw new HttpError(400, 'Enter your password.', 'invalid_password');
-    }
-};
-
-const validateRegistration = ({ firstName, lastName, email, password, confirmPassword }) => {
-    validateLogin(email, password);
-    if (!firstName || firstName.length > 100) {
-        throw new HttpError(400, 'First Name is required.', 'invalid_first_name');
-    }
-    if (!lastName || lastName.length > 100) {
-        throw new HttpError(400, 'Last Name is required.', 'invalid_last_name');
-    }
-    if (password.length < 6) {
-        throw new HttpError(400, 'Password must contain at least 6 characters.', 'password_too_short');
-    }
-    if (!confirmPassword || password !== confirmPassword) {
-        throw new HttpError(400, 'Passwords do not match.', 'password_mismatch');
-    }
-};
-
-const gatewayJson = async (pathname, init = {}) => {
-    const response = await fetch(new URL(pathname, `${baseUrl.replace(/\/$/, '')}/`), init);
-    const payload = response.status === 204
-        ? null
-        : await response.json().catch(() => null);
-    if (!response.ok) {
-        throw new HttpError(
-            response.status,
-            errorDetail(payload, `Genesis API returned ${response.status}.`),
-            payload?.code || 'gateway_error'
-        );
-    }
-    return payload;
-};
-
-const passwordLogin = async (email, password) => {
-    const config = await gatewayJson('/v1/config');
-    const issuer = String(config?.oidc_issuer || '').replace(/\/$/, '');
-    const clientId = String(config?.oidc_client_id || '');
-    if (!issuer || !clientId) {
-        throw new HttpError(503, 'Genesis authentication is not configured.', 'auth_not_configured');
-    }
-    const body = new URLSearchParams({
-        grant_type: 'password',
-        client_id: clientId,
-        username: email,
-        password,
-        scope: 'openid'
-    });
-    const response = await fetch(`${issuer}/protocol/openid-connect/token`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body
-    });
-    const payload = await response.json().catch(() => null);
-    if (!response.ok || !payload?.access_token) {
-        throw new HttpError(
-            response.status === 400 || response.status === 401 ? 401 : response.status,
-            errorDetail(payload, 'Email or password is incorrect.'),
-            'login_failed'
-        );
-    }
-    return payload.access_token;
-};
-
-const createSuperSplatKey = async (accessToken) => {
-    const headers = { Authorization: `Bearer ${accessToken}` };
-    const listed = await gatewayJson('/v1/api-keys', { headers });
-    const keys = Array.isArray(listed) ? listed : (listed?.api_keys || listed?.keys || []);
-    const existing = keys.filter(key => key?.name === 'SuperSplat Reconstruction' && !key?.revoked_at);
-    await Promise.all(existing.map(key => gatewayJson(`/v1/api-keys/${encodeURIComponent(key.id)}`, {
-        method: 'DELETE',
-        headers
-    })));
-    const created = await gatewayJson('/v1/api-keys', {
-        method: 'POST',
-        headers: { ...headers, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: 'SuperSplat Reconstruction' })
-    });
-    const apiKey = created?.key || created?.api_key;
-    if (!apiKey) throw new HttpError(502, 'Genesis did not return the newly created API key.', 'missing_api_key');
-    return { apiKey, customerId: created?.customer_id || '' };
-};
-
-const loginAndCreateSession = async (req, res, email, password) => {
-    const accessToken = await passwordLogin(email, password);
-    const { apiKey, customerId } = await createSuperSplatKey(accessToken);
-    const session = establishSession(req, res, apiKey, { label: email, customerId });
-    return { session, apiKey };
-};
-
-const runCacheScope = (datasetId, pipeline, runName, created) =>
-    ['run', datasetId, pipeline, runName, String(created)];
-
-const artifactCachePath = (scope, artifactName) => {
-    const digest = createHash('sha256')
-    .update(JSON.stringify([...scope, artifactName]))
-    .digest('hex')
-    .slice(0, 24);
-    const basename = path.basename(artifactName)
-    .replace(/[^a-zA-Z0-9._-]/g, '_')
-    .slice(-120) || 'artifact';
-    return path.join(artifactCacheDir, `${digest}-${basename}`);
-};
-
-const cachedArtifact = async (scope, artifact) => {
-    const cachePath = artifactCachePath(scope, artifact.name);
-    try {
-        const entry = await stat(cachePath);
-        if (!entry.isFile() || (artifact.size > 0 && entry.size !== artifact.size)) {
-            await rm(cachePath, { force: true });
-            return null;
-        }
-        return { path: cachePath, size: entry.size };
-    } catch {
-        return null;
-    }
-};
-
-const artifactsWithCacheStatus = async (scope, artifacts) => Promise.all(
-    artifacts.map(async artifact => ({
-        ...artifact,
-        local: Boolean(await cachedArtifact(scope, artifact))
-    }))
-);
-
-const datasetArtifactCachePaths = async (gp, datasetId) => {
-    const cachePaths = new Set();
-    const runs = await gp.listRuns(datasetId).catch(() => []);
-    await Promise.all(runs.map(async (run) => {
-        const artifacts = await gp.listRunArtifacts(datasetId, run.pipeline, run.run_name).catch(() => []);
-        const scope = runCacheScope(datasetId, run.pipeline, run.run_name, run.created);
-        artifacts.forEach(artifact => cachePaths.add(artifactCachePath(scope, artifact.name)));
-    }));
-    await Promise.all([...jobContexts.entries()]
-    .filter(([, context]) => context.datasetId === datasetId)
-    .map(async ([jobId, context]) => {
-        const artifacts = await gp.listArtifacts(jobId).catch(() => []);
-        const scopes = [['job', jobId]];
-        if (context.created != null) {
-            scopes.push(runCacheScope(
-                datasetId,
-                context.pipeline,
-                context.runName,
-                context.created
-            ));
-        }
-        artifacts.forEach(artifact => {
-            scopes.forEach(scope => cachePaths.add(artifactCachePath(scope, artifact.name)));
-        });
-    }));
-    return [...cachePaths];
-};
-
-const resolveJobCacheScope = async (gp, jobId, job) => {
-    const context = jobContexts.get(jobId);
-    if (!context) return ['job', jobId];
-    if ((job?.terminal || job == null) && context.created == null) {
-        const runs = await gp.listRuns(context.datasetId).catch(() => []);
-        const run = runs
-        .filter(item => {
-            const created = item.created < 1e12 ? item.created : item.created / 1000;
-            return item.pipeline === context.pipeline &&
-                item.run_name === context.runName &&
-                created >= context.submittedAt - 60;
-        })
-        .sort((a, b) => b.created - a.created)[0];
-        if (run) context.created = run.created;
-    }
-    return context.created == null
-        ? ['job', jobId]
-        : runCacheScope(context.datasetId, context.pipeline, context.runName, context.created);
-};
-
-const writeResponseChunk = (res, chunk) => new Promise((resolve, reject) => {
-    if (res.destroyed) {
-        reject(new Error('Client disconnected'));
-        return;
-    }
-    if (res.write(chunk)) {
-        resolve();
-        return;
-    }
-    const cleanup = () => {
-        res.off('drain', onDrain);
-        res.off('close', onClose);
-        res.off('error', onError);
-    };
-    const onDrain = () => {
-        cleanup();
-        resolve();
-    };
-    const onClose = () => {
-        cleanup();
-        reject(new Error('Client disconnected'));
-    };
-    const onError = (error) => {
-        cleanup();
-        reject(error);
-    };
-    res.once('drain', onDrain);
-    res.once('close', onClose);
-    res.once('error', onError);
-});
-
-const contentTypeFor = (filename) => {
-    const extension = path.extname(filename).toLowerCase();
-    const contentTypes = {
-        '.json': 'application/json',
-        '.glb': 'model/gltf-binary',
-        '.gltf': 'model/gltf+json',
-        '.ksplat': 'application/x-gaussian-splat',
-        '.obj': 'model/obj',
-        '.ply': 'application/ply',
-        '.spz': 'application/x-gaussian-splat',
-        '.splat': 'application/x-gaussian-splat',
-        '.sog': 'application/x-gaussian-splat',
-        '.zip': 'application/zip'
-    };
-    return contentTypes[extension] || 'application/octet-stream';
-};
-
-const sendArtifact = async (res, scope, artifact, getRemoteStream) => {
-    const filename = path.basename(artifact.name).replace(/[^a-zA-Z0-9._-]/g, '_');
-    const cached = await cachedArtifact(scope, artifact);
-    res.setHeader('Content-Type', contentTypeFor(filename));
-    res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
-    const contentLength = cached?.size ?? Number(artifact.size);
-    if (Number.isFinite(contentLength) && contentLength >= 0) {
-        res.setHeader('Content-Length', String(contentLength));
-    }
-    res.setHeader('X-Artifact-Local', String(Boolean(cached)));
-    res.setHeader('Cache-Control', 'no-store');
-    if (cached) {
-        await new Promise((resolve, reject) => {
-            const source = createReadStream(cached.path);
-            const cleanup = () => {
-                source.off('error', onError);
-                res.off('error', onError);
-                res.off('finish', onFinish);
-                res.off('close', onClose);
-            };
-            const onError = (error) => {
-                cleanup();
-                reject(error);
-            };
-            const onFinish = () => {
-                cleanup();
-                resolve();
-            };
-            const onClose = () => {
-                cleanup();
-                source.destroy();
-                resolve();
-            };
-            source.on('error', onError);
-            res.on('error', onError);
-            res.on('finish', onFinish);
-            res.on('close', onClose);
-            source.pipe(res);
-        });
-        return;
-    }
-
-    const finalPath = artifactCachePath(scope, artifact.name);
-    const partialPath = `${finalPath}.${randomUUID()}.part`;
-    const file = await openFile(partialPath, 'wx');
-    let complete = false;
-    try {
-        const stream = Readable.fromWeb(await getRemoteStream());
-        for await (const chunk of stream) {
-            await file.write(chunk);
-            await writeResponseChunk(res, chunk);
-        }
-        await file.close();
-        await rename(partialPath, finalPath);
-        complete = true;
-        res.end();
-    } catch (error) {
-        if (!res.destroyed) throw error;
-    } finally {
-        if (!complete) {
-            await file.close().catch(() => undefined);
-            await rm(partialPath, { force: true }).catch(() => undefined);
-        }
-    }
-};
-
-app.get('/api/reconstruction/session', asyncRoute(async (req, res) => {
-    const session = requireSession(req);
-    res.setHeader('Cache-Control', 'no-store');
-    res.json({ authenticated: true, account: session.account });
-}));
-
-app.post('/api/reconstruction/session/api-key', asyncRoute(async (req, res) => {
-    const apiKey = String(req.body.apiKey || '').trim();
-    if (!apiKey.startsWith('gp_live_')) {
-        throw new HttpError(400, 'Enter a valid Genesis API key beginning with gp_live_.', 'invalid_api_key');
-    }
-    const gp = makeClient(apiKey);
-    const credits = await gp.getCreditBalance();
-    const session = establishSession(req, res, apiKey, {
-        label: credits?.customer_id ? `Customer ${credits.customer_id}` : 'API key user',
-        customerId: credits?.customer_id || ''
-    });
-    res.json({ authenticated: true, account: session.account });
-}));
-
-app.post('/api/reconstruction/session/login', asyncRoute(async (req, res) => {
-    const email = String(req.body.email || '').trim();
-    const password = String(req.body.password || '');
-    validateLogin(email, password);
-    const { session, apiKey } = await loginAndCreateSession(req, res, email, password);
-    res.json({ authenticated: true, account: session.account, apiKey });
-}));
-
-app.post('/api/reconstruction/session/register', asyncRoute(async (req, res) => {
-    const firstName = String(req.body.firstName || '').trim();
-    const lastName = String(req.body.lastName || '').trim();
-    const email = String(req.body.email || '').trim();
-    const password = String(req.body.password || '');
-    const confirmPassword = String(req.body.confirmPassword || '');
-    validateRegistration({ firstName, lastName, email, password, confirmPassword });
-    await gatewayJson('/v1/auth/register', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            first_name: firstName,
-            last_name: lastName,
-            email,
-            password
-        })
-    });
-    const { session, apiKey } = await loginAndCreateSession(req, res, email, password);
-    res.status(201).json({ authenticated: true, account: session.account, apiKey });
-}));
-
-app.delete('/api/reconstruction/session', (req, res) => {
-    clearSession(req, res);
-    res.status(204).end();
-});
-
-app.get('/api/reconstruction/health', asyncRoute(async (req, res) => {
-    const gp = clientFor(req);
-    const credits = await gp.getCreditBalance();
-    res.json({ ok: true, baseUrl: gp.baseUrl, credits });
-}));
-
-app.get('/api/reconstruction/credits', asyncRoute(async (req, res) => {
-    const gp = clientFor(req);
-    res.json(await gp.getCreditBalance());
-}));
-
-app.get('/api/reconstruction/pricing', asyncRoute(async (req, res) => {
-    const gp = clientFor(req);
-    res.json(await gp.getPricingCatalog());
-}));
-
-app.post('/api/reconstruction/checkout', asyncRoute(async (req, res) => {
-    const gp = clientFor(req);
-    const packCredits = req.body.packCredits == null ? undefined : Number(req.body.packCredits);
-    const customCredits = req.body.customCredits == null ? undefined : Number(req.body.customCredits);
-    if ((packCredits == null) === (customCredits == null)) {
-        res.status(400).json({ error: 'Hãy chọn đúng một gói hoặc nhập số credit tùy chỉnh.' });
-        return;
-    }
-    const amount = packCredits != null ? { packCredits } : { customCredits };
-    const checkout = await gp.createCheckout({ ...amount, client: 'web' });
-    res.json(checkout);
-}));
-
-app.get('/api/reconstruction/checkouts/:checkoutId', asyncRoute(async (req, res) => {
-    const gp = clientFor(req);
-    res.json(await gp.getCheckout(req.params.checkoutId));
-}));
-
-app.get('/api/reconstruction/datasets/:datasetId/quote', asyncRoute(async (req, res) => {
-    const gp = clientFor(req);
-    const pipeline = pipelineFor(req.query.pipeline);
-    res.json(await gp.quote(req.params.datasetId, pipeline));
-}));
-
-app.get('/api/reconstruction/runs', asyncRoute(async (req, res) => {
-    const gp = clientFor(req);
-    const limit = Math.min(50, Math.max(1, Number(req.query.limit) || 12));
-    const envelope = await gp.listDatasets({ limit });
-    const datasets = envelope.datasets || envelope.rows || [];
-    res.json({
-        datasets: datasets.map(dataset => ({
-            dataset_id: dataset.dataset_id,
-            label: dataset.label,
-            image_count: dataset.image_count,
-            bytes: dataset.bytes,
-            created: dataset.created,
-            run_counts: dataset.runs
-        }))
-    });
-}));
-
-app.get('/api/reconstruction/datasets/:datasetId/runs', asyncRoute(async (req, res) => {
-    const session = requireSession(req);
-    const gp = clientFor(req);
-    const { datasetId } = req.params;
-    res.json({
-        dataset_id: datasetId,
-        runs: await cachedRuns(session, gp, datasetId)
-    });
-}));
-
-app.delete('/api/reconstruction/datasets/:datasetId', asyncRoute(async (req, res) => {
-    const gp = clientFor(req);
-    const { datasetId } = req.params;
-    const cachePaths = await datasetArtifactCachePaths(gp, datasetId);
-    await gp.deleteDataset(datasetId);
-    invalidateRuns(datasetId);
-    const cacheCleanup = await Promise.allSettled(
-        cachePaths.map(cachePath => rm(cachePath, { force: true }))
-    );
-    const cleanupFailures = cacheCleanup.filter(result => result.status === 'rejected').length;
-    if (cleanupFailures > 0) {
-        logger.warn('dataset.cache_cleanup_incomplete', { datasetId, cleanupFailures });
-    }
-    for (const [jobId, context] of jobContexts) {
-        if (context.datasetId === datasetId) jobContexts.delete(jobId);
-    }
-    res.status(204).end();
-}));
-
-app.post('/api/reconstruction/jobs', asyncRoute(async (req, res) => {
-    const gp = clientFor(req);
-    const datasetId = String(req.body.datasetId || '');
-    if (!datasetId) {
-        res.status(400).json({ error: 'Thiếu datasetId.' });
-        return;
-    }
-    const pipeline = pipelineFor(req.body.pipeline);
-    const preset = String(req.body.preset || 'standard');
-    const runName = String(req.body.runName || preset);
-    if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(runName)) {
-        throw new HttpError(400, `Tên lần chạy không hợp lệ: ${runName}`, 'invalid_run_name');
-    }
-    const [presetConfig, runNameField] = await Promise.all([
-        gp.getPreset(pipeline, preset),
-        runNameFieldFor(gp, pipeline)
-    ]);
-    const config = withRunName({
-        ...presetConfig,
-        ...(pipeline === 'photogrammetry' ? photogrammetryUploadOverrides : {}),
-        data_dir: datasetId
-    }, runNameField, runName);
-    const idempotencyKey = String(req.body.idempotencyKey || randomUUID());
-    const jobId = await gp.submitJob(pipeline, config, { idempotencyKey });
-    invalidateRuns(datasetId);
-    jobContexts.set(jobId, {
-        datasetId,
-        pipeline,
-        runName,
-        submittedAt: Date.now() / 1000,
-        created: null
-    });
-    res.status(202).json({ jobId, idempotencyKey });
-}));
-
-app.get('/api/reconstruction/jobs/:jobId', asyncRoute(async (req, res) => {
-    const gp = clientFor(req);
-    const job = await gp.getJob(req.params.jobId);
-    const delivering = job.current_stage?.step === 'publish_results';
-    const artifacts = job.terminal || delivering
-        ? await gp.listArtifacts(req.params.jobId).catch(() => [])
-        : [];
-    const scope = await resolveJobCacheScope(gp, req.params.jobId, job);
-    res.json({
-        job,
-        artifacts: await artifactsWithCacheStatus(scope, artifacts)
-    });
-}));
-
-app.get('/api/reconstruction/datasets/:datasetId/runs/:pipeline/:runName/artifacts',
-    asyncRoute(async (req, res) => {
-        const gp = clientFor(req);
-        const { datasetId, pipeline, runName } = req.params;
-        const artifacts = await gp.listRunArtifacts(datasetId, pipeline, runName);
-        const scope = runCacheScope(datasetId, pipeline, runName, req.query.created || 'unknown');
-        res.json({ artifacts: await artifactsWithCacheStatus(scope, artifacts) });
-    }));
-
-app.post('/api/reconstruction/jobs/:jobId/cancel', asyncRoute(async (req, res) => {
-    const gp = clientFor(req);
-    await gp.cancelJob(req.params.jobId);
-    res.status(204).end();
-}));
-
-app.get('/api/reconstruction/jobs/:jobId/events', async (req, res) => {
-    let gp;
-    try {
-        gp = clientFor(req);
-    } catch (error) {
-        res.status(error.status || 401).json({ error: error.message, code: error.code });
-        return;
-    }
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache, no-transform');
-    res.setHeader('Connection', 'keep-alive');
-    res.flushHeaders();
-    const abortController = new AbortController();
-    const lastEventId = typeof req.headers['last-event-id'] === 'string'
-        ? req.headers['last-event-id']
-        : '0';
-    req.on('close', () => abortController.abort());
-    try {
-        for await (const event of gp.streamEvents(req.params.jobId, {
-            lastEventId,
-            signal: abortController.signal
-        })) {
-            if (event.type === 'log') continue;
-            if (event.id) res.write(`id: ${event.id}\n`);
-            if (event.type === 'end') {
-                // A finished job changes the run listing.
-                const context = jobContexts.get(req.params.jobId);
-                if (context?.datasetId) invalidateRuns(context.datasetId);
-                res.write('event: end\ndata: {}\n\n');
-                break;
-            }
-            const data = event.type === 'stage' ? event.stage :
-                event.type === 'progress' ? event.progress :
-                    event.type === 'heartbeat' ? event.heartbeat :
-                        event.type === 'dataset' ? event.dataset :
-                            event.artifact;
-            res.write(`event: ${event.type}\ndata: ${JSON.stringify(data)}\n\n`);
-        }
-    } catch (error) {
-        if (!abortController.signal.aborted) {
-            logger.fail('job.stream_failed', error, { jobId: req.params.jobId, lastEventId });
-            res.write(`event: failed\ndata: ${JSON.stringify({ message: errorSummary(error) })}\n\n`);
-        }
-    } finally {
-        res.end();
-    }
-});
-
-app.get('/api/reconstruction/jobs/:jobId/model', asyncRoute(async (req, res) => {
-    const gp = clientFor(req);
-    const artifacts = await gp.listArtifacts(req.params.jobId);
-    const requestedName = String(req.query.name || '');
-    const artifact = requestedName
-        ? artifacts.find(item => item.name === requestedName)
-        : artifacts.find(item => item.primary)
-            || artifacts.find(item => item.kind === 'splat_ply')
-            || artifacts.find(item => item.name.toLowerCase().endsWith('.ply'));
-    if (!artifact) {
-        res.status(404).json({
-            error: requestedName
-                ? `Artifact "${requestedName}" does not exist for this job.`
-                : 'The job completed without a primary model artifact.'
-        });
-        return;
-    }
-
-    const scope = await resolveJobCacheScope(gp, req.params.jobId);
-    await sendArtifact(
-        res,
-        scope,
-        artifact,
-        () => gp.downloadArtifactStream(req.params.jobId, artifact.name)
-    );
-}));
-
-app.get('/api/reconstruction/datasets/:datasetId/runs/:pipeline/:runName/model',
-    asyncRoute(async (req, res) => {
-        const gp = clientFor(req);
-        const { datasetId, pipeline, runName } = req.params;
-        const artifacts = await gp.listRunArtifacts(datasetId, pipeline, runName);
-        const requestedName = String(req.query.name || '');
-        const artifact = requestedName
-            ? artifacts.find(item => item.name === requestedName)
-            : artifacts.find(item => item.primary)
-                || artifacts.find(item => item.kind === 'splat_ply')
-                || artifacts.find(item => item.name.toLowerCase().endsWith('.ply'));
-        if (!artifact) {
-            res.status(404).json({
-                error: requestedName
-                    ? `Artifact "${requestedName}" does not exist for this run.`
-                : 'The run has no primary model artifact.'
+const serveAsset = async (res, pathname) => {
+    const candidate = path.resolve(distDir, `.${pathname}`);
+    const target = candidate.startsWith(distDir + path.sep) || candidate === distDir ?
+        candidate :
+        distDir;
+    for (const file of [target, path.join(distDir, 'index.html')]) {
+        try {
+            const body = await readFile(file);
+            res.writeHead(200, {
+                'Content-Type': CONTENT_TYPES[path.extname(file).toLowerCase()] ||
+                    'application/octet-stream'
             });
+            res.end(body);
+            return;
+        } catch {
+        }
+    }
+    res.writeHead(404).end();
+};
+
+createServer(async (req, res) => {
+    try {
+        const response = await handle(toRequest(req), env);
+        if (response) {
+            await send(res, response);
             return;
         }
-        const scope = runCacheScope(datasetId, pipeline, runName, req.query.created || 'unknown');
-        await sendArtifact(res, scope, artifact, async () => {
-            const url = await gp.getRunArtifactUrl(datasetId, pipeline, runName, artifact.name);
-            const response = await fetch(url);
-            if (!response.ok) throw new Error(`Artifact storage returned ${response.status}`);
-            if (!response.body) throw new Error(`Artifact storage returned no body for "${artifact.name}".`);
-            return response.body;
-        });
-    }));
-
-app.use(express.static(path.join(rootDir, 'dist'), { etag: false, maxAge: 0 }));
-app.use((_req, res) => res.sendFile(path.join(rootDir, 'dist', 'index.html')));
-
-app.use((error, req, res, _next) => {
-    const status = error instanceof ApiError || error instanceof HttpError ? error.status : 500;
-    const detail = error instanceof ApiError ? error.detail : errorSummary(error);
-    const record = { method: req.method, route: req.path, status };
-    if (status >= 500) logger.fail('request.failed', error, record);
-    else logger.warn('request.rejected', { ...record, summary: errorSummary(error) });
-    if (!res.headersSent) res.status(status).json({ error: detail, code: error?.code || 'local_error' });
-});
-
-app.listen(port, '127.0.0.1', () => {
-    logger.info('server.started', { port, baseUrl, log: currentLogPath() });
+        await serveAsset(res, new URL(req.url, 'http://localhost').pathname);
+    } catch (error) {
+        console.error(JSON.stringify({
+            event: 'request.failed',
+            method: req.method,
+            url: req.url,
+            message: String(error?.message ?? error)
+        }));
+        if (!res.headersSent) res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Internal error', code: 'local_error' }));
+    }
+}).listen(port, '127.0.0.1', () => {
     console.log(`SuperSplat Reconstruction running at http://localhost:${port}`);
-    console.log(`Genesis API: ${baseUrl}`);
-    console.log(`Logs: ${currentLogPath()}`);
+    console.log(`Genesis API: ${env.GENESIS_BASE_URL}`);
 });

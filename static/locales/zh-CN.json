@@ -240,6 +240,7 @@
     "popup.shortcuts.redo": "重做",
     "popup.shortcuts.toggle-data-panel": "切换数据面板",
     "popup.shortcuts.toggle-timeline-panel": "切换时间轴面板",
+    "popup.shortcuts.toggle-reconstruction-panel": "切换 Reconstruction 面板",
 
     "popup.export": "导出",
     "popup.export.header": "导出",
@@ -297,6 +298,7 @@
     "orient.set-pivot": "设置枢轴",
     "orient.clear": "清除",
 
+    "status-bar.vertices": "顶点",
     "status-bar.splats": "高斯点",
     "status-bar.selected": "已选择",
     "status-bar.locked": "已锁定",

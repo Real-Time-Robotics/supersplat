@@ -2,11 +2,31 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { test } from 'node:test';
 
-import { listenOnRandomPort, sendJson, signInWithApiKey, startApp } from './test-support.mjs';
+import { call, envFor, listenOnRandomPort, sendJson, signInWithApiKey } from './test-support.mjs';
+
+test('JSON endpoints reject malformed and oversized bodies', async () => {
+    const env = { GENESIS_BASE_URL: 'https://gateway.invalid', RECON_SESSIONS: undefined };
+    const malformed = await call(env, '/api/reconstruction/session/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{'
+    });
+    assert.equal(malformed.status, 400);
+    assert.equal((await malformed.json()).code, 'invalid_json');
+
+    const oversized = await call(env, '/api/reconstruction/session/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ value: 'x'.repeat(256 * 1024) })
+    });
+    assert.equal(oversized.status, 413);
+    assert.equal((await oversized.json()).code, 'request_body_too_large');
+});
 
 test('auth sessions and photogrammetry proxy flow remain isolated and typed', async (context) => {
     const registrations = [];
     const revoked = [];
+    const keyCalls = [];
     const quotes = [];
     const submissions = [];
     let uploadSessions = 0;
@@ -33,14 +53,13 @@ test('auth sessions and photogrammetry proxy flow remain isolated and typed', as
             uploadSessions += 1;
             sendJson(res, 201, { dataset_id: 'unexpected-upload' });
         } else if (req.method === 'POST' && url.pathname === '/protocol/openid-connect/token') {
-            sendJson(res, 200, { access_token: 'human-token' });
-        } else if (req.method === 'GET' && url.pathname === '/v1/api-keys') {
-            sendJson(res, 200, { keys: [{ id: 'old-key', name: 'SuperSplat Reconstruction' }] });
-        } else if (req.method === 'DELETE' && url.pathname === '/v1/api-keys/old-key') {
-            revoked.push('old-key');
-            res.writeHead(204).end();
-        } else if (req.method === 'POST' && url.pathname === '/v1/api-keys') {
-            sendJson(res, 201, { id: 'new-key', key: 'gp_live_created_for_test' });
+            sendJson(res, 200, {
+                access_token: 'human-token', refresh_token: 'human-refresh', expires_in: 300
+            });
+        } else if (url.pathname.startsWith('/v1/api-keys')) {
+            keyCalls.push(`${req.method} ${url.pathname}`);
+            if (req.method === 'DELETE') revoked.push(url.pathname);
+            sendJson(res, 200, { keys: [] });
         } else if (req.method === 'POST' && url.pathname === '/v1/auth/register') {
             let body = '';
             for await (const chunk of req) body += chunk;
@@ -77,33 +96,52 @@ test('auth sessions and photogrammetry proxy flow remain isolated and typed', as
     issuer = `http://127.0.0.1:${gatewayPort}`;
 
     context.after(() => gateway.close());
-    const app = await startApp(context, gatewayPort);
+    const env = envFor(gatewayPort);
 
-    const login = await fetch(`${app}/api/reconstruction/session/login`, {
+    const login = await call(env, '/api/reconstruction/session/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: 'user@example.com', password: 'secret' })
     });
     assert.equal(login.status, 200);
-    assert.equal((await login.json()).apiKey, 'gp_live_created_for_test');
+    assert.equal((await login.json()).apiKey, undefined);
     const cookie = login.headers.get('set-cookie');
     assert.match(cookie, /HttpOnly/);
     assert.match(cookie, /SameSite=Strict/);
-    assert.deepEqual(revoked, ['old-key']);
+    assert.deepEqual(keyCalls, []);
+    assert.deepEqual(revoked, []);
+    for (const secret of ['gp_live_', 'human-token', 'human-refresh']) {
+        assert.ok(!cookie.includes(secret), `the cookie leaked ${secret}`);
+    }
 
-    const session = await fetch(`${app}/api/reconstruction/session`, { headers: { Cookie: cookie } });
+    const session = await call(env, '/api/reconstruction/session', { headers: { Cookie: cookie } });
     assert.equal(session.status, 200);
     assert.equal((await session.json()).account.label, 'user@example.com');
 
-    const logout = await fetch(`${app}/api/reconstruction/session`, {
+    const reveal = await call(env, '/api/reconstruction/session/api-key', {
+        headers: { Cookie: cookie }
+    });
+    assert.equal(reveal.status, 404);
+
+    const logout = await call(env, '/api/reconstruction/session', {
         method: 'DELETE',
         headers: { Cookie: cookie }
     });
     assert.equal(logout.status, 204);
-    const expired = await fetch(`${app}/api/reconstruction/session`, { headers: { Cookie: cookie } });
-    assert.equal(expired.status, 401);
+    assert.match(logout.headers.get('set-cookie'), /Max-Age=0/);
 
-    const mismatch = await fetch(`${app}/api/reconstruction/session/register`, {
+    const replayed = await call(env, '/api/reconstruction/session', {
+        headers: { Cookie: cookie }
+    });
+    assert.equal(replayed.status, 401, 'a cookie kept past logout must buy nothing');
+    const repeated = await call(env, '/api/reconstruction/session', {
+        method: 'DELETE', headers: { Cookie: cookie }
+    });
+    assert.equal(repeated.status, 204, 'logout is idempotent');
+    const anonymous = await call(env, '/api/reconstruction/session');
+    assert.equal(anonymous.status, 401);
+
+    const mismatch = await call(env, '/api/reconstruction/session/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -118,7 +156,7 @@ test('auth sessions and photogrammetry proxy flow remain isolated and typed', as
     assert.equal((await mismatch.json()).code, 'password_mismatch');
     assert.deepEqual(registrations, []);
 
-    const registration = await fetch(`${app}/api/reconstruction/session/register`, {
+    const registration = await call(env, '/api/reconstruction/session/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -137,7 +175,7 @@ test('auth sessions and photogrammetry proxy flow remain isolated and typed', as
         password: 'secret'
     }]);
 
-    const direct = await fetch(`${app}/api/reconstruction/session/api-key`, {
+    const direct = await call(env, '/api/reconstruction/session/api-key', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ apiKey: 'gp_live_direct_for_test' })
@@ -146,7 +184,7 @@ test('auth sessions and photogrammetry proxy flow remain isolated and typed', as
     assert.equal((await direct.json()).account.customerId, 'direct-user');
     const directCookie = direct.headers.get('set-cookie');
 
-    const recent = await fetch(`${app}/api/reconstruction/runs`, {
+    const recent = await call(env, '/api/reconstruction/runs', {
         headers: { Cookie: directCookie }
     });
     assert.equal(recent.status, 200);
@@ -156,21 +194,22 @@ test('auth sessions and photogrammetry proxy flow remain isolated and typed', as
         image_count: 42,
         bytes: 123456,
         created: 1700000000,
-        run_counts: {}
+        run_counts: {},
+        model_counts: {}
     }]);
 
-    const quote = await fetch(`${app}/api/reconstruction/datasets/dataset-1/quote?pipeline=photogrammetry`, {
+    const quote = await call(env, '/api/reconstruction/datasets/dataset-1/quote?pipeline=photogrammetry', {
         headers: { Cookie: directCookie }
     });
     assert.equal(quote.status, 200);
     assert.deepEqual(quotes, [{ dataset: 'dataset-1', pipeline: 'photogrammetry' }]);
 
-    const invalidQuote = await fetch(`${app}/api/reconstruction/datasets/dataset-1/quote?pipeline=unknown`, {
+    const invalidQuote = await call(env, '/api/reconstruction/datasets/dataset-1/quote?pipeline=unknown', {
         headers: { Cookie: directCookie }
     });
     assert.equal(invalidQuote.status, 400);
 
-    const job = await fetch(`${app}/api/reconstruction/jobs`, {
+    const job = await call(env, '/api/reconstruction/jobs', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Cookie: directCookie },
         body: JSON.stringify({
@@ -228,10 +267,10 @@ test('a splat run name is placed at the published nested path, merging not repla
     });
     const gatewayPort = await listenOnRandomPort(gateway);
     context.after(() => gateway.close());
-    const app = await startApp(context, gatewayPort);
-    const cookie = await signInWithApiKey(app);
+    const env = envFor(gatewayPort);
+    const cookie = await signInWithApiKey(env);
 
-    const job = await fetch(`${app}/api/reconstruction/jobs`, {
+    const job = await call(env, '/api/reconstruction/jobs', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Cookie: cookie },
         body: JSON.stringify({ datasetId: 'ds1', pipeline: 'splat', runName: 'standard-2' })

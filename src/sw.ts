@@ -1,68 +1,20 @@
-import { basisGlueUrl, basisWasmUrl } from './basis-cdn';
-import { version as appVersion } from '../package.json';
+export {};   // a module, so the `self` below shadows the DOM global instead of clashing with it
 
-// export default null
 declare let self: ServiceWorkerGlobalScope;
 
-const cacheName = `superSplat-v${appVersion}`;
-
-const cacheUrls = [
-    './',
-    './index.css',
-    './index.html',
-    './index.js',
-    './index.js.map',
-    './manifest.json',
-    './static/icons/logo-192.png',
-    './static/icons/logo-512.png',
-    './static/images/screenshot-narrow.jpg',
-    './static/images/screenshot-wide.jpg',
-    './static/lib/webp/webp.mjs',
-    './static/lib/webp/webp.wasm',
-    './static/locales/de.json',
-    './static/locales/en.json',
-    './static/locales/fr.json',
-    './static/locales/ja.json',
-    './static/locales/ko.json',
-    './static/locales/zh-CN.json'
-];
-
-const cdnUrls = [
-    basisGlueUrl,
-    basisWasmUrl
-];
-
-self.addEventListener('install', (event) => {
-    console.log(`installing v${appVersion}`);
-
-    // create cache for current version
-    event.waitUntil(
-        caches.open(cacheName)
-        .then((cache) => {
-            cache.addAll(cacheUrls);
-            cache.addAll(cdnUrls).catch((err) => {
-                console.warn(`failed to cache basis transcoder: ${err}`);
-            });
-        })
-    );
+self.addEventListener('install', () => {
+    // Do not wait for every tab to close -- that wait is the bug being undone.
+    self.skipWaiting();
 });
 
-self.addEventListener('activate', () => {
-    console.log(`activating v${appVersion}`);
-
-    // delete the old caches once this one is activated
-    caches.keys().then((names) => {
-        for (const name of names) {
-            if (name !== cacheName) {
-                caches.delete(name);
-            }
-        }
-    });
-});
-
-self.addEventListener('fetch', (event) => {
-    event.respondWith(
-        caches.match(event.request)
-        .then(response => response ?? fetch(event.request))
-    );
+self.addEventListener('activate', (event) => {
+    event.waitUntil((async () => {
+        const names = await caches.keys();
+        // Only the bundle caches. genesis-artifacts-v1 is the user's downloaded models,
+        // written and read straight from the page (see reconstruction-artifact-cache.ts).
+        await Promise.all(names
+        .filter(name => name.startsWith('superSplat-'))
+        .map(name => caches.delete(name)));
+        await self.registration.unregister();
+    })());
 });

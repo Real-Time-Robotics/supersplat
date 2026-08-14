@@ -240,6 +240,7 @@
     "popup.shortcuts.redo": "다시 실행",
     "popup.shortcuts.toggle-data-panel": "데이터 패널 전환",
     "popup.shortcuts.toggle-timeline-panel": "타임라인 패널 전환",
+    "popup.shortcuts.toggle-reconstruction-panel": "Reconstruction 패널 전환",
 
     "popup.export": "내보내기",
     "popup.export.header": "내보내기",
@@ -297,6 +298,7 @@
     "orient.set-pivot": "피벗 설정",
     "orient.clear": "지우기",
 
+    "status-bar.vertices": "정점",
     "status-bar.splats": "스플랫",
     "status-bar.selected": "선택됨",
     "status-bar.locked": "잠김",

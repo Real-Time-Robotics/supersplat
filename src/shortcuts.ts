@@ -161,4 +161,4 @@ class Shortcuts {
     }
 }
 
-export { Shortcuts, ModifierState, ShortcutBinding };
+export { Shortcuts, checkMod, ModifierState, ShortcutBinding };

@@ -68,12 +68,12 @@ class AssetLoader {
                 // user cancelled LOD selection
                 return null;
             }
-            const { gsplatData, transform } = result;
+            const { gsplatData, transform, pointCloud } = result;
             validateGSplatData(gsplatData);
 
             const asset = this.createGSplatAsset(gsplatData, filename);
 
-            return new Splat(asset, transform.rotation);
+            return new Splat(asset, transform.rotation, pointCloud);
         } finally {
             if (!animationFrame) {
                 this.events.fire('stopSpinner');

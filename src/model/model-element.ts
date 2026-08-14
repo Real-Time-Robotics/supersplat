@@ -4,6 +4,7 @@ import {
     ContainerResource,
     Entity,
     Mat4,
+    Mesh,
     Quat,
     RenderComponent,
     StandardMaterial,
@@ -104,6 +105,21 @@ class ModelElement extends Element {
 
     get worldBound() {
         return this.worldBoundStorage;
+    }
+
+    /** Deduped: one mesh drawn by several instances still owns one vertex buffer. */
+    get vertexCount() {
+        const meshes = new Set<Mesh>();
+        for (const render of this.entity.findComponents('render') as RenderComponent[]) {
+            for (const meshInstance of render.meshInstances) {
+                meshes.add(meshInstance.mesh);
+            }
+        }
+        let total = 0;
+        for (const mesh of meshes) {
+            total += mesh.vertexBuffer?.numVertices ?? 0;
+        }
+        return total;
     }
 
     private configureRenderComponents() {

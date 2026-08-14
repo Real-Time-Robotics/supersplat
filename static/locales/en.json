@@ -240,6 +240,7 @@
     "popup.shortcuts.redo": "Redo",
     "popup.shortcuts.toggle-data-panel": "Toggle Data Panel",
     "popup.shortcuts.toggle-timeline-panel": "Toggle Timeline Panel",
+    "popup.shortcuts.toggle-reconstruction-panel": "Toggle Reconstruction Panel",
 
     "popup.export": "Export",
     "popup.export.header": "Export",
@@ -297,6 +298,7 @@
     "orient.set-pivot": "Set Pivot",
     "orient.clear": "Clear",
 
+    "status-bar.vertices": "Vertices",
     "status-bar.splats": "Splats",
     "status-bar.selected": "Selected",
     "status-bar.locked": "Locked",

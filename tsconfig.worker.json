@@ -1,0 +1,18 @@
+{
+    "extends": "./tsconfig.json",
+    "compilerOptions": {
+        "lib": ["es2022"],
+        "types": ["@cloudflare/workers-types"],
+        "noEmit": true
+    },
+    "include": [
+        "./src/backend/**/*.ts",
+        "./worker/**/*.ts",
+        "worker-configuration.d.ts"
+    ],
+    "exclude": [
+        "src/backend/**/*.test.ts",
+        "dist",
+        "node_modules"
+    ]
+}

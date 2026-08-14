@@ -60,6 +60,7 @@ class Splat extends Element {
 
     _visible = true;
     transformPalette: TransformPalette;
+    pointCloud = false;
 
     selectionAlpha = 1;
 
@@ -88,8 +89,10 @@ class Splat extends Element {
 
     rebuildMaterial: (bands: number) => void;
 
-    constructor(asset: Asset, rotation: Quat) {
+    constructor(asset: Asset, rotation: Quat, pointCloud = false) {
         super(ElementType.splat);
+
+        this.pointCloud = pointCloud;
 
         const { device } = asset.resource as GSplatResource;
 
@@ -117,6 +120,9 @@ class Splat extends Element {
             material.setDefine('SH_BANDS', `${Math.min(bands, (instance.resource as GSplatResource).shBands)}`);
             material.setParameter('splatState', this.stateTexture);
             material.setParameter('splatTransform', this.transformTexture);
+            if (this.pointCloud) {
+                material.setParameter('minPixelSize', 0);
+            }
             material.update();
         };
 
