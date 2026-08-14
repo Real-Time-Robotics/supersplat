@@ -298,6 +298,7 @@
     "orient.set-pivot": "Définir le pivot",
     "orient.clear": "Effacer",
 
+    "status-bar.vertices": "Sommets",
     "status-bar.splats": "Splats",
     "status-bar.selected": "Sélectionnés",
     "status-bar.locked": "Verrouillés",

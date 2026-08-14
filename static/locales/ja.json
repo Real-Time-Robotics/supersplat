@@ -298,6 +298,7 @@
     "orient.set-pivot": "ピボットを設定",
     "orient.clear": "クリア",
 
+    "status-bar.vertices": "頂点",
     "status-bar.splats": "スプラット",
     "status-bar.selected": "選択済み",
     "status-bar.locked": "ロック済み",

@@ -298,6 +298,7 @@
     "orient.set-pivot": "设置枢轴",
     "orient.clear": "清除",
 
+    "status-bar.vertices": "顶点",
     "status-bar.splats": "高斯点",
     "status-bar.selected": "已选择",
     "status-bar.locked": "已锁定",

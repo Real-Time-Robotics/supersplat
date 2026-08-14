@@ -298,6 +298,7 @@
     "orient.set-pivot": "Задать опорную точку",
     "orient.clear": "Очистить",
 
+    "status-bar.vertices": "Вершины",
     "status-bar.splats": "Сплаты",
     "status-bar.selected": "Выбрано",
     "status-bar.locked": "Заблокировано",

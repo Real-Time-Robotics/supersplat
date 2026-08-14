@@ -298,6 +298,7 @@
     "orient.set-pivot": "피벗 설정",
     "orient.clear": "지우기",
 
+    "status-bar.vertices": "정점",
     "status-bar.splats": "스플랫",
     "status-bar.selected": "선택됨",
     "status-bar.locked": "잠김",

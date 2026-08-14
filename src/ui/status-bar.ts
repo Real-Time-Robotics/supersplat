@@ -1,6 +1,8 @@
 import { Button, Container, Label } from '@playcanvas/pcui';
 
+import { Element } from '../element';
 import { Events } from '../events';
+import { ModelElement } from '../model/model-element';
 import { ShortcutManager } from '../shortcut-manager';
 import { Splat } from '../splat';
 import { i18n } from './localization';
@@ -70,13 +72,20 @@ class StatusBar extends Container {
             container.append(label);
             container.append(value);
             statsContainer.append(container);
-            return value;
+            return { container, value };
         };
 
-        const splatsValue = createStat('status-bar.splats');
-        const selectedValue = createStat('status-bar.selected');
-        const lockedValue = createStat('status-bar.locked');
-        const deletedValue = createStat('status-bar.deleted');
+        // A scene holds either a photogrammetry model or splats so the two stat sets swap rather than stack.
+        const verticesStat = createStat('status-bar.vertices');
+        const splatStats = [
+            createStat('status-bar.splats'),
+            createStat('status-bar.selected'),
+            createStat('status-bar.locked'),
+            createStat('status-bar.deleted')
+        ];
+        const [splatsValue, selectedValue, lockedValue, deletedValue] =
+            splatStats.map(stat => stat.value);
+        verticesStat.container.hidden = true;
 
         this.append(timelineButton);
         this.append(splatDataButton);
@@ -128,20 +137,27 @@ class StatusBar extends Container {
         });
 
         events.on('selection.changed', (selection: Element) => {
-            if (selection instanceof Splat) {
-                splat = selection;
-                splatDataButton.enabled = true;
+            splat = selection instanceof Splat ? selection : null;
+            const model = selection instanceof ModelElement ? selection : null;
+
+            splatDataButton.enabled = !!splat;
+            if (!splat && activePanel === 'splatData') {
+                setActivePanel('');
+            }
+
+            verticesStat.container.hidden = !model;
+            splatStats.forEach((stat) => {
+                stat.container.hidden = !!model;
+            });
+
+            if (model) {
+                verticesStat.value.text = i18n.formatInteger(model.vertexCount);
+            } else if (splat) {
                 updateStats();
             } else {
-                splat = null;
-                splatDataButton.enabled = false;
-                if (activePanel === 'splatData') {
-                    setActivePanel('');
-                }
-                splatsValue.text = '0';
-                selectedValue.text = '0';
-                lockedValue.text = '0';
-                deletedValue.text = '0';
+                splatStats.forEach((stat) => {
+                    stat.value.text = '0';
+                });
             }
         });
     }
