@@ -96,9 +96,7 @@ const colourReader = (column: Column | undefined): ((index: number) => number) =
  * `maxPoints` subsamples evenly on the way through.
  */
 const promotePointCloud = (dataTable: DataTable, radius?: number, maxPoints = Infinity): DataTable => {
-    // Promotion gives every point fourteen float32 columns, so a cloud that
-    // reached here without a read-time budget (any plain PLY) has to be thinned
-    // now or it is ~56 bytes per point of new allocation.
+    // Plain PLY inputs reach this point without a read-time budget.
     const stride = Math.max(1, Math.ceil(dataTable.numRows / maxPoints));
     const n = Math.ceil(dataTable.numRows / stride);
 

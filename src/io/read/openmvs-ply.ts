@@ -11,14 +11,9 @@
 
 import { Column, DataTable, ReadStream, type ReadSource } from '@playcanvas/splat-transform';
 
-// Matches splat-transform's own probe, so a header this reader rejects is one
-// that reader would reject too.
 const HEADER_PROBE_BYTES = 128 * 1024;
 
-// Must exceed BLOB_CHUNK_SIZE in file-systems.ts. BufferedReadStream only reads
-// straight into the caller's buffer when asked for a full chunk or more, and a
-// refill asks for slightly less than the whole window; sized equal, every refill
-// takes the copy-through path instead and the file gets copied twice.
+// Larger than BLOB_CHUNK_SIZE so refills can use the stream's direct-read path.
 const BUFFER_BYTES = 8 * 1024 * 1024;
 
 type PlyType = {
@@ -121,8 +116,8 @@ const parsePlyHeader = (bytes: Uint8Array): PlyHeader | null => {
 /**
  * An OpenMVS dense cloud: list properties on the vertices themselves, which is
  * what splat-transform rejects, and no faces. A mesh also carries a list
- * property (its face indices) but must keep failing as before rather than
- * loading as the subset of itself this reader would produce. Vertices must come
+ * property (its face indices) but must remain rejected rather than load as a
+ * subset. Vertices must come
  * first, since the walk starts at the end of the header.
  */
 const isDenseCloud = (header: PlyHeader): boolean => {

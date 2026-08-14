@@ -54,9 +54,10 @@ node_modules/.bin/wrangler --version
 
 # Gate before mutating package.json.
 step "typecheck"
-npx tsc --noEmit -p tsconfig.json
+npm run typecheck
 step "lint"
-npx eslint src worker
+npm run lint
+npm run lint:locales
 step "tests"
 npm run test:ui
 npm run test:backend
@@ -65,6 +66,7 @@ npm run test:auth-session
 npm run test:session-durable
 npm run test:gateway-proxy
 npm run test:runs-freshness
+npm run test:naming-and-delete
 npm run test:model-import
 
 if [ "$BUMP" = 1 ]; then

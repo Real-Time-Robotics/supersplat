@@ -20,6 +20,7 @@
         "watch": "rollup -c -w",
         "serve": "node --import ./scripts/ts-resolve.mjs server.mjs",
         "deploy": "npm run build && wrangler deploy",
+        "typecheck": "wrangler types --check && tsc --noEmit && tsc -p tsconfig.worker.json",
         "test:backend": "node --experimental-transform-types --import ./scripts/ts-resolve.mjs --test \"src/backend/*.test.ts\"",
         "test:ui": "node --experimental-transform-types --import ./scripts/ts-resolve.mjs --test \"src/ui/**/*.test.ts\"",
         "test:io": "node --experimental-transform-types --import ./scripts/ts-resolve.mjs --test \"src/io/**/*.test.ts\"",
@@ -37,6 +38,7 @@
         "node": ">=20.19.0"
     },
     "devDependencies": {
+        "@cloudflare/workers-types": "5.20260814.1",
         "@playcanvas/eslint-config": "2.1.0",
         "@playcanvas/pcui": "6.1.4",
         "@playcanvas/splat-transform": "3.1.7",
@@ -54,7 +56,7 @@
         "concurrently": "10.0.4",
         "cors": "2.8.6",
         "cross-env": "10.1.0",
-        "eslint": "10.8.0",
+        "eslint": "9.39.5",
         "eslint-import-resolver-typescript": "4.4.5",
         "globals": "17.7.0",
         "i18next": "26.3.6",

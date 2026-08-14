@@ -46,6 +46,16 @@ const gatewayFor = (state) => createServer(async (req, res) => {
             return;
         }
         sendJson(res, 200, { customer_id: 'c1', balance: 10, billable: true });
+    } else if (req.method === 'POST' && url.pathname === '/v1/replay') {
+        const presented = String(req.headers.authorization || '').replace('Bearer ', '');
+        let body = '';
+        for await (const chunk of req) body += chunk;
+        state.replayBodies.push(body);
+        if (state.rejectUntil && presented !== state.rejectUntil) {
+            sendJson(res, 401, { detail: 'expired', code: 'unauthorized' });
+            return;
+        }
+        sendJson(res, 200, { ok: true });
     } else {
         sendJson(res, 404, { detail: `Unexpected ${req.method} ${url.pathname}` });
     }
@@ -53,7 +63,8 @@ const gatewayFor = (state) => createServer(async (req, res) => {
 
 const worldFor = async (context, overrides = {}) => {
     const state = {
-        grants: [], keyCalls: [], presented: [], issued: 0, issuer: '', ...overrides
+        grants: [], keyCalls: [], presented: [], replayBodies: [], issued: 0, issuer: '',
+        ...overrides
     };
     const gateway = gatewayFor(state);
     const port = await listenOnRandomPort(gateway);
@@ -99,6 +110,26 @@ test('an upstream rejection is retried once against a renewed token', async (con
     assert.equal(answer.status, 200);
     assert.deepEqual(state.grants, ['password', 'refresh_token']);
     assert.deepEqual(state.presented, ['access-1', 'access-1', 'access-2']);
+});
+
+test('an unbounded request body is not buffered for credential replay', async (context) => {
+    const { state, env } = await worldFor(context, { rejectUntil: 'access-2' });
+    const cookie = await signIn(env);
+    const body = new ReadableStream({
+        start(controller) {
+            controller.enqueue(new TextEncoder().encode('streamed-body'));
+            controller.close();
+        }
+    });
+
+    const answer = await call(env, '/api/gp/v1/replay', {
+        method: 'POST', headers: { Cookie: cookie }, body, duplex: 'half'
+    });
+
+    assert.equal(answer.status, 409);
+    assert.equal((await answer.json()).code, 'credential_refreshed_retry_required');
+    assert.deepEqual(state.replayBodies, ['streamed-body']);
+    assert.deepEqual(state.grants, ['password', 'refresh_token']);
 });
 
 test('a refusal that survives the renewal ends the session', async (context) => {

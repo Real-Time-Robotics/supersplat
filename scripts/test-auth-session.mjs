@@ -4,6 +4,25 @@ import { test } from 'node:test';
 
 import { call, envFor, listenOnRandomPort, sendJson, signInWithApiKey } from './test-support.mjs';
 
+test('JSON endpoints reject malformed and oversized bodies', async () => {
+    const env = { GENESIS_BASE_URL: 'https://gateway.invalid', RECON_SESSIONS: undefined };
+    const malformed = await call(env, '/api/reconstruction/session/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{'
+    });
+    assert.equal(malformed.status, 400);
+    assert.equal((await malformed.json()).code, 'invalid_json');
+
+    const oversized = await call(env, '/api/reconstruction/session/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ value: 'x'.repeat(256 * 1024) })
+    });
+    assert.equal(oversized.status, 413);
+    assert.equal((await oversized.json()).code, 'request_body_too_large');
+});
+
 test('auth sessions and photogrammetry proxy flow remain isolated and typed', async (context) => {
     const registrations = [];
     const revoked = [];

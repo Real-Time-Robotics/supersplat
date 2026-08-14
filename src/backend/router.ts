@@ -21,14 +21,11 @@ import {
     sessionCookieHeader
 } from './session';
 
-type SessionNamespace = {
-    idFromName: (name: string) => unknown;
-    get: (id: unknown) => { fetch: (request: Request) => Promise<Response> };
-};
-
-type Env = { GENESIS_BASE_URL: string; RECON_SESSIONS: SessionNamespace };
+type BackendEnv = Pick<Env, 'GENESIS_BASE_URL' | 'RECON_SESSIONS'>;
 
 const RECON_PREFIX = '/api/reconstruction';
+const MAX_JSON_BODY_BYTES = 256 * 1024;
+const MAX_REPLAY_BODY_BYTES = 1024 * 1024;
 
 const json = (payload: unknown, status = 200, headers: Record<string, string> = {}) => new Response(
     JSON.stringify(payload),
@@ -38,7 +35,7 @@ const json = (payload: unknown, status = 200, headers: Record<string, string> = 
     }
 );
 
-const objectFor = (request: Request, env: Env) => {
+const objectFor = (request: Request, env: BackendEnv) => {
     const id = readCookie(request, SESSION_COOKIE);
     if (!id || !isSessionId(id)) return null;
     if (!env.RECON_SESSIONS) {
@@ -63,7 +60,7 @@ const askSession = (object: { fetch: (request: Request) => Promise<Response> },
 const expired = () => new HttpError(401,
     'Your session has ended. Sign in again to continue.', 'session_expired');
 
-const requireSession = async (request: Request, env: Env): Promise<Credential> => {
+const requireSession = async (request: Request, env: BackendEnv): Promise<Credential> => {
     const object = objectFor(request, env);
     if (!object) {
         throw new HttpError(401, 'Open Reconstruction and sign in or enter an API key.',
@@ -79,7 +76,7 @@ const secureFor = (request: Request): boolean => {
     return forwarded === 'https' || new URL(request.url).protocol === 'https:';
 };
 
-const establish = async (request: Request, env: Env, record: Record<string, unknown>,
+const establish = async (request: Request, env: BackendEnv, record: Record<string, unknown>,
     status = 200): Promise<Response> => {
     if (!env.RECON_SESSIONS) {
         throw new HttpError(503, 'Session storage is unavailable.', 'sessions_unavailable');
@@ -87,6 +84,9 @@ const establish = async (request: Request, env: Env, record: Record<string, unkn
     const id = newSessionId();
     const object = env.RECON_SESSIONS.get(env.RECON_SESSIONS.idFromName(id));
     const created = await askSession(object, '/create', record);
+    if (!created.ok) {
+        throw new HttpError(503, 'Session storage is unavailable.', 'sessions_unavailable');
+    }
     const { account } = await created.json() as { account: Account };
     return json({ authenticated: true, account }, status, {
         'Set-Cookie': sessionCookieHeader(id, {
@@ -96,7 +96,7 @@ const establish = async (request: Request, env: Env, record: Record<string, unkn
     });
 };
 
-const loginAndEstablish = async (request: Request, env: Env, email: string, password: string,
+const loginAndEstablish = async (request: Request, env: BackendEnv, email: string, password: string,
     status: number): Promise<Response> => {
     const tokens = await passwordLogin(env.GENESIS_BASE_URL, email, password);
     const credits = await creditBalance(env.GENESIS_BASE_URL, tokens.accessToken)
@@ -111,9 +111,63 @@ const loginAndEstablish = async (request: Request, env: Env, email: string, pass
     }, status);
 };
 
-const bodyOf = async (request: Request): Promise<any> => await request.json().catch(() => ({})) ?? {};
+const contentLength = (request: Request): number | null => {
+    const header = request.headers.get('content-length');
+    if (header === null) return null;
+    if (!/^\d+$/.test(header)) throw new HttpError(400, 'Invalid Content-Length.', 'invalid_body');
+    const length = Number(header);
+    if (!Number.isSafeInteger(length)) {
+        throw new HttpError(400, 'Invalid Content-Length.', 'invalid_body');
+    }
+    return length;
+};
 
-const sessionRoute = async (request: Request, env: Env, rest: string): Promise<Response | null> => {
+const readBoundedBody = async (request: Request, limit: number): Promise<Uint8Array> => {
+    const declared = contentLength(request);
+    if (declared !== null && declared > limit) {
+        throw new HttpError(413, 'Request body is too large.', 'request_body_too_large');
+    }
+    if (!request.body) return new Uint8Array();
+
+    const reader = request.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+    for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        size += value.byteLength;
+        if (size > limit) {
+            await reader.cancel().catch((): void => undefined);
+            throw new HttpError(413, 'Request body is too large.', 'request_body_too_large');
+        }
+        chunks.push(value);
+    }
+    const body = new Uint8Array(size);
+    let offset = 0;
+    for (const chunk of chunks) {
+        body.set(chunk, offset);
+        offset += chunk.byteLength;
+    }
+    return body;
+};
+
+const bodyOf = async (request: Request): Promise<Record<string, any>> => {
+    const bytes = await readBoundedBody(request, MAX_JSON_BODY_BYTES);
+    if (bytes.byteLength === 0) return {};
+    let payload: unknown;
+    try {
+        payload = JSON.parse(new TextDecoder().decode(bytes));
+    } catch {
+        throw new HttpError(400, 'Request body must be valid JSON.', 'invalid_json');
+    }
+    if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
+        throw new HttpError(400, 'Request body must be a JSON object.', 'invalid_json');
+    }
+    return payload as Record<string, any>;
+};
+
+const sessionRoute = async (request: Request, env: BackendEnv,
+    rest: string): Promise<Response | null> => {
     if (rest === '' && request.method === 'GET') {
         const session = await requireSession(request, env);
         return json({ authenticated: true, account: session.account });
@@ -216,7 +270,7 @@ const submitJob = async (request: Request, gp: any): Promise<Response> => {
 
 const STREAM_KINDS = new Set(['log', 'stage', 'progress', 'gpu', 'artifact', 'dataset', 'end']);
 
-const streamJobEvents = async (request: Request, env: Env, session: Credential,
+const streamJobEvents = async (request: Request, env: BackendEnv, session: Credential,
     jobId: string, search: URLSearchParams): Promise<Response> => {
     const lastEventId = request.headers.get('last-event-id');
     const kinds = (search.get('events') || '').split(',').filter(k => STREAM_KINDS.has(k));
@@ -244,7 +298,7 @@ const streamJobEvents = async (request: Request, env: Env, session: Credential,
     });
 };
 
-const reconRoute = async (request: Request, env: Env, session: Credential,
+const reconRoute = async (request: Request, env: BackendEnv, session: Credential,
     pathname: string, search: URLSearchParams): Promise<Response | null> => {
     const gp: any = new Client(env.GENESIS_BASE_URL, session.token);
     const segments = segmentsOf(pathname);
@@ -393,17 +447,54 @@ const attemptOnce = async (run: Attempt, request: Request,
     }
 };
 
-const authenticated = async (request: Request, env: Env,
+const requestWithBody = (request: Request, body: Uint8Array): Request => {
+    const buffer = body.buffer.slice(
+        body.byteOffset, body.byteOffset + body.byteLength
+    ) as ArrayBuffer;
+    return new Request(request.url, {
+        method: request.method,
+        headers: request.headers,
+        body: buffer,
+        redirect: request.redirect,
+        signal: request.signal
+    });
+};
+
+const replayPair = async (request: Request): Promise<{
+    first: Request;
+    replay: Request | null;
+}> => {
+    if (request.method === 'GET' || request.method === 'HEAD' || !request.body) {
+        return { first: request, replay: request };
+    }
+    const declared = contentLength(request);
+    const jsonBody = request.headers.get('content-type')?.toLowerCase()
+    .startsWith('application/json') ?? false;
+    if ((declared === null && !jsonBody) || (declared !== null && declared > MAX_REPLAY_BODY_BYTES)) {
+        return { first: request, replay: null };
+    }
+    const body = await readBoundedBody(request, MAX_REPLAY_BODY_BYTES);
+    return {
+        first: requestWithBody(request, body),
+        replay: requestWithBody(request, body.slice())
+    };
+};
+
+const authenticated = async (request: Request, env: BackendEnv,
     run: Attempt): Promise<Response | null> => {
-    const replay = request.method === 'GET' || request.method === 'HEAD' ?
-        request : request.clone();
     const session = await requireSession(request, env);
-    const first = await attemptOnce(run, request, session);
+    const { first: firstRequest, replay } = await replayPair(request);
+    const first = await attemptOnce(run, firstRequest, session);
     if (first !== REFUSED) return first;
 
     const object = objectFor(request, env);
     const renewed = object ? await askSession(object, '/reauthenticate') : null;
     if (!renewed?.ok) throw expired();
+    if (!replay) {
+        throw new HttpError(409,
+            'Your credential was renewed; retry this request.',
+            'credential_refreshed_retry_required');
+    }
     const second = await attemptOnce(run, replay, await renewed.json() as Credential);
     if (second !== REFUSED) return second;
 
@@ -411,7 +502,7 @@ const authenticated = async (request: Request, env: Env,
     throw expired();
 };
 
-const handle = async (request: Request, env: Env): Promise<Response | null> => {
+const handle = async (request: Request, env: BackendEnv): Promise<Response | null> => {
     const { pathname, searchParams } = new URL(request.url);
     if (!pathname.startsWith('/api/')) return null;
     try {
@@ -444,4 +535,4 @@ const handle = async (request: Request, env: Env): Promise<Response | null> => {
     }
 };
 
-export { type Env, handle, json, requireSession };
+export { type BackendEnv, handle, json, requireSession };

@@ -1,5 +1,11 @@
 import { refreshTokens } from './auth';
-import { SessionState, type SessionRecord, type SessionStorage } from './session';
+import {
+    SessionState,
+    type SessionInput,
+    type SessionKind,
+    type SessionRecord,
+    type SessionStorage
+} from './session';
 
 const SCHEMA = `CREATE TABLE IF NOT EXISTS session(
   id                INTEGER PRIMARY KEY CHECK (id = 1),
@@ -16,8 +22,18 @@ const SCHEMA = `CREATE TABLE IF NOT EXISTS session(
   updated_at        INTEGER NOT NULL
 )`;
 
-type SqlStorage = {
-    exec: (query: string, ...bindings: unknown[]) => { toArray: () => any[] };
+type SessionRow = Record<string, SqlStorageValue> & {
+    version: number;
+    kind: string;
+    access_token: string;
+    refresh_token: string;
+    access_expires_at: number;
+    api_key: string;
+    label: string;
+    customer_id: string;
+    expires_at: number;
+    created_at: number;
+    updated_at: number;
 };
 
 const missingTable = (error: unknown): boolean => String(error).includes('no such table: session');
@@ -26,7 +42,7 @@ const sqliteStorage = (sql: SqlStorage): SessionStorage => ({
     read(): SessionRecord | null {
         let row;
         try {
-            [row] = sql.exec('SELECT * FROM session WHERE id = 1').toArray();
+            [row] = sql.exec<SessionRow>('SELECT * FROM session WHERE id = 1').toArray();
         } catch (error) {
             if (missingTable(error)) return null;
             throw error;
@@ -34,7 +50,7 @@ const sqliteStorage = (sql: SqlStorage): SessionStorage => ({
         if (!row) return null;
         return {
             version: Number(row.version),
-            kind: row.kind,
+            kind: row.kind as SessionKind,
             accessToken: row.access_token,
             refreshToken: row.refresh_token,
             accessExpiresAt: Number(row.access_expires_at),
@@ -103,10 +119,10 @@ const json = (payload: unknown, status = 200) => new Response(JSON.stringify(pay
 
 class ReconstructionSession {
     readonly #state: SessionState;
-    readonly #ctx: any;
+    readonly #ctx: DurableObjectState;
     #schemaReady = false;
 
-    constructor(ctx: any, env: { GENESIS_BASE_URL: string }) {
+    constructor(ctx: DurableObjectState, env: Pick<Env, 'GENESIS_BASE_URL'>) {
         this.#ctx = ctx;
         this.#state = new SessionState(sqliteStorage(ctx.storage.sql), {
             refreshTokens: token => refreshTokens(env.GENESIS_BASE_URL, token)
@@ -117,8 +133,8 @@ class ReconstructionSession {
         if (this.#schemaReady) return;
         const sql = this.#ctx.storage.sql;
         sql.exec(SCHEMA);
-        const columns = sql.exec('PRAGMA table_info(session)').toArray();
-        if (!columns.some((column: any) => column.name === 'version')) {
+        const columns = sql.exec<{ name: string }>('PRAGMA table_info(session)').toArray();
+        if (!columns.some(column => column.name === 'version')) {
             sql.exec('ALTER TABLE session ADD COLUMN version INTEGER NOT NULL DEFAULT 1');
         }
         this.#schemaReady = true;
@@ -138,7 +154,7 @@ class ReconstructionSession {
         this.#ensureSchema();
         const { pathname } = new URL(request.url);
         if (pathname === '/create') {
-            const account = this.#state.create(await request.json() as any);
+            const account = this.#state.create(await request.json() as SessionInput);
             const expiresAt = this.#state.expiresAt();
             if (expiresAt) await this.#ctx.storage.setAlarm?.(expiresAt);
             return json({ account });

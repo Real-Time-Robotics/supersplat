@@ -26,6 +26,11 @@ type Credential = { token: string; kind: SessionKind; account: Account };
 
 type TokenSet = { accessToken: string; refreshToken: string; expiresIn: number };
 
+type SessionInput = {
+    kind: SessionKind; label: string; customerId: string;
+    accessToken?: string; refreshToken?: string; expiresIn?: number; apiKey?: string;
+};
+
 interface SessionStorage {
     read(): SessionRecord | null;
     write(record: SessionRecord): void;
@@ -90,10 +95,7 @@ class SessionState {
         this.#now = deps.now ?? Date.now;
     }
 
-    create(input: {
-        kind: SessionKind; label: string; customerId: string;
-        accessToken?: string; refreshToken?: string; expiresIn?: number; apiKey?: string;
-    }): Account {
+    create(input: SessionInput): Account {
         const now = this.#now();
         const record: SessionRecord = {
             version: 1,
@@ -194,6 +196,7 @@ export {
     type Account,
     type Credential,
     type SessionKind,
+    type SessionInput,
     type SessionRecord,
     type SessionStorage,
     type TokenSet,

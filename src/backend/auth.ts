@@ -41,7 +41,7 @@ const validateRegistration = (input: {
 const gatewayJson = async (baseUrl: string, pathname: string,
     init: Record<string, any> = {}): Promise<any> => {
     const response = await fetch(new URL(pathname, `${baseUrl.replace(/\/$/, '')}/`), init);
-    const payload = response.status === 204 ?
+    const payload: any = response.status === 204 ?
         null :
         await response.json().catch((): null => null);
     if (!response.ok) {

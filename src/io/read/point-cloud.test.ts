@@ -81,10 +81,8 @@ test('promotePointCloud keeps an uncoloured cloud visible rather than black', ()
 
 test('pointCloudBudget scales with memory, and holds the promoted cloud under a quarter of it', () => {
     const gib = 1024 ** 3;
-    // 62 B/point measured; a quarter of 8 GiB is ~34.6M points and ~2.1 GB resident
     assert.ok(Math.abs(pointCloudBudget(8) * 62 - 2 * gib) < 0.05 * gib);
     assert.ok(Math.abs(pointCloudBudget(8) / pointCloudBudget(4) - 2) < 1e-6);
-    // no deviceMemory (Firefox, Safari) reads as 4 GiB rather than the top of the range
     assert.equal(pointCloudBudget(), pointCloudBudget(4));
 });
 
@@ -93,7 +91,6 @@ test('promotePointCloud subsamples evenly to the budget it is given', () => {
     const table = promotePointCloud(cloud(positions), 1, 4);
     assert.equal(table.numRows, 4);
     assert.deepEqual(Array.from(column(table, 'x')), [0, 2, 4, 6]);
-    // and leaves a cloud already under it alone
     assert.equal(promotePointCloud(cloud(positions), 1, 100).numRows, 8);
 });
 

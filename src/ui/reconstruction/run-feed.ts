@@ -60,7 +60,7 @@ class RunFeed {
             }
         });
         this.#source.addEventListener('end', (event) => {
-            // A pre-`terminal` gateway sends `{}`; treat that as over, the way it always was.
+            // An absent terminal flag means the stream itself ended.
             const said = eventData<{ terminal?: boolean }>(event);
             this.#finish(said?.terminal !== false);
         });

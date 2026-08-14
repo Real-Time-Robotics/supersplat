@@ -12,7 +12,12 @@ export default [
             globals: {
                 ...globals.browser,
                 ...globals.serviceworker,
-                BlobPart: 'readonly'
+                BlobPart: 'readonly',
+                DurableObjectState: 'readonly',
+                Env: 'readonly',
+                ExportedHandler: 'readonly',
+                SqlStorage: 'readonly',
+                SqlStorageValue: 'readonly'
             }
         },
         plugins: {

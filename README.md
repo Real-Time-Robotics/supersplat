@@ -55,7 +55,23 @@ The Photogrammetry card extends the Standard preset with the SfM front-half need
 direct image uploads. It requires EXIF GPS in at least three source photos and produces
 the preset's textured GLB, orthophoto, and DSM deliverables.
 
-The proxy stores each API key only in an in-memory, HttpOnly-cookie-backed server session.
-Sessions are forgotten when the server restarts or when the user selects **Forget on this
-device**. Login and registration rotate a dedicated `SuperSplat Reconstruction` API key
-and show the new value once so it can be copied.
+The browser receives only an opaque, HttpOnly, SameSite cookie. On Cloudflare, each cookie
+maps to a Durable Object whose SQLite state holds either the submitted API key or the OIDC
+access/refresh tokens. Sessions have a fixed seven-day lifetime and are erased by logout or
+their cleanup alarm. The local Node server uses an in-memory equivalent, so restarting it
+clears local sessions.
+
+## Cloudflare deployment
+
+`wrangler.jsonc` binds the static assets and the `RECON_SESSIONS` Durable Object. Validate
+the generated binding types and bundles before deploying:
+
+```bash
+npm run typecheck
+npm run lint
+npm run build
+npm run deploy
+```
+
+For the production preflight, version bump, deploy, and smoke checks, configure the
+credentials documented at the top of `scripts/deploy.sh` and run that script instead.
