@@ -98,8 +98,7 @@ fi
 [ "$deploy_rc" = 0 ] || echo "WARN: wrangler exited $deploy_rc after uploading -- smoke decides" >&2
 
 step "smoke"
-# Cloudflare serves the previous bundle for a few seconds after the upload, so the
-# bundle check retries rather than reporting a deploy that did land as failed.
+# Retry while the deployed bundle propagates to the production route.
 built="$(md5sum dist/index.js | cut -d' ' -f1)"
 live=""
 for _ in 1 2 3 4 5 6; do
@@ -119,8 +118,7 @@ fail=0
 case "$root" in 200\ text/html*) ;; *) echo "FAIL: / expected 200 text/html" >&2; fail=1 ;; esac
 [ "$session" = 401 ] || { echo "FAIL: session expected 401, got $session" >&2; fail=1; }
 [ "$live" = "$built" ] || { echo "FAIL: the live bundle is not the one just built" >&2; fail=1; }
-# A caching worker would make every future deploy invisible to an open tab, which is not
-# something the next release would notice on its own.
+# The service worker must self-unregister so open tabs receive deployed bundles.
 case "$(curl -s "$SITE/sw.js")" in
     *registration.unregister*) ;;
     *) echo "FAIL: /sw.js is not the self-destruct -- open tabs will stay on old code" >&2; fail=1 ;;

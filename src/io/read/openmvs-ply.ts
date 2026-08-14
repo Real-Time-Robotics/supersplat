@@ -4,9 +4,7 @@
  * OpenMVS writes scene_dense.ply with per-point visibility as
  * `property list uint8 uint32 view_indices` (+ view_weights); splat-transform's
  * reader accepts only three-word `property <type> <name>` lines and throws on
- * sight of those. Points are subsampled during the walk rather than after:
- * materializing tens of millions of points to then discard most of them needs
- * the memory the subsample exists to avoid.
+ * sight of those. Subsampling during the walk bounds memory use for large clouds.
  */
 
 import { Column, DataTable, ReadStream, type ReadSource } from '@playcanvas/splat-transform';
