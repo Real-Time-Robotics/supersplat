@@ -981,6 +981,10 @@
     stroke-dashoffset: 100;
     stroke-linecap: round;
     transition: stroke-dashoffset 180ms ease, stroke 160ms ease;
+
+    &[data-empty='true'] {
+        stroke-linecap: butt;
+    }
 }
 
 .recon-progress-activity {
@@ -1225,6 +1229,87 @@
     display: flex;
     justify-content: flex-end;
     gap: 5px;
+}
+
+.recon-transfer {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-top: 6px;
+    padding: 7px 9px;
+    background-color: $bcg-darkest;
+    border-radius: 2px;
+
+    &[hidden] {
+        display: none;
+    }
+}
+
+.recon-transfer-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+
+    strong {
+        overflow: hidden;
+        color: $text-primary;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+    }
+}
+
+.recon-transfer-bar {
+    display: block;
+    width: 100%;
+    height: 3px;
+    overflow: hidden;
+    background-color: $bcg-light;
+    border-radius: 2px;
+
+    i {
+        display: block;
+        height: 100%;
+        background-color: $clr-hilight;
+        transition: width 0.2s linear;
+    }
+}
+
+.recon-transfer-detail {
+    color: $text-secondary;
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+}
+
+.recon-transfer[data-mode='indeterminate'] .recon-transfer-bar {
+    background-image: linear-gradient(90deg, transparent, $clr-hilight, transparent);
+    background-repeat: no-repeat;
+    background-size: 40% 100%;
+    animation: recon-transfer-sweep 1.15s linear infinite;
+}
+
+.recon-transfer[data-mode='done'] .recon-transfer-bar i {
+    background-color: $clr-active;
+}
+
+.recon-transfer[data-mode='failed'] {
+    .recon-transfer-title {
+        color: $error;
+    }
+
+    .recon-transfer-bar i {
+        background-color: $error;
+    }
+}
+
+@keyframes recon-transfer-sweep {
+    from {
+        background-position: -40% 0;
+    }
+
+    to {
+        background-position: 140% 0;
+    }
 }
 
 .recon-footer {

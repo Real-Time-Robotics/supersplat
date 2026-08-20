@@ -116,10 +116,18 @@ class DashboardShell {
                                 </span>
                             </div>
                         </div>
+                        <div class="recon-transfer" data-mode="idle" hidden>
+                            <div class="recon-transfer-head">
+                                <strong class="recon-transfer-title"></strong>
+                                <button class="recon-button recon-download-cancel" type="button" hidden>Cancel download</button>
+                            </div>
+                            <span class="recon-transfer-bar" role="progressbar"
+                                  aria-valuemin="0" aria-valuemax="100"><i></i></span>
+                            <span class="recon-transfer-detail"></span>
+                        </div>
                         <a class="recon-checkout" target="reconstruction-checkout" rel="noopener" hidden>Open checkout &#8599;</a>
                         <div class="recon-shared-actions">
                             <button class="recon-button recon-primary recon-open-primary" type="button" hidden>Open model now</button>
-                            <button class="recon-button recon-download-cancel" type="button" hidden>Cancel download</button>
                             <button class="recon-button recon-cancel" type="button" hidden>Cancel job</button>
                         </div>
                     </section>

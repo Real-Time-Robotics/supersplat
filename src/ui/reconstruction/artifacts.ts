@@ -99,6 +99,7 @@ class ReconstructionArtifacts {
     private endSession() {
         this.sessionGeneration++;
         this.cancelDownload();
+        this.view.transfer.hide();
         this.activeDatasetId = null;
         this.pickedDatasetId = null;
         this.closeArtifactPanel();
@@ -513,7 +514,7 @@ class ReconstructionArtifacts {
         const manageView = options.manageView ?? true;
         const report = options.report ??
             ((title: string, detail: string, visual: ProgressVisual) => {
-                this.view.setState(title, detail, visual);
+                this.view.setTransferState(title, detail, visual);
             });
         if (manageView) {
             this.view.setBusy(true, this.canStart());
@@ -595,7 +596,7 @@ class ReconstructionArtifacts {
     private async loadRecentRunArtifacts(run: RecentRun) {
         this.view.setBusy(true, this.canStart());
         const label = `${run.dataset_label || run.dataset_id} · ${run.pipeline}/${run.run_name}`;
-        this.view.setState('Loading artifact list', label, { mode: 'indeterminate' });
+        this.view.setTransferState('Loading artifact list', label, { mode: 'indeterminate' });
         try {
             const route = `/api/reconstruction/datasets/${encodeURIComponent(run.dataset_id)}` +
                 `/runs/${encodeURIComponent(run.pipeline)}/${encodeURIComponent(run.run_name)}/artifacts` +
@@ -611,13 +612,14 @@ class ReconstructionArtifacts {
                 await this.openArtifact(artifacts[0], source);
             } else {
                 const primary = artifacts.find(artifact => artifact.primary);
-                this.view.setState('Choose an artifact',
+                this.view.setTransferState('Choose an artifact',
                     `${artifacts.length} artifacts are available${primary ? ` · ${primary.name} is recommended` : ''}.`,
                     { mode: 'idle' });
                 this.view.setBusy(false, this.canStart());
             }
         } catch (error) {
-            this.view.setState('Could not load saved artifacts', messageOf(error), { mode: 'failed' });
+            this.view.setTransferState('Could not load saved artifacts', messageOf(error),
+                { mode: 'failed' });
             this.view.setBusy(false, this.canStart());
         }
     }
@@ -679,8 +681,17 @@ class ReconstructionArtifacts {
         const total = totalBytes(response, artifact);
         const meter = this.progressMeter(artifact, total, report);
 
-        const cached = await artifactCache.store(scope, artifact.name, response, total,
-            bytes => meter.tick(bytes));
+        let cached: Blob | null;
+        try {
+            cached = await artifactCache.store(scope, artifact.name, response, total,
+                bytes => meter.tick(bytes));
+        } catch (error) {
+            if (signal.aborted) throw error;
+            meter.restart('Không lưu được vào bộ nhớ đệm (đĩa hoặc bộ nhớ trình duyệt đầy) · đang tải lại, không lưu đệm');
+            const retry = await fetch(url, { signal });
+            if (!retry.ok) throw new Error(`Artifact storage returned ${retry.status}`);
+            return { blob: await this.readDownload(retry, signal, meter), cached: false };
+        }
         if (cached) {
             meter.done();
             return { blob: cached, cached: true };
@@ -697,7 +708,7 @@ class ReconstructionArtifacts {
         report: (title: string, detail: string, visual: ProgressVisual) => void
     ) {
         const title = `Downloading: ${artifact.name}`;
-        const rates = new RateMeter();
+        let rates = new RateMeter();
         let loaded = 0;
         let lastRendered = 0;
         report(title,
@@ -705,6 +716,14 @@ class ReconstructionArtifacts {
             total > 0 ? { mode: 'determinate', value: 0 } : { mode: 'indeterminate' });
 
         return {
+            /** A second attempt moves the same bytes again, so the count starts over. */
+            restart(note: string) {
+                rates = new RateMeter();
+                loaded = 0;
+                lastRendered = 0;
+                report(title, note,
+                    total > 0 ? { mode: 'determinate', value: 0 } : { mode: 'indeterminate' });
+            },
             tick(bytes: number) {
                 loaded += bytes;
                 const now = performance.now();

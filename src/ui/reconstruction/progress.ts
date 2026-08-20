@@ -192,7 +192,7 @@ class ReconstructionProgress {
         const value = visual.mode === 'determinate' ?
             clampPercent(visual.value) :
             visual.mode === 'done' ? 100 : 0;
-        this.valueCircle.style.strokeDashoffset = String(100 - value);
+        this.setRingValue(value);
         this.center.textContent = visual.center ?? (
             visual.mode === 'determinate' || visual.mode === 'done' ? `${Math.round(value)}%` :
                 visual.mode === 'failed' ? '!' :
@@ -230,7 +230,7 @@ class ReconstructionProgress {
             this.status.textContent = `Completed: ${stageLabel(stage.step)}`;
             this.setDetail(`Stage ${stage.index} of ${stage.total} complete.`);
             this.center.textContent = `${stage.index}/${stage.total}`;
-            this.valueCircle.style.strokeDashoffset = String(100 - clampPercent((stage.index / total) * 100));
+            this.setRingValue((stage.index / total) * 100);
             this.card.dataset.mode = stage.returncode === 0 ? 'stage-complete' : 'failed';
             this.setStageAria(stage, stage.index);
         }
@@ -309,7 +309,7 @@ class ReconstructionProgress {
         ].filter(Boolean).join(' · ');
         this.setDetail(detail, accessibleDetail, file?.path);
         this.center.textContent = `${this.stage.index}/${this.stage.total}`;
-        this.valueCircle.style.strokeDashoffset = String(100 - clampPercent((completed / total) * 100));
+        this.setRingValue((completed / total) * 100);
         this.card.dataset.mode = 'stage';
         this.setStageAria(this.stage, completed);
     }
@@ -341,7 +341,7 @@ class ReconstructionProgress {
         if (this.notice && Date.now() >= this.noticeUntil) this.notice = '';
         this.setDetail(detail, accessibleDetail, file?.path);
         this.center.textContent = `${Math.round(stagePercent)}%`;
-        this.valueCircle.style.strokeDashoffset = String(100 - stagePercent);
+        this.setRingValue(stagePercent);
         this.card.dataset.mode = 'determinate';
         this.ring.setAttribute('aria-label', stageLabel(progress.stage));
         this.ring.setAttribute('aria-valuemin', '0');
@@ -351,6 +351,12 @@ class ReconstructionProgress {
             'aria-valuetext',
             `${Math.round(stagePercent)}% of current stage. ${accessibleDetail}`
         );
+    }
+
+    private setRingValue(percent: number) {
+        const value = clampPercent(percent);
+        this.valueCircle.style.strokeDashoffset = String(100 - value);
+        this.valueCircle.dataset.empty = String(value <= 0);
     }
 
     private setStageAria(stage: StageEvent, completed: number) {
@@ -386,8 +392,74 @@ class ReconstructionProgress {
     }
 }
 
+/** How long a finished or failed transfer stays on screen before the strip folds away. */
+const SETTLED_LINGER_MS = 4_000;
+const FAILED_LINGER_MS = 20_000;
+
+/**
+ * Artifact transfers, on their own strip below the card.
+ */
+class TransferProgress {
+    private readonly root: HTMLElement;
+    private readonly title: HTMLElement;
+    private readonly track: HTMLElement;
+    private readonly bar: HTMLElement;
+    private readonly detail: HTMLElement;
+    private timer: number | null = null;
+
+    constructor(root: HTMLElement) {
+        this.root = root.querySelector('.recon-transfer') as HTMLElement;
+        this.title = root.querySelector('.recon-transfer-title') as HTMLElement;
+        this.track = root.querySelector('.recon-transfer-bar') as HTMLElement;
+        this.bar = root.querySelector('.recon-transfer-bar i') as HTMLElement;
+        this.detail = root.querySelector('.recon-transfer-detail') as HTMLElement;
+    }
+
+    set(title: string, detail: string, visual: ProgressVisual = { mode: 'indeterminate' }) {
+        this.clearTimer();
+        this.root.hidden = false;
+        this.root.dataset.mode = visual.mode;
+        this.title.textContent = title;
+        this.detail.textContent = detail;
+
+        const determinate = visual.mode === 'determinate';
+        const value = determinate ? clampPercent(visual.value) :
+            visual.mode === 'done' || visual.mode === 'failed' ? 100 : 0;
+        this.bar.style.width = `${value}%`;
+        this.track.setAttribute('aria-label', title);
+        if (determinate) {
+            this.track.setAttribute('aria-valuenow', String(Math.round(value)));
+            this.track.removeAttribute('aria-valuetext');
+        } else {
+            this.track.removeAttribute('aria-valuenow');
+            this.track.setAttribute('aria-valuetext', detail);
+        }
+
+        if (visual.mode === 'done' || visual.mode === 'idle') this.hideIn(SETTLED_LINGER_MS);
+        if (visual.mode === 'failed') this.hideIn(FAILED_LINGER_MS);
+    }
+
+    hide() {
+        this.clearTimer();
+        this.root.hidden = true;
+    }
+
+    private hideIn(delayMs: number) {
+        this.timer = window.setTimeout(() => {
+            this.timer = null;
+            this.root.hidden = true;
+        }, delayMs);
+    }
+
+    private clearTimer() {
+        if (this.timer === null) return;
+        window.clearTimeout(this.timer);
+        this.timer = null;
+    }
+}
+
 export {
-    PULL_PHASE, ReconstructionProgress, formatProgressAmount, pullLayersDone, pullTitle,
-    stageLabel
+    PULL_PHASE, ReconstructionProgress, TransferProgress, formatProgressAmount,
+    pullLayersDone, pullTitle, stageLabel
 };
 export type { ProgressVisual };

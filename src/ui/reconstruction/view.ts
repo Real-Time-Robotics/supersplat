@@ -1,4 +1,4 @@
-import { ProgressVisual, ReconstructionProgress } from './progress';
+import { ProgressVisual, ReconstructionProgress, TransferProgress } from './progress';
 import { runTitle, type Run } from './run';
 import type {
     JobHeartbeatEvent,
@@ -29,6 +29,8 @@ class ReconstructionView {
     private readonly artifacts: ArtifactsView;
     private readonly settings: SettingsView;
     readonly progress: ReconstructionProgress;
+    /** Artifact transfers: their own strip, so they never overwrite the run's card. */
+    readonly transfer: TransferProgress;
     private pipeline: ReconstructionPipeline = 'splat';
     /** The upload's own name, parked while an existing dataset borrows the field. */
     private typedName: string | null = null;
@@ -43,6 +45,7 @@ class ReconstructionView {
         this.artifacts = new ArtifactsView(this.shell.stage);
         this.settings = new SettingsView(this.shell.stage);
         this.progress = new ReconstructionProgress(root);
+        this.transfer = new TransferProgress(root);
 
         this.shell.closeButton.addEventListener('click',
             () => root.dispatchEvent(new CustomEvent('reconClose', { bubbles: true })));
@@ -271,6 +274,12 @@ class ReconstructionView {
 
     setState(title: string, detail: string, visual: ProgressVisual = { mode: 'idle' }) {
         this.progress.set(title, detail, visual);
+    }
+
+    /** The card is the run's; anything a transfer has to say goes here instead. */
+    setTransferState(title: string, detail: string,
+        visual: ProgressVisual = { mode: 'indeterminate' }) {
+        this.transfer.set(title, detail, visual);
     }
 
     setStage(stage: StageEvent) {
