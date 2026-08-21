@@ -43,6 +43,11 @@ export default [
             'require-atomic-updates': 'off'
         }
     }, {
+        files: ['worker/**/*.ts', 'src/backend/**/*.ts'],
+        rules: {
+            'no-undef': 'off'
+        }
+    }, {
         files: ['src/**/*.test.ts'],
         languageOptions: {
             globals: {

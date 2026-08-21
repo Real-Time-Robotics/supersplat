@@ -8,3 +8,4 @@ dist
 node_modules
 .env.local
 .wrangler
+worker-configuration.d.ts

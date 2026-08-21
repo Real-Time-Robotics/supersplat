@@ -21,7 +21,10 @@ import {
     sessionCookieHeader
 } from './session';
 
-type BackendEnv = Pick<Env, 'GENESIS_BASE_URL' | 'RECON_SESSIONS'>;
+type SessionNamespace = Cloudflare.Env['RECON_SESSIONS'];
+type SessionStub = ReturnType<SessionNamespace['get']>;
+
+type BackendEnv = { GENESIS_BASE_URL: string; RECON_SESSIONS: SessionNamespace };
 
 const RECON_PREFIX = '/api/reconstruction';
 const MAX_JSON_BODY_BYTES = 256 * 1024;
@@ -45,7 +48,7 @@ const objectFor = (request: Request, env: BackendEnv) => {
     return env.RECON_SESSIONS.get(env.RECON_SESSIONS.idFromName(id));
 };
 
-const askSession = (object: { fetch: (request: Request) => Promise<Response> },
+const askSession = (object: SessionStub,
     path: string, body?: unknown): Promise<Response> => object.fetch(new Request(
     `https://session.invalid${path}`,
     body === undefined ?
@@ -524,7 +527,7 @@ const handle = async (request: Request, env: BackendEnv): Promise<Response | nul
             return json({ error: 'Proxy path not allowed.', code: 'proxy_path_denied' }, 404);
         }
         if (error instanceof HttpError) {
-            const headers = error.code === 'session_expired' ? {
+            const headers: Record<string, string> = error.code === 'session_expired' ? {
                 'Set-Cookie': sessionCookieHeader('', {
                     secure: secureFor(request), maxAgeSeconds: 0
                 })

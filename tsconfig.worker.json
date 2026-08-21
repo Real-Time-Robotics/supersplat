@@ -1,13 +1,23 @@
 {
-    "extends": "./tsconfig.json",
     "compilerOptions": {
+        "target": "es2022",
+        "module": "es2022",
+        "moduleResolution": "bundler",
+
         "lib": ["es2022"],
-        "types": ["@cloudflare/workers-types"],
-        "noEmit": true
+        "types": ["./worker-configuration.d.ts", "node"],
+
+        "noEmit": true,
+        "noImplicitAny": true,
+        "strictNullChecks": false,
+        "strictPropertyInitialization": false,
+        "useUnknownInCatchVariables": false,
+        "skipLibCheck": true,
+        "resolveJsonModule": true
     },
     "include": [
-        "./src/backend/**/*.ts",
-        "./worker/**/*.ts",
+        "worker/**/*.ts",
+        "src/backend/**/*.ts",
         "worker-configuration.d.ts"
     ],
     "exclude": [

@@ -22,7 +22,7 @@ const SCHEMA = `CREATE TABLE IF NOT EXISTS session(
   updated_at        INTEGER NOT NULL
 )`;
 
-type SessionRow = Record<string, SqlStorageValue> & {
+type SessionRow = {
     version: number;
     kind: string;
     access_token: string;
@@ -122,7 +122,7 @@ class ReconstructionSession {
     readonly #ctx: DurableObjectState;
     #schemaReady = false;
 
-    constructor(ctx: DurableObjectState, env: Pick<Env, 'GENESIS_BASE_URL'>) {
+    constructor(ctx: DurableObjectState, env: { GENESIS_BASE_URL: string }) {
         this.#ctx = ctx;
         this.#state = new SessionState(sqliteStorage(ctx.storage.sql), {
             refreshTokens: token => refreshTokens(env.GENESIS_BASE_URL, token)

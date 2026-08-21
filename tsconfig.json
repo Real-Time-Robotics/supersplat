@@ -29,8 +29,9 @@
     ],
     "exclude": [
         "src/debug.ts", // Testing file
-        "src/backend/**",
         "src/**/*.test.ts",
+
+        "src/backend/**",
         "dist",
         "node_modules"
     ]
