@@ -18,7 +18,12 @@ import type {
     ReconstructionPipeline,
     UploadResponse
 } from './types';
-import { ReconstructionUpload, UploadPaused, type Named } from './upload';
+import {
+    ReconstructionUpload,
+    UploadPaused,
+    resetGenesisConnection,
+    type Named
+} from './upload';
 import type { TransferRate } from './upload-rate';
 import type { UploadRecord } from './upload-records';
 import {
@@ -33,9 +38,6 @@ import { ReconstructionView } from './view';
 import { Events } from '../../events';
 
 type PickedFolder = { named: Named[]; fingerprint: string; record: UploadRecord | null };
-
-// Matches the four boxes one user can rent at once on the control plane.
-const MAX_CONCURRENT_UPLOADS = 4;
 
 class ReconstructionWorkflow {
     private files: File[] = [];
@@ -197,11 +199,13 @@ class ReconstructionWorkflow {
     }
 
     beginSession() {
+        resetGenesisConnection();
         this.sessionGeneration++;
         this.coordinator.beginSession(this.billing.concurrentCap);
     }
 
     private endSession() {
+        resetGenesisConnection();
         this.sessionGeneration++;
         this.watchGeneration++;
         this.coordinator.stop();
@@ -776,7 +780,8 @@ class ReconstructionWorkflow {
         if (this.submitting.has(run.id)) return;
         const transferring = this.picked.has(run.id);
         // Only bytes are rationed. A run reusing an uploaded dataset must not wait behind someone else's upload.
-        if (transferring && this.upload.active >= MAX_CONCURRENT_UPLOADS) {
+        const maxParallelUploads = transferring ? await this.upload.maxParallelUploads() : 1;
+        if (transferring && this.upload.active >= maxParallelUploads) {
             this.coordinator.transition(run.id, 'queued', { detail: '' });
             if (select) this.selectRun(run.id);
             return;

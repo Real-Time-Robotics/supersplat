@@ -1,4 +1,10 @@
-import { Client, type UploadOptions, type Uploadable } from 'genesis-recon';
+import {
+    Client,
+    optionsFromPolicy,
+    type ClientPolicy,
+    type UploadOptions,
+    type Uploadable
+} from 'genesis-recon';
 
 import { describeFailure } from './failure';
 import { reconFetch } from './http';
@@ -9,7 +15,37 @@ import { RateMeter, formatTransferDetail, type TransferRate } from './upload-rat
 import { UploadRecords, type UploadRecord } from './upload-records';
 import { delay, formatBytes, formatDuration, readJson } from './utils';
 
-const gp = new Client(`${location.origin}/api/gp`, 'session-cookie', { fetch: reconFetch });
+const GP_BASE_URL = `${location.origin}/api/gp`;
+type GenesisConnection = { client: Client; policy: ClientPolicy };
+let connection: Promise<GenesisConnection> | null = null;
+let connectionExpiresAt = 0;
+
+const genesisConnection = (): Promise<GenesisConnection> => {
+    const now = Date.now();
+    if (connection && now < connectionExpiresAt) return connection;
+    connectionExpiresAt = Number.POSITIVE_INFINITY;
+    connection = (async () => {
+        const bootstrap = new Client(GP_BASE_URL, 'session-cookie', { fetch: reconFetch });
+        const config = await bootstrap.getConfig();
+        connectionExpiresAt = Date.now() + config.policy.policy_refresh_ms;
+        return {
+            client: new Client(GP_BASE_URL, 'session-cookie', {
+                ...optionsFromPolicy(config.policy),
+                fetch: reconFetch
+            }),
+            policy: config.policy
+        };
+    })().catch((error) => {
+        resetGenesisConnection();
+        throw error;
+    });
+    return connection;
+};
+
+const resetGenesisConnection = () => {
+    connection = null;
+    connectionExpiresAt = 0;
+};
 
 type Named = { name: string; data: File };
 
@@ -32,6 +68,7 @@ class UploadPaused extends Error {
 type UploadDeps = {
     createDatasetSession(): Promise<string>;
     uploadDataset(files: Uploadable[], opts: UploadOptions): Promise<string>;
+    clientPolicy?(): Promise<ClientPolicy>;
 };
 
 class ReconstructionUpload {
@@ -41,8 +78,10 @@ class ReconstructionUpload {
     private readonly deps: UploadDeps;
 
     constructor(deps: UploadDeps = {
-        createDatasetSession: () => gp.createDatasetSession(),
-        uploadDataset: (files, opts) => gp.uploadDataset(files, opts)
+        createDatasetSession: async () => (await genesisConnection()).client.createDatasetSession(),
+        uploadDataset: async (files, opts) =>
+            (await genesisConnection()).client.uploadDataset(files, opts),
+        clientPolicy: async () => (await genesisConnection()).policy
     }) {
         this.deps = deps;
     }
@@ -60,6 +99,11 @@ class ReconstructionUpload {
         return this.transfers.size;
     }
 
+    async maxParallelUploads(): Promise<number> {
+        return this.deps.clientPolicy ?
+            (await this.deps.clientPolicy()).max_parallel_uploads : 1;
+    }
+
     isTransferring(key: string): boolean {
         return this.transfers.has(key);
     }
@@ -72,7 +116,7 @@ class ReconstructionUpload {
     }
 
     async openSessions(): Promise<UploadRecord[]> {
-        const sessions = await gp.listOpenSessions();
+        const sessions = await (await genesisConnection()).client.listOpenSessions();
         return this.records.reconcile(sessions.map(session => session.dataset_id));
     }
 
@@ -107,10 +151,12 @@ class ReconstructionUpload {
 
     private async drive(key: string, named: Named[], record: UploadRecord,
         hooks: TransferHooks): Promise<string> {
+        const retryDelays = this.deps.clientPolicy ?
+            (await this.deps.clientPolicy()).upload_retry_delays_ms : [];
         const transfer = new Transfer(named, record, {
             uploadDataset: (files, opts) => this.deps.uploadDataset(files, opts),
             sleep: delay
-        });
+        }, retryDelays);
         this.transfers.set(key, transfer);
         try {
             const outcome = await transfer.run(
@@ -170,5 +216,5 @@ class ReconstructionUpload {
     }
 }
 
-export { ReconstructionUpload, UploadPaused, gp };
+export { ReconstructionUpload, UploadPaused, genesisConnection, resetGenesisConnection };
 export type { Named, TransferHooks, UploadDeps };

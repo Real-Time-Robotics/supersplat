@@ -6,6 +6,7 @@ import { UploadError } from 'genesis-recon';
 import { Transfer } from './transfer.ts';
 
 const target = { datasetId: 'ds1', label: 'set' };
+const retryDelays = [5_000, 15_000, 30_000];
 
 const deps = (uploadDataset) => {
     const waits: number[] = [];
@@ -28,7 +29,7 @@ test('a retryable failure is re-entered with the stored datasetId', async () => 
         if (attempt++ < 2) throw new UploadError('reset', undefined, 'network-interrupted');
         return 'ds1';
     });
-    const outcome = await new Transfer([], target, d).run();
+    const outcome = await new Transfer([], target, d, retryDelays).run();
 
     assert.deepEqual(outcome, { state: 'done' });
     assert.equal(seen.length, 3);
@@ -42,7 +43,7 @@ test('a pause is not retried and reports paused', async () => {
         calls++;
         throw new UploadError('stopped', undefined, 'cancelled');
     });
-    const outcome = await new Transfer([], target, d).run();
+    const outcome = await new Transfer([], target, d, retryDelays).run();
 
     assert.deepEqual(outcome, { state: 'paused' });
     assert.equal(calls, 1);
@@ -55,7 +56,7 @@ test('a permanent failure is not retried', async () => {
         calls++;
         throw new UploadError('malformed', 400, 'permanent');
     });
-    const outcome = await new Transfer([], target, d).run();
+    const outcome = await new Transfer([], target, d, retryDelays).run();
 
     assert.equal(outcome.state, 'failed');
     assert.equal(calls, 1);
@@ -67,7 +68,7 @@ test('retries are bounded and the last failure is surfaced', async () => {
         calls++;
         throw new UploadError('reset', undefined, 'network-interrupted');
     });
-    const outcome = await new Transfer([], target, d).run();
+    const outcome = await new Transfer([], target, d, retryDelays).run();
 
     assert.equal(outcome.state, 'failed');
     assert.equal(calls, 4);
@@ -82,7 +83,7 @@ test('pause() aborts the in-flight transfer through the signal it passed in', as
             reject(new UploadError('stopped', undefined, 'cancelled'));
         });
     }));
-    const transfer = new Transfer([], target, d);
+    const transfer = new Transfer([], target, d, retryDelays);
     const running = transfer.run();
     await Promise.resolve();
     transfer.pause();

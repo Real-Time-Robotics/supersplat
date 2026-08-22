@@ -4,7 +4,7 @@ import { onSessionEnded, reconFetch } from './http';
 import type { ProgressVisual } from './progress';
 import { editableName } from './rename';
 import type { Artifact, ArtifactSource, RecentDataset, RecentRun } from './types';
-import { gp } from './upload';
+import { genesisConnection } from './upload';
 import { RateMeter, formatTransferDetail } from './upload-rate';
 import {
     OPENABLE_ARTIFACT_EXTENSIONS,
@@ -527,6 +527,7 @@ class ReconstructionArtifacts {
             artifact.local = blob !== null;
             this.updateArtifactLocation(artifact);
             if (!blob) {
+                const gp = (await genesisConnection()).client;
                 const url = source.type === 'job' ?
                     await gp.getArtifactUrl(source.jobId, artifact.name,
                         { signal: controller.signal }) :

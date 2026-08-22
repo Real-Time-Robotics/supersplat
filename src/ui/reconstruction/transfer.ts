@@ -15,19 +15,20 @@ type TransferOutcome =
     | { state: 'paused' }
     | { state: 'failed'; error: unknown };
 
-const RETRY_DELAYS_MS = [5_000, 15_000, 30_000];
-
 class Transfer {
     private readonly files: Uploadable[];
     private readonly target: TransferTarget;
     private readonly deps: TransferDeps;
+    private readonly retryDelaysMs: readonly number[];
     private controller: AbortController | null = null;
     private paused = false;
 
-    constructor(files: Uploadable[], target: TransferTarget, deps: TransferDeps) {
+    constructor(files: Uploadable[], target: TransferTarget, deps: TransferDeps,
+        retryDelaysMs: readonly number[]) {
         this.files = files;
         this.target = target;
         this.deps = deps;
+        this.retryDelaysMs = retryDelaysMs;
     }
 
     /** Stop the bytes and keep everything the store already accepted. */
@@ -51,7 +52,7 @@ class Transfer {
             } catch (error) {
                 const failureClass = classOf(error);
                 if (this.paused || failureClass === 'cancelled') return { state: 'paused' };
-                const delay = RETRY_DELAYS_MS[attempt];
+                const delay = this.retryDelaysMs[attempt];
                 if (delay === undefined || !isRetryable(failureClass)) {
                     return { state: 'failed', error };
                 }
