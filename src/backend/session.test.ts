@@ -255,3 +255,31 @@ test('the cookie header carries the fixed attributes', () => {
     }
     assert.ok(!sessionCookieHeader('tok', { secure: false, maxAgeSeconds: 0 }).includes('Secure'));
 });
+
+test('a credential carries the deadline the client signs itself out on', async () => {
+    const time = clock();
+    const start = time.at();
+    const { session } = stateFor({ now: time.at });
+    session.create({ kind: 'api-key', apiKey: 'gp_live_x', label: 'me', customerId: 'c1' });
+
+    assert.equal((await session.credential())?.expiresAt, start + SESSION_LIFETIME_MS);
+});
+
+test('renewing an access token does not read as a longer session', async () => {
+    const time = clock();
+    const start = time.at();
+    const { session } = stateFor({ now: time.at });
+    session.create({
+        kind: 'oidc',
+        accessToken: 'a1',
+        refreshToken: 'r1',
+        expiresIn: 300,
+        label: 'me',
+        customerId: 'c1'
+    });
+
+    time.advance(299_000);
+    const credential = await session.credential();
+    assert.equal(credential?.token, 'a2', 'the token did renew');
+    assert.equal(credential?.expiresAt, start + SESSION_LIFETIME_MS);
+});

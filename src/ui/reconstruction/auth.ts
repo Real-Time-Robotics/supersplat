@@ -1,4 +1,5 @@
 import { endSession, onSessionEnded, reconFetch, sessionRestored } from './http';
+import { SessionWatch } from './session-watch';
 import { ReconstructionView } from './view';
 
 type Account = {
@@ -9,6 +10,8 @@ type Account = {
 type SessionResponse = {
     authenticated: true;
     account: Account;
+    // Absent from a server older than the expiry watch; the watch then simply idles.
+    expiresAt?: number | null;
 };
 
 type AuthValues = Record<string, string>;
@@ -40,6 +43,7 @@ const validate = (mode: string, values: AuthValues): string | null => {
 class ReconstructionAuth {
     private account: Account | null = null;
     private requestInFlight = false;
+    private readonly watch = new SessionWatch(() => endSession());
 
     constructor(
         private readonly view: ReconstructionView,
@@ -74,6 +78,17 @@ class ReconstructionAuth {
         view.query<HTMLButtonElement>('.recon-sign-out').addEventListener('click', () => this.signOut());
         onSessionEnded(() => this.forgetSession(
             'Phiên đăng nhập đã hết hạn. Hãy đăng nhập lại để tiếp tục.'));
+        // A timer alone cannot be trusted: a background tab throttles it and a sleeping
+        // machine skips it, so every wake-up re-reads the clock as well.
+        const wake = () => {
+            this.watch.wake();
+        };
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible') wake();
+        });
+        window.addEventListener('focus', wake);
+        window.addEventListener('pageshow', wake);
+        window.addEventListener('online', wake);
     }
 
     async ensure() {
@@ -92,6 +107,7 @@ class ReconstructionAuth {
             const session = await this.readResponse(response);
             this.account = session.account;
             sessionRestored();
+            this.watch.arm(session.expiresAt);
             await this.activate();
         } catch (error) {
             this.setStatus(error instanceof Error ? error.message : String(error), true);
@@ -141,6 +157,7 @@ class ReconstructionAuth {
             const session = await this.readResponse(response);
             this.account = session.account;
             sessionRestored();
+            this.watch.arm(session.expiresAt);
             form.reset();
             await this.activate();
         } catch (error) {
@@ -171,6 +188,7 @@ class ReconstructionAuth {
     }
 
     private forgetSession(message: string) {
+        this.watch.disarm();
         this.account = null;
         this.view.showAuth();
         this.setTab('login');

@@ -22,7 +22,12 @@ type SessionRecord = {
 
 type Account = { label: string; customerId: string };
 
-type Credential = { token: string; kind: SessionKind; account: Account };
+type Credential = {
+    token: string;
+    kind: SessionKind;
+    account: Account;
+    expiresAt: number;
+};
 
 type TokenSet = { accessToken: string; refreshToken: string; expiresIn: number };
 
@@ -49,6 +54,15 @@ const isSessionId = (value: string): boolean => SESSION_ID_RE.test(value);
 
 const accountOf = (record: SessionRecord): Account => ({
     label: record.label, customerId: record.customerId
+});
+
+const credentialOf = (record: SessionRecord): Credential => ({
+    token: record.kind === 'api-key' ? record.apiKey : record.accessToken,
+    kind: record.kind,
+    account: accountOf(record),
+    // The session's own deadline, never the access token's: the client arms its sign-out
+    // on this, and a token refresh must not look like a longer session.
+    expiresAt: record.expiresAt
 });
 
 const readCookie = (request: Request, name: string): string | null => {
@@ -117,14 +131,12 @@ class SessionState {
     async credential(): Promise<Credential | null> {
         const record = this.#live();
         if (!record) return null;
-        if (record.kind === 'api-key') {
-            return { token: record.apiKey, kind: 'api-key', account: accountOf(record) };
-        }
+        if (record.kind === 'api-key') return credentialOf(record);
         const fresh = record.accessExpiresAt - this.#now() > ACCESS_REFRESH_MARGIN_MS ?
             record :
             await this.#renew();
         if (!fresh) return null;
-        return { token: fresh.accessToken, kind: 'oidc', account: accountOf(fresh) };
+        return credentialOf(fresh);
     }
 
     async reauthenticate(): Promise<Credential | null> {
@@ -135,7 +147,7 @@ class SessionState {
         }
         const fresh = await this.#renew();
         if (!fresh) return null;
-        return { token: fresh.accessToken, kind: 'oidc', account: accountOf(fresh) };
+        return credentialOf(fresh);
     }
 
     expiresAt(): number | null {

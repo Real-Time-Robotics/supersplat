@@ -90,8 +90,9 @@ const establish = async (request: Request, env: BackendEnv, record: Record<strin
     if (!created.ok) {
         throw new HttpError(503, 'Session storage is unavailable.', 'sessions_unavailable');
     }
-    const { account } = await created.json() as { account: Account };
-    return json({ authenticated: true, account }, status, {
+    const { account, expiresAt } = await created.json() as
+        { account: Account; expiresAt: number | null };
+    return json({ authenticated: true, account, expiresAt }, status, {
         'Set-Cookie': sessionCookieHeader(id, {
             secure: secureFor(request),
             maxAgeSeconds: Math.floor(SESSION_LIFETIME_MS / 1000)
@@ -173,7 +174,13 @@ const sessionRoute = async (request: Request, env: BackendEnv,
     rest: string): Promise<Response | null> => {
     if (rest === '' && request.method === 'GET') {
         const session = await requireSession(request, env);
-        return json({ authenticated: true, account: session.account });
+        // expiresAt lets the client sign itself out on time instead of waiting for the
+        // next action to be refused.
+        return json({
+            authenticated: true,
+            account: session.account,
+            expiresAt: session.expiresAt
+        });
     }
     if (rest === '' && request.method === 'DELETE') {
         // Security: delete server state before clearing the cookie.
@@ -267,7 +274,7 @@ const submitJob = async (request: Request, gp: any): Promise<Response> => {
     const idempotencyKey = String(body.idempotencyKey || crypto.randomUUID());
     // `label` is what the user calls the run; `runName` is where it lands on the store.
     const jobId = await gp.submitJob(pipeline, config,
-        { idempotencyKey, label: labelOf(body) || undefined });
+        { idempotencyKey, label: labelOf(body) || undefined, preset });
     return json({ jobId, idempotencyKey }, 202);
 };
 

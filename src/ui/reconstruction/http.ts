@@ -4,19 +4,24 @@ type FetchInit = Parameters<typeof fetch>[1];
 
 const listeners = new Set<Listener>();
 let ended = false;
+type SessionScope = { controller: AbortController };
+let currentScope: SessionScope = { controller: new AbortController() };
 
 const onSessionEnded = (listener: Listener): (() => void) => {
     listeners.add(listener);
     return () => listeners.delete(listener);
 };
 
-const endSession = (): void => {
-    if (ended) return;
+const endSession = (scope: SessionScope = currentScope): void => {
+    if (scope !== currentScope || ended) return;
     ended = true;
+    scope.controller.abort();
     for (const listener of [...listeners]) listener();
 };
 
 const sessionRestored = (): void => {
+    currentScope.controller.abort();
+    currentScope = { controller: new AbortController() };
     ended = false;
 };
 
@@ -44,13 +49,46 @@ const apiPath = (input: FetchInput): string | null => {
     }
 };
 
+const sessionSignal = (input: FetchInput, init: FetchInit, scope: SessionScope): {
+    signal: AbortSignal;
+    release: () => void;
+} => {
+    const signals = [
+        scope.controller.signal,
+        init.signal,
+        input instanceof Request ? input.signal : undefined
+    ].filter((signal): signal is AbortSignal => Boolean(signal));
+    if (signals.length === 1) return { signal: signals[0], release: () => undefined };
+
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    for (const signal of signals) {
+        if (signal.aborted) {
+            abort();
+            break;
+        }
+        signal.addEventListener('abort', abort, { once: true });
+    }
+    return {
+        signal: controller.signal,
+        release: () => signals.forEach(signal => signal.removeEventListener('abort', abort))
+    };
+};
+
 const reconFetch = async (input: FetchInput, init: FetchInit = {}): Promise<Response> => {
-    const response = await fetch(input, init);
+    const scope = currentScope;
+    const scoped = sessionSignal(input, init, scope);
+    let response: Response;
+    try {
+        response = await fetch(input, { ...init, signal: scoped.signal });
+    } finally {
+        scoped.release();
+    }
     const path = apiPath(input);
     const internal = path?.startsWith('/api/reconstruction') || path?.startsWith('/api/gp');
-    if (internal && await isSessionRefusal(response)) endSession();
+    if (internal && await isSessionRefusal(response)) endSession(scope);
     const method = init.method ?? (input instanceof Request ? input.method : 'GET');
-    if (path === '/api/reconstruction/session' && method.toUpperCase() === 'DELETE') endSession();
+    if (path === '/api/reconstruction/session' && method.toUpperCase() === 'DELETE') endSession(scope);
     return response;
 };
 

@@ -754,8 +754,8 @@ class ReconstructionWorkflow {
 
     private submitRun(run: Run): Promise<string> {
         return this.job.submit(run.datasetId as string,
-            run.pipeline as ReconstructionPipeline, run.runName, run.submitKey as string,
-            run.label);
+            run.pipeline as ReconstructionPipeline, run.preset, run.runName,
+            run.submitKey as string, run.label);
     }
 
     private reconstruct() {

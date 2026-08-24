@@ -157,7 +157,7 @@ class ReconstructionSession {
             const account = this.#state.create(await request.json() as SessionInput);
             const expiresAt = this.#state.expiresAt();
             if (expiresAt) await this.#ctx.storage.setAlarm?.(expiresAt);
-            return json({ account });
+            return json({ account, expiresAt });
         }
         if (pathname === '/credential') {
             const credential = await this.#state.credential();

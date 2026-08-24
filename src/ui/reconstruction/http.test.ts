@@ -135,3 +135,27 @@ test('a server error is not mistaken for an expiry', async () => {
     assert.equal(announcements, 0);
     assert.equal(sessionIsOver(), false);
 });
+
+test('a refusal from an obsolete request cannot end a newly restored session', async () => {
+    let reply: ((response: Response) => void) | null = null;
+    let oldSignal: AbortSignal | undefined;
+    (globalThis as any).fetch = async (_path: string, init: { signal?: AbortSignal }) => {
+        oldSignal = init.signal ?? undefined;
+        return await new Promise<Response>((resolve) => {
+            reply = resolve;
+        });
+    };
+    let announcements = 0;
+    onSessionEnded(() => {
+        announcements += 1;
+    });
+
+    const obsolete = reconFetch('/api/reconstruction/credits');
+    sessionRestored();
+    assert.equal(oldSignal?.aborted, true, 'restoring a session aborts work owned by the old one');
+    reply?.(answer(401, { code: 'session_expired' }));
+    await obsolete;
+
+    assert.equal(announcements, 0);
+    assert.equal(sessionIsOver(), false);
+});

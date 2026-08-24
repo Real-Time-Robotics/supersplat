@@ -206,14 +206,14 @@ class ReconstructionJob {
 
     /** `runName` is the directory on the store; `name` is what the user calls the run. */
     async submit(datasetId: string, pipeline: ReconstructionPipeline,
-        runName: string, idempotencyKey: string, label = ''): Promise<string> {
+        preset: string, runName: string, idempotencyKey: string, label = ''): Promise<string> {
         const response = await reconFetch('/api/reconstruction/jobs', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 datasetId,
                 pipeline,
-                preset: 'standard',
+                preset,
                 runName,
                 label,
                 idempotencyKey

@@ -72,10 +72,18 @@ test('auth sessions and photogrammetry proxy flow remain isolated and typed', as
             sendJson(res, 200, { required: 40, balance: 123, billable_gpx: 1.5 });
         } else if (req.method === 'GET' && url.pathname === '/v1/pipelines') {
             sendJson(res, 200, [
-                { name: 'photogrammetry', label: 'Photogrammetry', supports_viewer: false,
-                    run_name_field: 'run_name' },
-                { name: 'splat', label: 'Splat', supports_viewer: true,
-                    run_name_field: 'train.result_name' }
+                {
+                    name: 'photogrammetry',
+                    label: 'Photogrammetry',
+                    supports_viewer: false,
+                    run_name_field: 'run_name'
+                },
+                {
+                    name: 'splat',
+                    label: 'Splat',
+                    supports_viewer: true,
+                    run_name_field: 'train.result_name'
+                }
             ]);
         } else if (req.method === 'GET' &&
             url.pathname === '/v1/pipelines/photogrammetry/presets/standard') {
@@ -223,6 +231,7 @@ test('auth sessions and photogrammetry proxy flow remain isolated and typed', as
     assert.equal((await job.json()).jobId, 'photo-job');
     assert.equal(submissions.length, 1);
     assert.equal(submissions[0].pipeline_name, 'photogrammetry');
+    assert.equal(submissions[0].preset, 'standard');
     assert.deepEqual(submissions[0].config, {
         sparse_subdir: 'sparse/0_geo',
         image_subdir: 'images_4',
@@ -246,8 +255,12 @@ test('a splat run name is placed at the published nested path, merging not repla
     const gateway = createServer(async (req, res) => {
         const url = new URL(req.url, 'http://x');
         if (req.method === 'GET' && url.pathname === '/v1/pipelines') {
-            sendJson(res, 200, [{ name: 'splat', label: 'Splat', supports_viewer: true,
-                run_name_field: 'train.result_name' }]);
+            sendJson(res, 200, [{
+                name: 'splat',
+                label: 'Splat',
+                supports_viewer: true,
+                run_name_field: 'train.result_name'
+            }]);
         } else if (req.method === 'GET' &&
             url.pathname === '/v1/pipelines/splat/presets/standard') {
             sendJson(res, 200, {
@@ -277,6 +290,7 @@ test('a splat run name is placed at the published nested path, merging not repla
     });
 
     assert.equal(job.status, 202);
+    assert.equal(submissions[0].preset, 'standard');
     assert.deepEqual(submissions[0].config.train,
         { iterations: 30000, sh_degree: 3, result_name: 'standard-2' });
     assert.equal(submissions[0].config.other, 1);
