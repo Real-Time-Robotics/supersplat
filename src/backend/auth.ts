@@ -2,6 +2,7 @@ import { HttpError } from './http-error';
 import type { TokenSet } from './session';
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@][^\s.@]*\.[^\s@]+$/;
+const ACCOUNT_NOT_SET_UP = 'Account is not fully set up';
 
 const errorDetail = (payload: any, fallback: string): string => {
     const detail = payload?.detail ?? payload?.error_description ?? payload?.error ?? fallback;
@@ -78,6 +79,11 @@ const tokenRequest = async (issuer: string, body: URLSearchParams,
         body
     });
     const payload = await response.json().catch((): null => null) as any;
+    if (payload?.error === 'invalid_grant' && payload?.error_description === ACCOUNT_NOT_SET_UP) {
+        throw new HttpError(403,
+            'Verify your email address first: open the link we sent you, then sign in.',
+            'account_setup_required');
+    }
     if (!response.ok || !payload?.access_token) {
         throw new HttpError(
             response.status === 400 || response.status === 401 ? 401 : response.status,

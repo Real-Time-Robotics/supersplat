@@ -228,7 +228,14 @@ const sessionRoute = async (request: Request, env: BackendEnv,
         };
         validateRegistration(input);
         await registerUser(env.GENESIS_BASE_URL, input);
-        return loginAndEstablish(request, env, input.email, input.password, 201);
+        try {
+            return await loginAndEstablish(request, env, input.email, input.password, 201);
+        } catch (error) {
+            if (error instanceof HttpError && error.code === 'account_setup_required') {
+                return json({ authenticated: false, verificationRequired: true }, 201);
+            }
+            throw error;
+        }
     }
     return null;
 };

@@ -14,6 +14,11 @@ type SessionResponse = {
     expiresAt?: number | null;
 };
 
+type PendingVerification = {
+    authenticated: false;
+    verificationRequired: true;
+};
+
 type AuthValues = Record<string, string>;
 
 const validEmail = (value: string) => {
@@ -154,11 +159,17 @@ class ReconstructionAuth {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(values)
             });
-            const session = await this.readResponse(response);
+            const session = await this.readResponse<SessionResponse | PendingVerification>(response);
+            form.reset();
+            if (!session.authenticated) {
+                this.setBusy(false);
+                this.setTab('login');
+                this.setStatus(`Account created. Open the verification link we sent to ${values.email}, then sign in.`);
+                return;
+            }
             this.account = session.account;
             sessionRestored();
             this.watch.arm(session.expiresAt);
-            form.reset();
             await this.activate();
         } catch (error) {
             this.setStatus(error instanceof Error ? error.message : String(error), true);
@@ -167,10 +178,10 @@ class ReconstructionAuth {
         }
     }
 
-    private async readResponse(response: Response): Promise<SessionResponse> {
+    private async readResponse<T = SessionResponse>(response: Response): Promise<T> {
         const payload = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(payload.error || `Request failed (${response.status}).`);
-        return payload as SessionResponse;
+        return payload as T;
     }
 
     private async activate() {

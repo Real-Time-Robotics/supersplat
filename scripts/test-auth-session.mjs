@@ -250,6 +250,57 @@ test('auth sessions and photogrammetry proxy flow remain isolated and typed', as
     assert.equal(uploadSessions, 0, 'reusing an existing dataset must not create an upload session');
 });
 
+test('an account that still has to verify its email is created without a session', async (context) => {
+    const registrations = [];
+    let issuer = '';
+    const gateway = createServer(async (req, res) => {
+        const url = new URL(req.url, issuer);
+        if (req.method === 'GET' && url.pathname === '/v1/config') {
+            sendJson(res, 200, { oidc_issuer: issuer, oidc_client_id: 'supersplat-test' });
+        } else if (req.method === 'POST' && url.pathname === '/v1/auth/register') {
+            let body = '';
+            for await (const chunk of req) body += chunk;
+            registrations.push(JSON.parse(body));
+            sendJson(res, 201, { sub: 'unverified-user' });
+        } else if (req.method === 'POST' && url.pathname === '/protocol/openid-connect/token') {
+            sendJson(res, 400, { error: 'invalid_grant', error_description: 'Account is not fully set up' });
+        } else {
+            sendJson(res, 404, { detail: `Unexpected ${req.method} ${url.pathname}` });
+        }
+    });
+    const gatewayPort = await listenOnRandomPort(gateway);
+    issuer = `http://127.0.0.1:${gatewayPort}`;
+    context.after(() => gateway.close());
+    const env = envFor(gatewayPort);
+
+    const registration = await call(env, '/api/reconstruction/session/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            firstName: 'Ada',
+            lastName: 'Lovelace',
+            email: 'ada@example.com',
+            password: 'secret',
+            confirmPassword: 'secret'
+        })
+    });
+    assert.equal(registration.status, 201);
+    assert.deepEqual(await registration.json(), { authenticated: false, verificationRequired: true });
+    assert.equal(registration.headers.get('set-cookie'), null);
+    assert.equal(registrations.length, 1);
+
+    const login = await call(env, '/api/reconstruction/session/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: 'ada@example.com', password: 'secret' })
+    });
+    assert.equal(login.status, 403);
+    const refused = await login.json();
+    assert.equal(refused.code, 'account_setup_required');
+    assert.match(refused.error, /verify your email/i);
+    assert.equal(login.headers.get('set-cookie'), null);
+});
+
 test('a splat run name is placed at the published nested path, merging not replacing', async (context) => {
     const submissions = [];
     const gateway = createServer(async (req, res) => {
