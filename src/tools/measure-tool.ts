@@ -20,6 +20,8 @@ const mat3 = new Mat4();
 const p = new Vec3();
 const p0 = new Vec3();
 const p1 = new Vec3();
+const bmin = new Vec3();
+const bmax = new Vec3();
 const r = new Quat();
 const s = new Vec3();
 
@@ -35,11 +37,11 @@ class MeasureTool {
     deactivate: () => void;
     getFocus: () => { position: Vec3, radius: number } | null;
 
-    constructor(events: Events, scene: Scene, canvasContainer: Container) {
+    constructor(events: Events, scene: Scene, canvasContainer: Container, annotationParent: HTMLElement) {
         // the length label along the measured line (shown when 'show
         // dimensions' is enabled); the points and line render in the scene
         // via the shared tool overlay
-        const dimLabels = new DimensionLabels(scene, canvasContainer.dom, canvasContainer.dom, 'measure-tool-svg', 1);
+        const dimLabels = new DimensionLabels(scene, canvasContainer.dom, annotationParent, 'measure-tool-svg', 1);
 
         // ui
         const hintLabel = new Label({ class: 'select-toolbar-label' });
@@ -170,10 +172,6 @@ class MeasureTool {
                 // for now we always deactivate the tool so the current transform handler remains in place
                 events.fire('tool.deactivate');
             }
-        });
-
-        events.on('pivot.started', () => {
-
         });
 
         events.on('pivot.moved', () => {
@@ -341,8 +339,10 @@ class MeasureTool {
 
                 // place at the pointer-down position: that is where the user aimed
                 if (splat.measurePoints.length < 2) {
+                    const target = splat;
                     const result = await scene.camera.intersect(clickX / canvasContainer.dom.clientWidth, clickY / canvasContainer.dom.clientHeight);
-                    if (result) {
+                    // another click may have landed a point while the pick was in flight
+                    if (result && active && splat === target && splat.measurePoints.length < 2) {
                         mat.invert(splat.worldTransform);
                         mat.transformPoint(result.position, p);
                         splat.measureSelection = splat.measurePoints.length;
@@ -399,24 +399,22 @@ class MeasureTool {
                 return null;
             }
 
-            const position = new Vec3();
-            for (let i = 0; i < count; i++) {
+            // the points' world aabb, framed like the selection bound: its
+            // center at half its diagonal
+            getPoint(0, bmin);
+            bmax.copy(bmin);
+            for (let i = 1; i < count; i++) {
                 getPoint(i, p);
-                position.add(p);
+                bmin.min(p);
+                bmax.max(p);
             }
-            position.mulScalar(1 / count);
+            const position = new Vec3().add2(bmin, bmax).mulScalar(0.5);
+            let radius = bmax.sub(bmin).length() * 0.5;
 
-            let radius = 0;
-            for (let i = 0; i < count; i++) {
-                getPoint(i, p);
-                radius = Math.max(radius, p.distance(position));
+            // a lone point has no extent: center it and keep the current zoom
+            if (radius === 0) {
+                radius = scene.camera.distance * scene.camera.sceneRadius;
             }
-
-            // frame with some margin; a lone point falls back to a radius
-            // relative to the splat's world size
-            splat.worldTransform.getScale(p);
-            const maxScale = Math.max(Math.abs(p.x), Math.abs(p.y), Math.abs(p.z));
-            radius = Math.max(radius * 1.5, splat.localBound.halfExtents.length() * maxScale * 0.05);
 
             return { position, radius };
         };

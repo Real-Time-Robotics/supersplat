@@ -3,39 +3,35 @@
  */
 
 import {
-    getInputFormat,
-    readFile,
-    readPly,
-    sortMortonOrder,
-    createChunkDataPool,
-    materializeToDataTable,
-    selectLod,
-    Column,
-    DataTable,
+    ChunkData,
+    ChunkLayer,
+    ChunkSource,
+    ChunkSourceMetadata,
+    Options,
+    ReadFileSystem,
+    ReadRequest,
     Transform,
     ZipReadFileSystem,
-    type ChunkSource,
-    type ColumnType,
-    type Options,
-    type ReadFileSystem
+    createChunkDataPool,
+    getInputFormat,
+    materializeToDataTable,
+    readFile,
+    selectLod,
+    sortMortonOrder
 } from '@playcanvas/splat-transform';
-import { GSplatData } from 'playcanvas';
-
-import { probeDenseCloud, readVertexTable } from './openmvs-ply';
-import { isPointCloud, pointCloudBudget, promotePointCloud } from './point-cloud';
 
 type LoadResult = {
-    gsplatData: GSplatData;
+    source: ChunkSource;
     transform: Transform;
-    pointCloud: boolean;
 };
 
 // invoked when a file contains multiple LODs. returns the LOD index to load,
 // or null to cancel the load.
 type PickLod = (lodCounts: readonly number[]) => Promise<number | null>;
 
+// maximum splat count considered reasonable to load, used to select a default
+// LOD level for multi-LOD formats (e.g. LCC)
 const LOD_MAX_SPLATS = 20_000_000;
-
 
 // pick the most detailed LOD under the splat limit, or the least detailed
 // when all levels exceed it
@@ -60,120 +56,134 @@ const defaultOptions: Options = {
 };
 
 /**
- * Map splat-transform column types to GSplatData property types.
+ * Presents `parent` reordered by `order` (`order[row]` is the parent row that
+ * appears at `row`). `parent` and `order` are public so consumers doing bulk
+ * sequential work (e.g. the initial texture upload) can iterate the parent in
+ * its native order — fast sequential reads — and scatter rows to their
+ * permuted destination, instead of gathering the whole file in permuted order.
  */
-const columnTypeToGSplatType = (colType: ColumnType | null): string => {
-    switch (colType) {
-        case 'int8': return 'char';
-        case 'uint8': return 'uchar';
-        case 'int16': return 'short';
-        case 'uint16': return 'ushort';
-        case 'int32': return 'int';
-        case 'uint32': return 'uint';
-        case 'float32': return 'float';
-        case 'float64': return 'double';
-        default: return 'float';
-    }
-};
+class PermutedChunkSource implements ChunkSource {
+    readonly meta: ChunkSourceMetadata;
 
-/**
- * Convert a splat-transform DataTable to PlayCanvas GSplatData.
- */
-const dataTableToGSplatData = (dataTable: DataTable): GSplatData => {
-    const properties = dataTable.columns.map((col: Column) => ({
-        type: columnTypeToGSplatType(col.dataType),
-        name: col.name,
-        storage: col.data,
-        byteSize: col.data.BYTES_PER_ELEMENT
-    }));
-
-    const gsplatData = new GSplatData([{
-        name: 'vertex',
-        count: dataTable.numRows,
-        properties
-    }]);
-
-    // Support loading 2D splats by adding scale_2 property with almost 0 scale
-    if (gsplatData.getProp('scale_0') && gsplatData.getProp('scale_1') && !gsplatData.getProp('scale_2')) {
-        const scale2 = new Float32Array(gsplatData.numSplats).fill(Math.log(1e-6));
-        gsplatData.addProp('scale_2', scale2);
-
-        // Place the new scale_2 property just after scale_1
-        const props = gsplatData.getElement('vertex').properties;
-        props.splice(props.findIndex((prop: any) => prop.name === 'scale_1') + 1, 0, props.splice(props.length - 1, 1)[0]);
+    constructor(readonly parent: ChunkSource, readonly order: Uint32Array) {
+        this.meta = {
+            ...parent.meta,
+            numGaussians: order.length,
+            numLods: 1,
+            lodCounts: [order.length],
+            numChunks: [Math.ceil(order.length / parent.meta.chunkSize)]
+        };
     }
 
-    return gsplatData;
+    read(request: ReadRequest): Promise<void> {
+        const target = {
+            position: request.position,
+            geometric: request.geometric,
+            color: request.color,
+            other: request.other
+        };
+        if ('indices' in request) {
+            const mapped = new Uint32Array(request.count);
+            for (let i = 0; i < request.count; ++i) {
+                mapped[i] = this.order[request.indices[request.indexOffset + i]];
+            }
+            return this.parent.read({
+                ...target,
+                indices: mapped,
+                indexOffset: 0,
+                count: mapped.length
+            });
+        }
+
+        const anyData = (request.position ?? request.geometric ?? request.color ?? request.other) as ChunkData;
+        const indexOffset = request.chunkIndex * this.meta.chunkSize;
+        return this.parent.read({
+            ...target,
+            indices: this.order,
+            indexOffset,
+            count: anyData.count
+        });
+    }
+
+    close(): Promise<void> {
+        return this.parent.close();
+    }
+}
+
+class OwnedChunkSource implements ChunkSource {
+    readonly meta: ChunkSourceMetadata;
+    private closed = false;
+
+    constructor(private readonly parent: ChunkSource, private readonly onClose: () => void | Promise<void>) {
+        this.meta = parent.meta;
+    }
+
+    read(request: ReadRequest): Promise<void> {
+        return this.parent.read(request);
+    }
+
+    async close(): Promise<void> {
+        if (this.closed) return;
+        this.closed = true;
+        try {
+            await this.parent.close();
+        } finally {
+            await this.onClose();
+        }
+    }
+}
+
+const selectFirst = async (sources: ChunkSource[], pickLod?: PickLod) => {
+    const first = sources[0];
+    for (let i = 1; i < sources.length; ++i) await sources[i].close();
+    if (first.meta.numLods <= 1) return first;
+
+    const lod = pickLod ? await pickLod(first.meta.lodCounts) : defaultLodIndex(first.meta.lodCounts);
+    if (lod === null) {
+        await first.close();
+        return null;
+    }
+    return new OwnedChunkSource(selectLod(first, lod), () => first.close());
 };
 
-/**
- * Materialize the first source returned by readFile into a DataTable.
- * readFile returns lazy ChunkSource[]; multi-LOD sources (e.g. LCC) are
- * reduced to a single LOD before materializing - chosen by the pickLod
- * callback when supplied, otherwise the most detailed level with a
- * reasonable splat count. Returns null if pickLod cancels the load.
- */
-const materializeFirst = async (sources: ChunkSource[], pickLod?: PickLod): Promise<DataTable | null> => {
-    const source = sources[0];
+const mortonOrderSource = async (source: ChunkSource) => {
     const pool = createChunkDataPool({ chunkSize: source.meta.chunkSize });
     try {
-        let single = source;
-        if (source.meta.numLods > 1) {
-            const { lodCounts } = source.meta;
-            const lod = pickLod ? await pickLod(lodCounts) : defaultLodIndex(lodCounts);
-            if (lod === null) {
-                return null;
-            }
-            single = selectLod(source, lod);
-        }
-        return await materializeToDataTable(single, pool);
+        const positions = await materializeToDataTable(source, pool, new Set<ChunkLayer>(['position']));
+        const indices = new Uint32Array(source.meta.numGaussians);
+        for (let i = 0; i < indices.length; ++i) indices[i] = i;
+        sortMortonOrder(positions, indices);
+        return new PermutedChunkSource(source, indices);
     } finally {
-        for (const s of sources) {
-            await s.close();
-        }
         pool.destroy();
     }
 };
 
-/**
- * Read a PLY, which may be an OpenMVS dense cloud: those carry per-point visibility
- * as `property list`, which splat-transform's header parser rejects outright.
- */
-const readPlyTable = async (filename: string, fileSystem: ReadFileSystem,
-    pickLod?: PickLod): Promise<DataTable | null> => {
-    const source = await fileSystem.createSource(filename);
-    try {
-        const denseCloud = await probeDenseCloud(source);
-        if (denseCloud) {
-            try {
-                return await readVertexTable(source, denseCloud, pointCloudBudget());
-            } finally {
-                source.close();
-            }
-        }
-        return await materializeFirst([await readPly(source, createChunkDataPool())], pickLod);
-    } catch (error) {
-        source.close();
-        throw error;
+const validateSplatSource = (source: ChunkSource): void => {
+    const required: ChunkLayer[] = ['position', 'geometric', 'color'];
+    const missing = required.filter(layer => !source.meta.availableLayers.has(layer));
+    if (missing.length > 0) {
+        throw new Error(`This file does not contain gaussian splatting data. The following layers are missing: ${missing.join(', ')}`);
     }
 };
 
 /**
- * Load a file using splat-transform and convert to GSplatData.
+ * Open a lazy ChunkSource and keep it alive for the lifetime of the loaded Splat.
  * Returns null if the user cancels LOD selection.
- * @param filename - The filename to load
- * @param fileSystem - The file system to read from
- * @param skipReorder - Skip morton reordering (for files already in morton order or animation playback)
- * @param pickLod - Invoked when the file contains multiple LODs to choose which to load
  */
-const loadGSplatData = async (filename: string, fileSystem: ReadFileSystem, skipReorder?: boolean, pickLod?: PickLod): Promise<LoadResult | null> => {
+const loadSplatSource = async (
+    filename: string,
+    fileSystem: ReadFileSystem,
+    skipReorder?: boolean,
+    pickLod?: PickLod
+): Promise<LoadResult | null> => {
     const inputFormat = getInputFormat(filename);
     const lowerFilename = filename.toLowerCase();
+    let source: ChunkSource;
 
-    // Handle bundled SOG (.sog extension) - wrap with ZipReadFileSystem
     if (inputFormat === 'sog' && lowerFilename.endsWith('.sog')) {
-        const source = await fileSystem.createSource(filename);
-        const zipFs = new ZipReadFileSystem(source);
+        const archive = await fileSystem.createSource(filename);
+        const zipFs = new ZipReadFileSystem(archive);
         try {
             const sources = await readFile({
                 filename: 'meta.json',
@@ -182,76 +192,46 @@ const loadGSplatData = async (filename: string, fileSystem: ReadFileSystem, skip
                 params: [],
                 fileSystem: zipFs
             });
-            const dataTable = await materializeFirst(sources, pickLod);
-            if (!dataTable) {
+            const selected = await selectFirst(sources, pickLod);
+            if (!selected) {
+                zipFs.close();
                 return null;
             }
-            return {
-                gsplatData: dataTableToGSplatData(dataTable),
-                transform: dataTable.transform,
-                pointCloud: false
-            };
-        } finally {
+            source = new OwnedChunkSource(selected, () => zipFs.close());
+        } catch (err) {
             zipFs.close();
+            throw err;
         }
-    }
-
-    let dataTable = inputFormat === 'ply' ?
-        await readPlyTable(filename, fileSystem, pickLod) :
-        await materializeFirst(await readFile({
+    } else {
+        const sources = await readFile({
             filename,
             inputFormat,
             options: defaultOptions,
             params: [],
             fileSystem
-        }), pickLod);
-    if (!dataTable) {
-        return null;
+        });
+        source = await selectFirst(sources, pickLod);
+        if (!source) return null;
     }
 
-    // Reorder data into morton order for better render performance.
-    // Skip reordering for:
-    // - SOG format (already in morton order)
-    // - Compressed PLY (already in morton order from write-compressed-ply)
-    // - When skipReorder is true (ssproj files are already ordered, animation frames need speed)
-    const isCompressedPly = lowerFilename.endsWith('.compressed.ply');
-    if (inputFormat !== 'sog' && !isCompressedPly && !skipReorder) {
-        const indices = new Uint32Array(dataTable.numRows);
-        for (let i = 0; i < indices.length; i++) {
-            indices[i] = i;
+    try {
+        validateSplatSource(source);
+
+        const isCompressedPly = lowerFilename.endsWith('.compressed.ply');
+        if (inputFormat !== 'sog' && !isCompressedPly && !skipReorder) {
+            source = await mortonOrderSource(source);
         }
-        sortMortonOrder(dataTable, indices);
-        dataTable.permuteRowsInPlace(indices);
-    }
 
-    const pointCloud = isPointCloud(dataTable);
-    if (pointCloud) {
-        dataTable = promotePointCloud(dataTable, undefined, pointCloudBudget());
-    }
-
-    // Convert to GSplatData
-    return { gsplatData: dataTableToGSplatData(dataTable), transform: dataTable.transform, pointCloud };
-};
-
-/**
- * Validate that GSplatData contains required properties.
- */
-const validateGSplatData = (gsplatData: GSplatData): void => {
-    const required = [
-        'x', 'y', 'z',
-        'scale_0', 'scale_1', 'scale_2',
-        'rot_0', 'rot_1', 'rot_2', 'rot_3',
-        'f_dc_0', 'f_dc_1', 'f_dc_2', 'opacity'
-    ];
-
-    const missing = required.filter(x => !gsplatData.getProp(x));
-    if (missing.length > 0) {
-        throw new Error(`This file does not contain gaussian splatting data. The following properties are missing: ${missing.join(', ')}`);
+        return { source, transform: source.meta.transform };
+    } catch (err) {
+        await source.close();
+        throw err;
     }
 };
 
 export {
     defaultLodIndex,
-    loadGSplatData,
-    validateGSplatData
+    loadSplatSource,
+    PermutedChunkSource,
+    validateSplatSource
 };

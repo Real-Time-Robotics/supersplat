@@ -5,12 +5,14 @@
 // File system implementations
 export {
     BlobReadSource,
-    MappedReadFileSystem
+    MappedReadFileSystem,
+    sourcesOf
 } from './file-systems';
 
 // Loading functions
 export {
     defaultLodIndex,
-    loadGSplatData,
-    validateGSplatData
+    loadSplatSource,
+    PermutedChunkSource,
+    validateSplatSource
 } from './loader';

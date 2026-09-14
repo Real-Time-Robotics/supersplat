@@ -10,7 +10,8 @@ import {
     Layer,
     GraphicsDevice,
     MeshInstance,
-    Vec3
+    Vec3,
+    WireRenderer
 } from 'playcanvas';
 
 import { AssetLoader } from './asset-loader';
@@ -23,10 +24,10 @@ import { Events } from './events';
 import { InfiniteGrid as Grid } from './infinite-grid';
 import { Outline } from './outline';
 import { PCApp } from './pc-app';
+import { ProjectedSplatRenderer } from './projected-splat-renderer';
 import { SceneConfig } from './scene-config';
 import { SceneState } from './scene-state';
 import { Splat } from './splat';
-import { SplatOverlay } from './splat-overlay';
 import { Underlay } from './underlay';
 
 // sort meshInstances by the aabb corner furthest from the camera
@@ -68,14 +69,23 @@ const specialSort = (instances: MeshInstance[], numInstances: number, cameraPos:
     instances.sort((a, b) => distances.get(b) - distances.get(a));
 };
 
+type ResolveMode = 'none' | 'old' | 'new';
+
+// rendered frames of timing history kept for the performance overlay. The
+// overlay plots all of them but summarises only the most recent second's worth,
+// so this is graph history rather than the averaging window.
+const FRAME_TIMING_WINDOW = 180;
+
 class Scene {
     events: Events;
     config: SceneConfig;
     canvas: HTMLCanvasElement;
     app: PCApp;
+    wire: WireRenderer;
     worldLayer: Layer;
     splatLayer: Layer;
     overlayLayer: Layer;
+    centersLayer: Layer;
     gizmoLayer: Layer;
     sceneState = [new SceneState(), new SceneState()];
     elements: Element[] = [];
@@ -83,8 +93,55 @@ class Scene {
     boundDirty = true;
     forceRender = false;
 
+    // True while the user is dragging in the viewport. The element-state diff below
+    // only sees what elements serialize, so edits that live outside it - a
+    // per-gaussian transform (transform palette + instance list), a selection
+    // change - are indistinguishable from a settled scene. Rather than have each
+    // tool remember to report itself, this is driven from the pointer directly, so
+    // every tool is treated the same. It classifies frames only: it never forces a
+    // frame to render that wouldn't have.
+    forceInteracting = false;
+
+    // motion-adaptive stochastic rendering. While the scene is actively changing
+    // (camera orbit / edit) we draw the fast no-sort stochastic mode; when it
+    // settles we render a single clean sorted & blended frame. movingRender picks
+    // the mode for the current frame; pendingResolve marks that a clean settled
+    // frame is still owed after motion ends.
+    movingRender = false;
+    pendingResolve = false;
+
+    // 'auto' stochastic mode follows the timing of the last rendered sorted
+    // frame: engaged (stochastic-during-movement) while that frame's GPU span
+    // exceeded autoEngageMs, disengaged once a later sorted frame - at minimum
+    // the clean resolve frame on every settle - comes in under it, so hiding
+    // content or moving to a lighter view drops back to sorted. Stochastic
+    // frames say nothing about the cost of sorting, so they never update the
+    // decision: profiler reports resolve asynchronously, and frameModes
+    // records each profiled frame's mode by renderVersion so reports can be
+    // attributed (see onGpuReport). The threshold is tweakable from the
+    // console as `scene.autoEngageMs = 5` to exercise the switch on scenes
+    // that are not actually slow.
+    autoEngageMs = 60;
+    autoEngaged = false;
+    private autoSampling = false;
+    private frameModes = new Map<number, boolean>();
+
     lockedRenderMode = false;
     lockedRender = false;
+
+    // viewport rendering is suspended while a document load applies its pieces:
+    // layers become visible before their saved transforms arrive and the camera
+    // pose is restored last, so intermediate frames would show a half-assembled
+    // scene. Set by doc.ts, which forces a render once the load completes.
+    suspendRender = false;
+
+    // devtools switch for the stochastic resolve, set from the console as
+    // `scene.resolveMode = 'old'`. 'new' is the masked quad+bilinear filter that
+    // ships; 'old' is the original aligned 2x2 block average, held across the quad
+    // and unmasked so it filters the grid and overlays too; 'none' shows the raw
+    // 1 spp samples unfiltered. Only affects stochastic frames, so pair it with
+    // Stochastic Alpha = Enabled to compare without having to keep dragging.
+    private _resolveMode: ResolveMode = 'new';
 
     canvasResize: {width: number; height: number} | null = null;
     targetSize = {
@@ -92,11 +149,31 @@ class Scene {
         height: 0
     };
 
+    // rolling window of per-frame timings for the performance overlay, sampled
+    // only on frames that actually rendered so the window is never padded with
+    // frames that did not happen. gpu is the profiler's frame span
+    // (earliest pass begin to latest pass end); the engine reports the span
+    // rather than the sum of per-pass durations because pass intervals overlap
+    // on pipelined GPUs, which makes the sum grow with the pass count even
+    // while the GPU is idle. The timestamp readback is asynchronous, so the
+    // same value can be sampled on consecutive frames - harmless for the
+    // min/median/p95 the overlay derives from the window.
+    readonly frameTimings = {
+        gpu: [] as number[],
+        cpu: [] as number[],
+        width: 0,
+        height: 0,
+        stochastic: false,
+        gpuSupported: false
+    };
+
+    private cpuFrameStart = 0;
+
     dataProcessor: DataProcessor;
+    projectedSplatRenderer: ProjectedSplatRenderer;
     assetLoader: AssetLoader;
     camera: Camera;
     cameraPoseGizmos: CameraPoseGizmos;
-    splatOverlay: SplatOverlay;
     grid: Grid;
     outline: Outline;
     underlay: Underlay;
@@ -124,12 +201,12 @@ class Scene {
         // configure the playcanvas application. we render to an offscreen buffer so require
         // only the simplest of backbuffers.
         this.app = new PCApp(canvas, { graphicsDevice });
+        this.wire = new WireRenderer(this.app);
 
         // only render the scene when instructed
         this.app.autoRender = false;
         // @ts-ignore
         this.app._allowResize = false;
-        this.app.scene.clusteredLightingEnabled = false;
 
         // hack: disable lightmapper first bake until we expose option for this
         // @ts-ignore
@@ -166,7 +243,20 @@ class Scene {
             }
         });
 
-        observer.observe(window.document.getElementById('canvas-container'));
+        const canvasContainer = window.document.getElementById('canvas-container');
+        observer.observe(canvasContainer);
+
+        // Uniform "user is dragging" signal for every tool. canvasContainer is the
+        // common ancestor of the canvas (where the engine's gizmos listen) and of
+        // tools-container (where the 2d selection tools listen), and the capture
+        // phase sees the event before any of them - including through a
+        // setPointerCapture retarget. `buttons` keeps hovering out of it, so no
+        // per-tool drag state is needed.
+        canvasContainer.addEventListener('pointermove', (event: PointerEvent) => {
+            if (event.buttons !== 0) {
+                this.forceInteracting = true;
+            }
+        }, true);
 
         // configure depth layers to handle dynamic refraction
         const depthLayer = this.app.scene.layers.getLayerById(LAYERID_DEPTH);
@@ -177,6 +267,20 @@ class Scene {
         this.app.on('update', (deltaTime: number) => this.onUpdate(deltaTime));
         this.app.on('prerender', () => this.onPreRender());
         this.app.on('postrender', () => this.onPostRender());
+
+        this.frameTimings.gpuSupported = !!(this.app.graphicsDevice as any).supportsTimestampQuery;
+        events.function('scene.frameTimings', () => this.frameTimings);
+
+        // the profiler's report callback carries the renderVersion of the frame
+        // the timings belong to, but the engine discards it before the value
+        // lands in _frameTime. Wrap it so reports can be attributed to the mode
+        // the frame rendered with (see onGpuReport).
+        const profiler = this.app.graphicsDevice.gpuProfiler as any;
+        const originalReport = profiler.report.bind(profiler);
+        profiler.report = (renderVersion: number, timings: number[] | null, frameTime?: number) => {
+            originalReport(renderVersion, timings, frameTime);
+            this.onGpuReport(renderVersion, timings, frameTime);
+        };
 
         // force render on device restored
         this.app.graphicsDevice.on('devicerestored', () => {
@@ -194,6 +298,7 @@ class Scene {
 
         // get the world layer
         this.worldLayer = this.app.scene.layers.getLayerByName('World');
+        this.wire.layer = this.worldLayer;
 
         // splat layer - dedicated layer for splat rendering with MRT
         this.splatLayer = new Layer({
@@ -207,6 +312,17 @@ class Scene {
         // measure/orient tool overlays, which show through occluding gaussians)
         this.overlayLayer = new Layer({ name: 'ToolOverlay' });
 
+        // splat centers - depth tested and written against a cleared buffer, so
+        // overlapping centers resolve nearest-first and the gaussians never
+        // occlude them. Its own layer because the gizmo shapes share the gizmo
+        // layer's depth buffer, and some of them write a constant fragment depth
+        // (see the engine's gizmo unlitShader) which no ordering can reconcile
+        // with real per-center depth
+        this.centersLayer = new Layer({
+            name: 'Centers',
+            clearDepthBuffer: true
+        });
+
         // gizmo layer - clear scene depth before drawing gizmos so they remain visible
         this.gizmoLayer = new Layer({
             name: 'Gizmo',
@@ -217,8 +333,10 @@ class Scene {
         const layers = this.app.scene.layers;
         layers.push(this.splatLayer);
         layers.push(this.overlayLayer);
+        layers.push(this.centersLayer);
         layers.push(this.gizmoLayer);
 
+        this.projectedSplatRenderer = new ProjectedSplatRenderer(this);
         this.dataProcessor = new DataProcessor(this.app.graphicsDevice);
         this.assetLoader = new AssetLoader(this.app, events);
 
@@ -235,9 +353,6 @@ class Scene {
 
         this.cameraPoseGizmos = new CameraPoseGizmos();
         this.add(this.cameraPoseGizmos);
-
-        this.splatOverlay = new SplatOverlay();
-        this.add(this.splatOverlay);
 
         this.grid = new Grid();
         this.add(this.grid);
@@ -260,12 +375,35 @@ class Scene {
         content.forEach(element => element.destroy());
     }
 
+    // elements removed while their add() was still awaiting element.add().
+    // Element lifecycles aren't cancellation safe (a Splat's add awaits a
+    // bounds readback and then dereferences its scene), so the removal is
+    // deferred until the add settles instead of pulling the scene out from
+    // under it
+    private pendingRemovals = new Set<Element>();
+
     // add a scene element
     async add(element: Element) {
+        if (element.scene === this && this.pendingRemovals.has(element)) {
+            // re-added while the earlier add is still in flight: cancel the
+            // deferred removal and let that add register it
+            this.pendingRemovals.delete(element);
+            return;
+        }
+
         if (!element.scene) {
             // add the new element
             element.scene = this;
             await element.add();
+
+            // removed while adding: it was never registered or announced, so
+            // just tear it down
+            if (this.pendingRemovals.delete(element)) {
+                element.remove();
+                element.scene = null;
+                return;
+            }
+
             this.elements.push(element);
             this.boundDirty = true;
 
@@ -280,13 +418,14 @@ class Scene {
     // remove an element from the scene
     remove(element: Element) {
         if (element.scene === this) {
-            // remove from list. guard the index: if add() hasn't completed its
-            // await yet the element isn't registered, and splice(-1) would
-            // evict an unrelated element
+            // not registered yet: add() is still awaiting element.add(), so
+            // defer the removal to its continuation (see pendingRemovals)
             const index = this.elements.indexOf(element);
-            if (index !== -1) {
-                this.elements.splice(index, 1);
+            if (index === -1) {
+                this.pendingRemovals.add(element);
+                return;
             }
+            this.elements.splice(index, 1);
             this.boundDirty = true;
 
             // notify listeners
@@ -335,11 +474,29 @@ class Scene {
         return this.app.graphicsDevice;
     }
 
+    set resolveMode(value: ResolveMode) {
+        this._resolveMode = value;
+        // repaint so setting this from the console takes effect immediately
+        this.forceRender = true;
+    }
+
+    get resolveMode() {
+        return this._resolveMode;
+    }
+
     private forEachElement(action: (e: Element) => void) {
         this.elements.forEach(action);
     }
 
     private onUpdate(deltaTime: number) {
+        this.cpuFrameStart = performance.now();
+
+        if (this.canvasResize) {
+            this.canvas.width = this.canvasResize.width;
+            this.canvas.height = this.canvasResize.height;
+            this.canvasResize = null;
+        }
+
         // allow elements to update
         this.forEachElement(e => e.onUpdate(deltaTime));
 
@@ -359,14 +516,64 @@ class Scene {
         // generate the set of all element types that changed
         const all = new Set([...result.added, ...result.removed, ...result.moved, ...result.changed]);
 
+        // the performance overlay only advances on frames that render, so keep
+        // rendering while it is on. It deliberately does not count as
+        // interaction: settled frames stay on the sorted path, which is what
+        // makes the two render modes comparable by starting and stopping a drag.
+        const profiling = !!this.events.invoke('view.perfOverlay');
+
         // compare with previously serialized
-        if (this.lockedRenderMode) {
+        const changed = this.forceRender || profiling || all.size > 0;
+        const interacting = this.forceInteracting || all.size > 0;
+        const stochastic = this.events.invoke('view.stochastic');
+
+        // 'movement' takes the fast no-sort stochastic path only while actively
+        // interacting, so settled frames get the clean sorted & blended one;
+        // 'enabled' stays stochastic even once the scene settles. 'auto' acts
+        // like 'movement' while the last sorted frame's GPU span exceeded
+        // autoEngageMs and like 'disabled' otherwise (updated per report in
+        // onGpuReport); without timestamp-query support it can never measure,
+        // so it falls back to 'movement' rather than leave heavy scenes janky.
+        // Locked-mode captures always use the sorted path.
+        const auto = stochastic === 'auto';
+        this.autoSampling = auto && this.frameTimings.gpuSupported;
+        const adaptive = stochastic === 'movement' ||
+            (auto && (this.autoEngaged || !this.frameTimings.gpuSupported));
+        this.movingRender = !this.lockedRenderMode &&
+            (stochastic === 'enabled' || (adaptive && interacting));
+
+        // timestamp queries cost a per-frame staging-buffer map and a resolve,
+        // so run the profiler only while something consumes it: the
+        // frame-timings overlay or auto-mode sampling. Locked-mode frames are
+        // never timed: reports resolve asynchronously, so a slow
+        // high-resolution capture span could otherwise land in _frameTime
+        // after unlock and be mistaken for an editor frame (disabling also
+        // zeroes the report, so nothing stale survives the capture).
+        // Stochastic frames are timed too: the renderer's contribution cull
+        // adapts to their span (see onGpuReport).
+        this.app.graphicsDevice.gpuProfiler.enabled =
+            (profiling || this.autoSampling || this.movingRender) && !this.lockedRenderMode;
+
+        if (this.suspendRender) {
+            this.app.renderNextFrame = false;
+        } else if (this.lockedRenderMode) {
             this.app.renderNextFrame = this.lockedRender;
             this.lockedRender = false;
         } else if (!this.app.renderNextFrame) {
-            this.app.renderNextFrame = this.forceRender || all.size > 0;
+            if (changed) {
+                this.app.renderNextFrame = true;
+                // motion in 'movement' mode owes one clean sorted frame on settle
+                if (interacting) {
+                    this.pendingResolve = adaptive;
+                }
+            } else if (this.pendingResolve) {
+                // scene just settled → render the single clean resolve frame
+                this.pendingResolve = false;
+                this.app.renderNextFrame = true;
+            }
         }
         this.forceRender = false;
+        this.forceInteracting = false;
 
         // raise per-type update events
         ElementTypeList.forEach((type) => {
@@ -380,17 +587,14 @@ class Scene {
     }
 
     private onPreRender() {
-        if (this.canvasResize) {
-            this.canvas.width = this.canvasResize.width;
-            this.canvas.height = this.canvasResize.height;
-            this.canvasResize = null;
-        }
-
-        // update render target size
+        // update render target size (config.camera.pixelScale divides the
+        // backbuffer size; the final blit upscales the result to fill the screen)
         this.targetSize.width = Math.ceil(this.app.graphicsDevice.width / this.config.camera.pixelScale);
         this.targetSize.height = Math.ceil(this.app.graphicsDevice.height / this.config.camera.pixelScale);
 
         this.forEachElement(e => e.onPreRender());
+
+        this.projectedSplatRenderer.render();
 
         this.events.fire('prerender', this.camera.displayTransform);
 
@@ -402,24 +606,20 @@ class Scene {
                     const splat = e as Splat;
 
                     const local = splat.localBound;
-                    this.app.drawWireAlignedBox(
-                        local.getMin(),
-                        local.getMax(),
-                        Color.RED,
-                        true,
-                        undefined,
-                        splat.entity.getWorldTransform());
+                    this.wire.color = Color.RED;
+                    this.wire.transform = splat.entity.getWorldTransform();
+                    this.wire.boxMinMax(local.getMin(), local.getMax());
 
                     const world = splat.worldBound;
-                    this.app.drawWireAlignedBox(
-                        world.getMin(),
-                        world.getMax(),
-                        Color.GREEN);
+                    this.wire.color = Color.GREEN;
+                    this.wire.transform = null;
+                    this.wire.boxMinMax(world.getMin(), world.getMax());
                 }
             });
 
             // draw scene bound
-            this.app.drawWireAlignedBox(this.bound.getMin(), this.bound.getMax(), Color.BLUE);
+            this.wire.color = Color.BLUE;
+            this.wire.boxMinMax(this.bound.getMin(), this.bound.getMax());
         }
     }
 
@@ -427,6 +627,56 @@ class Scene {
         this.forEachElement(e => e.onPostRender());
 
         this.events.fire('postrender');
+
+        const gpuTime = (this.app.graphicsDevice.gpuProfiler as any)?._frameTime ?? 0;
+
+        // record the mode this frame rendered with, keyed by its renderVersion,
+        // so the frame's asynchronously resolving profiler report can be
+        // attributed in onGpuReport. Only profiled frames get reports (this
+        // also excludes locked-mode frames, which are never timed - see
+        // onUpdate), so only those are recorded.
+        const device = this.app.graphicsDevice as any;
+        if (device.gpuProfiler._enabled) {
+            this.frameModes.set(device.renderVersion, this.movingRender);
+        }
+
+        const timings = this.frameTimings;
+        timings.gpu.push(gpuTime);
+        timings.cpu.push(performance.now() - this.cpuFrameStart);
+        if (timings.gpu.length > FRAME_TIMING_WINDOW) {
+            timings.gpu.shift();
+            timings.cpu.shift();
+        }
+        timings.width = this.targetSize.width;
+        timings.height = this.targetSize.height;
+        timings.stochastic = this.movingRender;
+    }
+
+    // handle an asynchronously resolved gpu timing report. Only sorted frames
+    // measure the cost 'auto' mode trades away, so only their spans update the
+    // engage decision; stochastic-frame spans drive the renderer's motion cull
+    // instead. timings is null when the backend discards a frame (e.g. a
+    // disjoint timer event).
+    private onGpuReport(renderVersion: number, timings: number[] | null, frameTime?: number) {
+        const moving = this.frameModes.get(renderVersion);
+
+        // reports resolve in order, so drop this frame's entry and any older
+        // ones a discarded report left behind
+        this.frameModes.forEach((_, version) => {
+            if (version <= renderVersion) {
+                this.frameModes.delete(version);
+            }
+        });
+
+        if (moving === undefined || !timings || timings.length === 0) {
+            return;
+        }
+        const gpuTime = frameTime ?? timings.reduce((sum, t) => sum + t, 0);
+        if (moving) {
+            this.projectedSplatRenderer.reportStochasticFrame(gpuTime);
+        } else {
+            this.autoEngaged = gpuTime > this.autoEngageMs;
+        }
     }
 }
 

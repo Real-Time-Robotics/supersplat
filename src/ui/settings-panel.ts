@@ -1,18 +1,23 @@
-import { BooleanInput, Button, ColorPicker, Container, Label, SelectInput, SliderInput } from '@playcanvas/pcui';
-import { Color } from 'playcanvas';
+import { BooleanInput, Container, Label, SelectInput, SliderInput } from '@playcanvas/pcui';
 
 import { Events } from '../events';
-import type { GridPlane } from '../infinite-grid';
-import { ShortcutManager } from '../shortcut-manager';
 import { i18n } from './localization';
+import resetSvg from './svg/reset.svg';
 import { Tooltips } from './tooltips';
 
+const createSvg = (svgString: string) => {
+    const decodedStr = decodeURIComponent(svgString.substring('data:image/svg+xml,'.length));
+    return new DOMParser().parseFromString(decodedStr, 'image/svg+xml').documentElement;
+};
+
+// application preferences: set-and-forget options, as opposed to the viewport
+// state that lives in the appearance and overlays panels
 class SettingsPanel extends Container {
     constructor(events: Events, tooltips: Tooltips, args = {}) {
         args = {
             ...args,
             id: 'settings-panel',
-            class: 'panel',
+            class: ['panel', 'options-panel'],
             hidden: true
         };
 
@@ -30,7 +35,7 @@ class SettingsPanel extends Container {
         });
 
         const icon = new Label({
-            text: '\uE403',
+            text: '\uE283',
             class: 'panel-header-icon'
         });
 
@@ -39,8 +44,47 @@ class SettingsPanel extends Container {
         });
         i18n.bindText(label, 'panel.settings');
 
+        const resetButton = new Container({
+            class: ['panel-header-button', 'panel-header-reset-button']
+        });
+        resetButton.dom.appendChild(createSvg(resetSvg));
+        resetButton.dom.setAttribute('role', 'button');
+        resetButton.dom.setAttribute('tabindex', '0');
+        i18n.onChange(() => resetButton.dom.setAttribute('aria-label', i18n.t('panel.settings.reset')), resetButton);
+        resetButton.dom.addEventListener('keydown', (event: KeyboardEvent) => {
+            if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                resetButton.dom.click();
+            }
+        });
+
         header.append(icon);
         header.append(label);
+        header.append(resetButton);
+
+        // section bars share the panel-header styling, like the scene
+        // manager's transform header
+        const sectionHeader = (key: string) => {
+            const section = new Container({
+                class: ['panel-header', 'options-panel-section']
+            });
+            const sectionLabel = new Label({
+                class: 'panel-header-label'
+            });
+            i18n.bindText(sectionLabel, key);
+            section.append(sectionLabel);
+            return section;
+        };
+
+        // toggle rows flip on a click anywhere in the row, not just the switch
+        const rowToggles = (row: Container, toggle: BooleanInput) => {
+            row.class.add('options-panel-row-clickable');
+            row.dom.addEventListener('click', (event: MouseEvent) => {
+                if (toggle.enabled && !toggle.dom.contains(event.target as Node)) {
+                    toggle.value = !toggle.value;
+                }
+            });
+        };
 
         // language
 
@@ -73,73 +117,6 @@ class SettingsPanel extends Container {
 
         languageRow.append(languageLabel);
         languageRow.append(languageSelection);
-
-        // colors
-
-        const clrRow = new Container({
-            class: 'settings-panel-row'
-        });
-
-        const clrLabel = new Label({
-            class: 'settings-panel-row-label'
-        });
-        i18n.bindText(clrLabel, 'panel.settings.colors');
-
-        const clrPickers = new Container({
-            class: 'settings-panel-row-pickers'
-        });
-
-        const bgClrPicker = new ColorPicker({
-            class: 'settings-panel-row-picker',
-            channels: 3,
-            value: [0, 0, 0]
-        });
-
-        const selectedClrPicker = new ColorPicker({
-            class: 'settings-panel-row-picker',
-            channels: 4,
-            value: [0, 0, 0, 1]
-        });
-
-        const unselectedClrPicker = new ColorPicker({
-            class: 'settings-panel-row-picker',
-            channels: 4,
-            value: [0, 0, 0, 1]
-        });
-
-        const lockedClrPicker = new ColorPicker({
-            class: 'settings-panel-row-picker',
-            channels: 4,
-            value: [0, 0, 0, 1]
-        });
-
-        const toArray = (clr: Color) => {
-            return [clr.r, clr.g, clr.b, clr.a];
-        };
-
-        events.on('bgClr', (clr: Color) => {
-            bgClrPicker.value = toArray(clr);
-        });
-
-        events.on('selectedClr', (clr: Color) => {
-            selectedClrPicker.value = toArray(clr);
-        });
-
-        events.on('unselectedClr', (clr: Color) => {
-            unselectedClrPicker.value = toArray(clr);
-        });
-
-        events.on('lockedClr', (clr: Color) => {
-            lockedClrPicker.value = toArray(clr);
-        });
-
-        clrPickers.append(bgClrPicker);
-        clrPickers.append(selectedClrPicker);
-        clrPickers.append(unselectedClrPicker);
-        clrPickers.append(lockedClrPicker);
-
-        clrRow.append(clrLabel);
-        clrRow.append(clrPickers);
 
         // tonemapping
 
@@ -253,222 +230,43 @@ class SettingsPanel extends Container {
         cameraFlySpeedRow.append(cameraFlySpeedLabel);
         cameraFlySpeedRow.append(cameraFlySpeedSlider);
 
-        // centers size
+        // stochastic alpha
 
-        const centersSizeRow = new Container({
+        const stochasticRow = new Container({
             class: 'settings-panel-row'
         });
 
-        const centersSizeLabel = new Label({
+        const stochasticLabel = new Label({
             class: 'settings-panel-row-label'
         });
-        i18n.bindText(centersSizeLabel, 'panel.settings.center-size');
+        i18n.bindText(stochasticLabel, 'panel.settings.stochastic-alpha');
 
-        const centersSizeSlider = new SliderInput({
-            class: 'settings-panel-row-slider',
-            min: 0,
-            max: 10,
-            precision: 1,
-            value: 2
-        });
-
-        centersSizeRow.append(centersSizeLabel);
-        centersSizeRow.append(centersSizeSlider);
-
-        // centers gaussian color
-        const centersColorRow = new Container({
-            class: 'settings-panel-row'
-        });
-
-        const centersColorLabel = new Label({
-            class: 'settings-panel-row-label'
-        });
-        i18n.bindText(centersColorLabel, 'panel.settings.use-splat-colors');
-
-        const centersColorToggle = new BooleanInput({
-            type: 'toggle',
-            class: 'settings-panel-row-toggle',
-            value: false
-        });
-
-        centersColorRow.append(centersColorLabel);
-        centersColorRow.append(centersColorToggle);
-
-        // outline selection
-
-        const outlineSelectionRow = new Container({
-            class: 'settings-panel-row'
-        });
-
-        const outlineSelectionLabel = new Label({
-            class: 'settings-panel-row-label'
-        });
-        i18n.bindText(outlineSelectionLabel, 'panel.settings.outline-selection');
-
-        const outlineSelectionToggle = new BooleanInput({
-            type: 'toggle',
-            class: 'settings-panel-row-toggle',
-            value: false
-        });
-
-        outlineSelectionRow.append(outlineSelectionLabel);
-        outlineSelectionRow.append(outlineSelectionToggle);
-
-        // show grid
-
-        const showGridRow = new Container({
-            class: 'settings-panel-row'
-        });
-
-        const showGridLabel = new Label({
-            class: 'settings-panel-row-label'
-        });
-        i18n.bindText(showGridLabel, 'panel.settings.show-grid');
-
-        const showGridToggle = new BooleanInput({
-            type: 'toggle',
-            class: 'settings-panel-row-toggle',
-            value: true
-        });
-
-        showGridRow.append(showGridLabel);
-        showGridRow.append(showGridToggle);
-
-        // grid plane
-
-        const gridPlaneRow = new Container({
-            class: 'settings-panel-row'
-        });
-
-        const gridPlaneLabel = new Label({
-            class: 'settings-panel-row-label'
-        });
-        i18n.bindText(gridPlaneLabel, 'panel.settings.grid-plane');
-
-        const gridPlaneSelection = new SelectInput({
+        const stochasticSelection = new SelectInput({
             class: 'settings-panel-row-select',
-            defaultValue: 'xz',
-            options: [
-                { v: 'xz', t: 'XZ' },
-                { v: 'xy', t: 'XY' },
-                { v: 'yz', t: 'YZ' }
-            ]
+            defaultValue: 'auto'
         });
+        i18n.bindOptions(stochasticSelection, () => [
+            { v: 'disabled', t: i18n.t('panel.settings.stochastic-alpha.disabled') },
+            { v: 'enabled', t: i18n.t('panel.settings.stochastic-alpha.enabled') },
+            { v: 'movement', t: i18n.t('panel.settings.stochastic-alpha.movement') },
+            { v: 'auto', t: i18n.t('panel.settings.stochastic-alpha.auto') }
+        ]);
 
-        gridPlaneRow.append(gridPlaneLabel);
-        gridPlaneRow.append(gridPlaneSelection);
+        stochasticRow.append(stochasticLabel);
+        stochasticRow.append(stochasticSelection);
 
-        // show bound
-
-        const showBoundRow = new Container({
-            class: 'settings-panel-row'
-        });
-
-        const showBoundLabel = new Label({
-            class: 'settings-panel-row-label'
-        });
-        i18n.bindText(showBoundLabel, 'panel.settings.show-bounding-box');
-
-        const showBoundToggle = new BooleanInput({
-            type: 'toggle',
-            class: 'settings-panel-row-toggle',
-            value: true
-        });
-
-        showBoundRow.append(showBoundLabel);
-        showBoundRow.append(showBoundToggle);
-
-        // show dimensions
-
-        const showBoundDimensionsRow = new Container({
-            class: 'settings-panel-row'
-        });
-
-        const showBoundDimensionsLabel = new Label({
-            class: 'settings-panel-row-label'
-        });
-        i18n.bindText(showBoundDimensionsLabel, 'panel.settings.show-dimensions');
-
-        const showBoundDimensionsToggle = new BooleanInput({
-            type: 'toggle',
-            class: 'settings-panel-row-toggle',
-            value: false
-        });
-
-        showBoundDimensionsRow.append(showBoundDimensionsLabel);
-        showBoundDimensionsRow.append(showBoundDimensionsToggle);
-
-        // show camera poses
-
-        const showCameraPosesRow = new Container({
-            class: 'settings-panel-row'
-        });
-
-        const showCameraPosesLabel = new Label({
-            class: 'settings-panel-row-label'
-        });
-        i18n.bindText(showCameraPosesLabel, 'panel.settings.show-camera-poses');
-
-        const showCameraPosesToggle = new BooleanInput({
-            type: 'toggle',
-            class: 'settings-panel-row-toggle',
-            value: false
-        });
-
-        showCameraPosesRow.append(showCameraPosesLabel);
-        showCameraPosesRow.append(showCameraPosesToggle);
-
-        // show camera info
-
-        const showCameraInfoRow = new Container({
-            class: 'settings-panel-row'
-        });
-
-        const showCameraInfoLabel = new Label({
-            class: 'settings-panel-row-label'
-        });
-        i18n.bindText(showCameraInfoLabel, 'panel.settings.show-camera-info');
-
-        const showCameraInfoToggle = new BooleanInput({
-            type: 'toggle',
-            class: 'settings-panel-row-toggle',
-            value: false
-        });
-
-        showCameraInfoRow.append(showCameraInfoLabel);
-        showCameraInfoRow.append(showCameraInfoToggle);
-
-        // reset preferences to defaults
-
-        const resetRow = new Container({
-            class: 'settings-panel-row'
-        });
-
-        const resetButton = new Button({
-            class: 'settings-panel-row-button'
-        });
-        i18n.bindText(resetButton, 'panel.settings.reset');
-
-        resetRow.append(resetButton);
+        rowToggles(fovDollyRow, fovDollyToggle);
 
         this.append(header);
         this.append(languageRow);
-        this.append(clrRow);
+        this.append(sectionHeader('panel.settings.section-rendering'));
+        this.append(stochasticRow);
         this.append(tonemappingRow);
+        this.append(shBandsRow);
+        this.append(sectionHeader('panel.settings.section-camera'));
+        this.append(cameraFlySpeedRow);
         this.append(fovRow);
         this.append(fovDollyRow);
-        this.append(shBandsRow);
-        this.append(cameraFlySpeedRow);
-        this.append(centersSizeRow);
-        this.append(centersColorRow);
-        this.append(outlineSelectionRow);
-        this.append(showGridRow);
-        this.append(gridPlaneRow);
-        this.append(showBoundRow);
-        this.append(showBoundDimensionsRow);
-        this.append(showCameraPosesRow);
-        this.append(showCameraInfoRow);
-        this.append(resetRow);
 
         // handle panel visibility
 
@@ -491,7 +289,13 @@ class SettingsPanel extends Container {
             setVisible(this.hidden);
         });
 
-        events.on('colorPanel.visible', (visible: boolean) => {
+        events.on('overlaysPanel.visible', (visible: boolean) => {
+            if (visible) {
+                setVisible(false);
+            }
+        });
+
+        events.on('appearancePanel.visible', (visible: boolean) => {
             if (visible) {
                 setVisible(false);
             }
@@ -511,27 +315,6 @@ class SettingsPanel extends Container {
 
         shBandsSlider.on('change', (value: number) => {
             events.fire('view.setBands', value);
-        });
-
-        // splat size
-
-        events.on('camera.splatSize', (value: number) => {
-            centersSizeSlider.value = value;
-        });
-
-        centersSizeSlider.on('change', (value: number) => {
-            events.fire('camera.setSplatSize', value);
-            events.fire('camera.setOverlay', true);
-            events.fire('camera.setMode', 'centers');
-        });
-
-        // centers gaussian color
-        events.on('view.centersUseGaussianColor', (value: boolean) => {
-            centersColorToggle.value = value;
-        });
-
-        centersColorToggle.on('change', (value: boolean) => {
-            events.fire('view.setCentersUseGaussianColor', value);
         });
 
         // camera speed
@@ -554,92 +337,14 @@ class SettingsPanel extends Container {
             events.fire('camera.setFovDolly', value);
         });
 
-        // outline selection
+        // stochastic alpha
 
-        events.on('view.outlineSelection', (value: boolean) => {
-            outlineSelectionToggle.value = value;
+        events.on('view.stochastic', (value: string) => {
+            stochasticSelection.value = value;
         });
 
-        outlineSelectionToggle.on('change', (value: boolean) => {
-            events.fire('view.setOutlineSelection', value);
-        });
-
-        // show grid
-
-        events.on('grid.visible', (visible: boolean) => {
-            showGridToggle.value = visible;
-        });
-
-        showGridToggle.on('change', () => {
-            events.fire('grid.setVisible', showGridToggle.value);
-        });
-
-        // grid plane
-
-        events.on('grid.plane', (plane: GridPlane) => {
-            gridPlaneSelection.value = plane;
-        });
-
-        gridPlaneSelection.on('change', (value: GridPlane) => {
-            events.fire('grid.setPlane', value);
-        });
-
-        // show bound
-
-        events.on('camera.bound', (visible: boolean) => {
-            showBoundToggle.value = visible;
-        });
-
-        showBoundToggle.on('change', () => {
-            events.fire('camera.setBound', showBoundToggle.value);
-        });
-
-        // show dimensions
-
-        events.on('camera.boundDimensions', (visible: boolean) => {
-            showBoundDimensionsToggle.value = visible;
-        });
-
-        showBoundDimensionsToggle.on('change', () => {
-            events.fire('camera.setBoundDimensions', showBoundDimensionsToggle.value);
-        });
-
-        // show camera poses
-
-        events.on('camera.showPoses', (visible: boolean) => {
-            showCameraPosesToggle.value = visible;
-        });
-
-        showCameraPosesToggle.on('change', () => {
-            events.fire('camera.setShowPoses', showCameraPosesToggle.value);
-        });
-
-        // show camera info
-
-        events.on('camera.showInfo', (visible: boolean) => {
-            showCameraInfoToggle.value = visible;
-        });
-
-        showCameraInfoToggle.on('change', () => {
-            events.fire('camera.setShowInfo', showCameraInfoToggle.value);
-        });
-
-        // background color
-
-        bgClrPicker.on('change', (value: number[]) => {
-            events.fire('setBgClr', new Color(value[0], value[1], value[2]));
-        });
-
-        selectedClrPicker.on('change', (value: number[]) => {
-            events.fire('setSelectedClr', new Color(value[0], value[1], value[2], value[3]));
-        });
-
-        unselectedClrPicker.on('change', (value: number[]) => {
-            events.fire('setUnselectedClr', new Color(value[0], value[1], value[2], value[3]));
-        });
-
-        lockedClrPicker.on('change', (value: number[]) => {
-            events.fire('setLockedClr', new Color(value[0], value[1], value[2], value[3]));
+        stochasticSelection.on('change', (value: string) => {
+            events.fire('view.setStochastic', value);
         });
 
         // camera fov
@@ -665,25 +370,19 @@ class SettingsPanel extends Container {
         // reset preferences
 
         resetButton.on('click', () => {
-            events.fire('preferences.reset');
+            events.fire('preferences.reset', 'preferences');
         });
 
         // reset reverts language to automatic; sync the selector (its change
         // handler makes the equivalent setLanguage(null) call idempotently)
-        events.on('preferences.reset', () => {
-            languageSelection.value = 'auto';
+        events.on('preferences.reset', (group?: string) => {
+            if (!group || group === 'preferences') {
+                languageSelection.value = 'auto';
+            }
         });
 
         // tooltips
-        const shortcutManager: ShortcutManager = events.invoke('shortcutManager');
-        const shortcut = shortcutManager.formatShortcut('grid.toggleVisible');
-        tooltips.register(showGridLabel, () => i18n.formatTooltipWithShortcut(i18n.t('panel.settings.show-grid'), shortcut), 'left');
-        const cameraInfoShortcut = shortcutManager.formatShortcut('camera.toggleShowInfo');
-        tooltips.register(showCameraInfoLabel, () => i18n.formatTooltipWithShortcut(i18n.t('panel.settings.show-camera-info'), cameraInfoShortcut), 'left');
-        tooltips.register(bgClrPicker, () => i18n.t('panel.settings.background-color'), 'left');
-        tooltips.register(selectedClrPicker, () => i18n.t('panel.settings.selected-color'), 'top');
-        tooltips.register(unselectedClrPicker, () => i18n.t('panel.settings.unselected-color'), 'top');
-        tooltips.register(lockedClrPicker, () => i18n.t('panel.settings.locked-color'), 'top');
+        tooltips.register(resetButton, () => i18n.t('panel.settings.reset'), 'left');
     }
 }
 

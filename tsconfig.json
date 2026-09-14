@@ -28,9 +28,7 @@
         "global.d.ts"
     ],
     "exclude": [
-        "src/debug.ts", // Testing file
         "src/**/*.test.ts",
-
         "src/backend/**",
         "dist",
         "node_modules"

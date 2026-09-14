@@ -30,6 +30,7 @@ import { PolygonSelection } from './tools/polygon-selection';
 import { RectSelection } from './tools/rect-selection';
 import { RotateTool } from './tools/rotate-tool';
 import { ScaleTool } from './tools/scale-tool';
+import { SphereBrushSelection } from './tools/sphere-brush-selection';
 import { SphereSelection } from './tools/sphere-selection';
 import { ToolManager } from './tools/tool-manager';
 import { registerTrackManagerEvents } from './track-manager';
@@ -53,7 +54,7 @@ declare global {
 }
 
 const getURLArgs = () => {
-    // extract settings from command line in non-prod builds only
+    // extract settings overrides from the url query parameters
     const config = {};
 
     const apply = (key: string, value: string) => {
@@ -125,7 +126,7 @@ const main = async () => {
 
     // create the graphics device
     const graphicsDevice = await createGraphicsDevice(editorUI.canvas, {
-        deviceTypes: ['webgl2'],
+        deviceTypes: ['webgpu'],
         antialias: false,
         depth: false,
         stencil: false,
@@ -234,13 +235,17 @@ const main = async () => {
 
     const mask = {
         canvas: maskCanvas,
-        context: maskContext
+        context: maskContext,
+        // set while an async selection is still consuming the canvas; brush
+        // strokes must not start (and clear it) until then
+        busy: false
     };
 
     // tool manager
     const toolManager = new ToolManager(events);
     toolManager.register('rectSelection', new RectSelection(events, editorUI.toolsContainer.dom));
     toolManager.register('brushSelection', new BrushSelection(events, editorUI.toolsContainer.dom, mask));
+    toolManager.register('sphereBrushSelection', new SphereBrushSelection(events, editorUI.toolsContainer.dom, mask));
     toolManager.register('floodSelection', new FloodSelection(events, editorUI.toolsContainer.dom, mask, editorUI.canvasContainer));
     toolManager.register('polygonSelection', new PolygonSelection(events, editorUI.toolsContainer.dom, mask));
     toolManager.register('lassoSelection', new LassoSelection(events, editorUI.toolsContainer.dom, mask));
@@ -250,10 +255,10 @@ const main = async () => {
     toolManager.register('move', new MoveTool(events, scene));
     toolManager.register('rotate', new RotateTool(events, scene));
     toolManager.register('scale', new ScaleTool(events, scene));
-    toolManager.register('measure', new MeasureTool(events, scene, editorUI.canvasContainer));
-    toolManager.register('orient', new OrientTool(events, scene, editorUI.toolsContainer.dom, editorUI.canvasContainer));
+    toolManager.register('measure', new MeasureTool(events, scene, editorUI.canvasContainer, editorUI.annotationContainer.dom));
+    toolManager.register('orient', new OrientTool(events, scene, editorUI.toolsContainer.dom, editorUI.canvasContainer, editorUI.annotationContainer.dom));
 
-    const boundDimensionsOverlay = new BoundDimensionsOverlay(events, scene, editorUI.canvasContainer);
+    const boundDimensionsOverlay = new BoundDimensionsOverlay(events, scene, editorUI.canvasContainer, editorUI.annotationContainer.dom);
 
     editorUI.toolsContainer.dom.appendChild(maskCanvas);
 
@@ -300,7 +305,8 @@ const main = async () => {
             for (const file of launchParams.files) {
                 await events.invoke('import', [{
                     filename: file.name,
-                    contents: await file.getFile()
+                    contents: await file.getFile(),
+                    handle: file
                 }]);
             }
         });

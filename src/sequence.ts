@@ -1,14 +1,14 @@
 import { Asset, Quat } from 'playcanvas';
 
+import { EditorSplatResource } from './editor-splat-resource';
 import { Events } from './events';
-import { loadGSplatData, MappedReadFileSystem, validateGSplatData } from './io';
+import { loadSplatSource, MappedReadFileSystem } from './io';
 import { Scene } from './scene';
 import { Splat } from './splat';
 
 type FrameData = {
     asset: Asset;
     rotation: Quat;
-    pointCloud: boolean;
 };
 
 // A source of animation frames. getFrame produces a ready gsplat Asset (plus the
@@ -47,12 +47,10 @@ class PlyFrameSource implements FrameSource {
         fileSystem.addFile(file.name, file);
 
         // skipReorder: animation frames prioritise load speed over morton ordering
-        const { gsplatData, transform, pointCloud } = await loadGSplatData(
-            file.name, fileSystem, true);
-        validateGSplatData(gsplatData);
-
-        const asset = this.scene.assetLoader.createGSplatAsset(gsplatData, file.name);
-        return { asset, rotation: transform.rotation, pointCloud };
+        const { source, transform } = await loadSplatSource(file.name, fileSystem, true);
+        const resource = await EditorSplatResource.create(this.scene.graphicsDevice, source);
+        const asset = this.scene.assetLoader.createGSplatAsset(resource, file.name);
+        return { asset, rotation: transform.rotation };
     }
 
     destroy() {}
@@ -77,7 +75,7 @@ const registerSequenceEvents = (events: Events, scene: Scene) => {
     // apply a frame's data to the persistent splat, creating it on the first frame
     const applyFrame = async (data: FrameData) => {
         if (!splat) {
-            splat = new Splat(data.asset, data.rotation, data.pointCloud);
+            splat = new Splat(data.asset, data.rotation);
             await scene.add(splat);
         } else {
             // in-place swap: preserves entity transform, visual props and selection
@@ -101,7 +99,6 @@ const registerSequenceEvents = (events: Events, scene: Scene) => {
         // is bound as an initial load (applying its rotation/name) rather than
         // swapped onto the old element
         if (splat) {
-            scene.remove(splat);
             splat.destroy();
             splat = null;
         }

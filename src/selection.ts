@@ -41,11 +41,13 @@ const registerSelectionEvents = (events: Events, scene: Scene) => {
 
     events.on('scene.elementRemoved', (element: Element) => {
         if (element === selection) {
+            // the removed element is already out of the list. the candidate must be
+            // visible or setSelection ignores it and the selection is left
+            // pointing at an element that is no longer in the scene
             const elements = scene.elements.filter(candidate => (
-                candidate !== element &&
-                (candidate.type === ElementType.splat || candidate.type === ElementType.model)
+                candidate.type === ElementType.splat || candidate.type === ElementType.model
             )) as TransformableElement[];
-            setSelection(elements[0] ?? null);
+            setSelection(elements.find(v => v.visible) ?? null);
         }
     });
 
