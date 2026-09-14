@@ -53,6 +53,7 @@ class EditorSplatResource extends GSplatContainer {
     // editor state belongs to the instance list, not to the static resource
     readonly initialState: Uint8Array;
     readonly propertyNames: ReadonlySet<string>;
+    pointCloud = false;
 
     // number of layers (Splats) referencing this static data. Layers can share a
     // resource - duplicate and separate create a new layer over the same

@@ -3,35 +3,41 @@
  */
 
 import {
-    ChunkData,
-    ChunkLayer,
-    ChunkSource,
-    ChunkSourceMetadata,
-    Options,
-    ReadFileSystem,
-    ReadRequest,
-    Transform,
+    type ChunkData,
+    type ChunkLayer,
+    type ChunkSource,
+    type ChunkSourceMetadata,
+    type DataTable,
+    type Options,
+    type ReadFileSystem,
+    type ReadRequest,
+    type Transform,
     ZipReadFileSystem,
     createChunkDataPool,
+    dataTableToChunkSource,
     getInputFormat,
     materializeToDataTable,
     readFile,
+    readPly,
     selectLod,
     sortMortonOrder
 } from '@playcanvas/splat-transform';
 
+import { probeDenseCloud, readVertexTable } from './openmvs-ply';
+import { isPointCloudSource, pointCloudBudget, promotePointCloud } from './point-cloud';
+
 type LoadResult = {
     source: ChunkSource;
     transform: Transform;
+    pointCloud: boolean;
 };
 
 // invoked when a file contains multiple LODs. returns the LOD index to load,
 // or null to cancel the load.
 type PickLod = (lodCounts: readonly number[]) => Promise<number | null>;
 
-// maximum splat count considered reasonable to load, used to select a default
-// LOD level for multi-LOD formats (e.g. LCC)
 const LOD_MAX_SPLATS = 20_000_000;
+
 
 // pick the most detailed LOD under the splat limit, or the least detailed
 // when all levels exceed it
@@ -167,6 +173,18 @@ const validateSplatSource = (source: ChunkSource): void => {
     }
 };
 
+const pointCloudResult = (table: DataTable, skipReorder?: boolean): LoadResult => {
+    const promoted = promotePointCloud(table, undefined, pointCloudBudget());
+    let order: Uint32Array;
+    if (!skipReorder) {
+        order = new Uint32Array(promoted.numRows);
+        for (let i = 0; i < order.length; ++i) order[i] = i;
+        sortMortonOrder(promoted, order);
+    }
+    const source = dataTableToChunkSource(promoted, undefined, order);
+    return { source, transform: source.meta.transform, pointCloud: true };
+};
+
 /**
  * Open a lazy ChunkSource and keep it alive for the lifetime of the loaded Splat.
  * Returns null if the user cancels LOD selection.
@@ -202,6 +220,21 @@ const loadSplatSource = async (
             zipFs.close();
             throw err;
         }
+    } else if (inputFormat === 'ply') {
+        const plySource = await fileSystem.createSource(filename);
+        try {
+            const denseCloud = await probeDenseCloud(plySource);
+            if (denseCloud) {
+                const table = await readVertexTable(plySource, denseCloud, pointCloudBudget());
+                plySource.close();
+                return pointCloudResult(table, skipReorder);
+            }
+            source = await selectFirst([await readPly(plySource, createChunkDataPool())], pickLod);
+        } catch (err) {
+            plySource.close();
+            throw err;
+        }
+        if (!source) return null;
     } else {
         const sources = await readFile({
             filename,
@@ -214,6 +247,16 @@ const loadSplatSource = async (
         if (!source) return null;
     }
 
+    if (isPointCloudSource(source.meta)) {
+        const pool = createChunkDataPool({ chunkSize: source.meta.chunkSize });
+        try {
+            return pointCloudResult(await materializeToDataTable(source, pool), skipReorder);
+        } finally {
+            pool.destroy();
+            await source.close();
+        }
+    }
+
     try {
         validateSplatSource(source);
 
@@ -222,7 +265,7 @@ const loadSplatSource = async (
             source = await mortonOrderSource(source);
         }
 
-        return { source, transform: source.meta.transform };
+        return { source, transform: source.meta.transform, pointCloud: false };
     } catch (err) {
         await source.close();
         throw err;

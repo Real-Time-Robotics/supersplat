@@ -815,7 +815,7 @@ class ProjectedSplatRenderer {
             compute.setParameter('visible', splat.visible ? 1 : 0);
             compute.setParameter('selectionEnabled', selectionEnabled ? 1 : 0);
             compute.setParameter('pickOp', -1);
-            compute.setParameter('minPixelSize', minPixelSize);
+            compute.setParameter('minPixelSize', resource.pointCloud ? 0 : minPixelSize);
             compute.setParameter('near', cameraComponent.nearClip);
             compute.setParameter('far', cameraComponent.farClip);
             compute.setParameter('capacity', this.capacity);

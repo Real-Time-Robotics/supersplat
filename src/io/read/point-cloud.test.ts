@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { Column, DataTable } from '@playcanvas/splat-transform';
+import { Column, DataTable, dataTableToChunkSource, type ChunkLayer } from '@playcanvas/splat-transform';
 
-import { FALLBACK_RADIUS, OPAQUE_LOGIT, estimatePointRadius, isPointCloud, pointCloudBudget, promotePointCloud } from './point-cloud.ts';
+import { FALLBACK_RADIUS, OPAQUE_LOGIT, estimatePointRadius, isPointCloudSource, pointCloudBudget, promotePointCloud } from './point-cloud.ts';
 import { dcDecode } from '../../splat-math.ts';
 
 const cloud = (positions: number[][], colours?: number[][]) => {
@@ -24,23 +24,19 @@ const cloud = (positions: number[][], colours?: number[][]) => {
 
 const column = (table: DataTable, name: string) => table.getColumnByName(name).data;
 
-test('isPointCloud separates a dense cloud from a splat file', () => {
-    assert.equal(isPointCloud(cloud([[0, 0, 0]], [[10, 20, 30]])), true);
-    assert.equal(isPointCloud(cloud([[0, 0, 0]])), true);
+const meta = (...layers: ChunkLayer[]) => ({ availableLayers: new Set<ChunkLayer>(layers) });
 
-    const splat = cloud([[0, 0, 0]]);
-    splat.addColumn(new Column('f_dc_0', new Float32Array(1)));
-    splat.addColumn(new Column('scale_0', new Float32Array(1)));
-    splat.addColumn(new Column('rot_0', new Float32Array(1)));
-    assert.equal(isPointCloud(splat), false);
+test('isPointCloudSource separates a dense cloud from a splat file', () => {
+    assert.equal(isPointCloudSource(meta('position', 'other')), true);
+    assert.equal(isPointCloudSource(meta('position')), true);
+    assert.equal(isPointCloudSource(meta('position', 'geometric', 'color')), false);
 
     // half a splat is a broken splat, not a cloud - it must still fail validation
-    const partial = cloud([[0, 0, 0]]);
-    partial.addColumn(new Column('scale_0', new Float32Array(1)));
-    assert.equal(isPointCloud(partial), false);
+    assert.equal(isPointCloudSource(meta('position', 'geometric')), false);
+    assert.equal(isPointCloudSource(meta('position', 'color')), false);
 });
 
-test('promotePointCloud emits every property validateGSplatData requires', () => {
+test('promotePointCloud emits every gaussian layer a splat source requires', () => {
     const table = promotePointCloud(cloud([[1, 2, 3], [4, 5, 6]], [[0, 0, 0], [255, 255, 255]]));
     for (const name of ['x', 'y', 'z', 'scale_0', 'scale_1', 'scale_2',
         'rot_0', 'rot_1', 'rot_2', 'rot_3', 'f_dc_0', 'f_dc_1', 'f_dc_2', 'opacity']) {
@@ -48,6 +44,11 @@ test('promotePointCloud emits every property validateGSplatData requires', () =>
     }
     assert.equal(table.numRows, 2);
     assert.equal(table.hasColumn('red'), false);
+
+    const { availableLayers } = dataTableToChunkSource(table).meta;
+    for (const layer of ['position', 'geometric', 'color'] as const) {
+        assert.ok(availableLayers.has(layer), layer);
+    }
 });
 
 test('promotePointCloud round-trips colour through the SH band-0 term', () => {

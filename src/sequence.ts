@@ -47,8 +47,9 @@ class PlyFrameSource implements FrameSource {
         fileSystem.addFile(file.name, file);
 
         // skipReorder: animation frames prioritise load speed over morton ordering
-        const { source, transform } = await loadSplatSource(file.name, fileSystem, true);
+        const { source, transform, pointCloud } = await loadSplatSource(file.name, fileSystem, true);
         const resource = await EditorSplatResource.create(this.scene.graphicsDevice, source);
+        resource.pointCloud = pointCloud;
         const asset = this.scene.assetLoader.createGSplatAsset(resource, file.name);
         return { asset, rotation: transform.rotation };
     }

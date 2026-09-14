@@ -74,8 +74,9 @@ class AssetLoader {
                 // user cancelled LOD selection
                 return null;
             }
-            const { source, transform } = result;
+            const { source, transform, pointCloud } = result;
             const resource = await EditorSplatResource.create(this.app.graphicsDevice, source);
+            resource.pointCloud = pointCloud;
             const asset = this.createGSplatAsset(resource, filename);
 
             return { asset, rotation: transform.rotation };
