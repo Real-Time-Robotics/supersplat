@@ -20,6 +20,11 @@ type GenesisConnection = { client: Client; policy: ClientPolicy };
 let connection: Promise<GenesisConnection> | null = null;
 let connectionExpiresAt = 0;
 
+const resetGenesisConnection = () => {
+    connection = null;
+    connectionExpiresAt = 0;
+};
+
 const genesisConnection = (): Promise<GenesisConnection> => {
     const now = Date.now();
     if (connection && now < connectionExpiresAt) return connection;
@@ -40,11 +45,6 @@ const genesisConnection = (): Promise<GenesisConnection> => {
         throw error;
     });
     return connection;
-};
-
-const resetGenesisConnection = () => {
-    connection = null;
-    connectionExpiresAt = 0;
 };
 
 type Named = { name: string; data: File };
@@ -79,8 +79,7 @@ class ReconstructionUpload {
 
     constructor(deps: UploadDeps = {
         createDatasetSession: async () => (await genesisConnection()).client.createDatasetSession(),
-        uploadDataset: async (files, opts) =>
-            (await genesisConnection()).client.uploadDataset(files, opts),
+        uploadDataset: async (files, opts) => (await genesisConnection()).client.uploadDataset(files, opts),
         clientPolicy: async () => (await genesisConnection()).policy
     }) {
         this.deps = deps;
