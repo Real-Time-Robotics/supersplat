@@ -42,12 +42,7 @@ class AuthView {
                         </div>
                         <label>Email<input name="email" type="email" autocomplete="username"
                                            minlength="3" maxlength="255" required></label>
-                        <label>Password<input name="password" type="password"
-                                              autocomplete="new-password" minlength="6"
-                                              maxlength="256" required></label>
-                        <label>Confirm Password<input name="confirmPassword" type="password"
-                                                      autocomplete="new-password" minlength="6"
-                                                      maxlength="256" required></label>
+                        <p>We'll email you a link to verify your address and set your password.</p>
                         <button class="recon-button recon-primary" type="submit">Create account</button>
                     </form>
                     <form class="recon-auth-form" data-auth-form="api-key" hidden>

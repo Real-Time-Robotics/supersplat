@@ -34,14 +34,14 @@ const validate = (mode: string, values: AuthValues): string | null => {
     if (!validEmail(values.email) || values.email.length > 255) {
         return 'Enter a valid email address.';
     }
+    if (mode === 'register') {
+        if (!values.firstName || values.firstName.length > 100) return 'First Name is required.';
+        if (!values.lastName || values.lastName.length > 100) return 'Last Name is required.';
+        return null;
+    }
     if (!values.password || values.password.length > 256) {
         return 'Enter your password.';
     }
-    if (mode !== 'register') return null;
-    if (!values.firstName || values.firstName.length > 100) return 'First Name is required.';
-    if (!values.lastName || values.lastName.length > 100) return 'Last Name is required.';
-    if (values.password.length < 6) return 'Password must contain at least 6 characters.';
-    if (values.password !== values.confirmPassword) return 'Passwords do not match.';
     return null;
 };
 
@@ -62,16 +62,6 @@ class ReconstructionAuth {
                 this.submit(form);
             });
         });
-        const registerForm = view.query<HTMLFormElement>('[data-auth-form="register"]');
-        const password = registerForm.elements.namedItem('password') as HTMLInputElement;
-        const confirmation = registerForm.elements.namedItem('confirmPassword') as HTMLInputElement;
-        const syncConfirmation = () => {
-            confirmation.setCustomValidity(
-                confirmation.value && password.value !== confirmation.value ? 'Passwords do not match.' : ''
-            );
-        };
-        password.addEventListener('input', syncConfirmation);
-        confirmation.addEventListener('input', syncConfirmation);
         view.query<HTMLButtonElement>('.recon-auth-reveal').addEventListener('click', (event) => {
             const button = event.currentTarget as HTMLButtonElement;
             const input = view.query<HTMLInputElement>('[data-auth-form="api-key"] input[name="apiKey"]');
@@ -164,7 +154,7 @@ class ReconstructionAuth {
             if (!session.authenticated) {
                 this.setBusy(false);
                 this.setTab('login');
-                this.setStatus(`Account created. Open the verification link we sent to ${values.email}, then sign in.`);
+                this.setStatus(`Account created. Open the link we sent to ${values.email} to verify it and set your password, then sign in.`);
                 return;
             }
             this.account = session.account;

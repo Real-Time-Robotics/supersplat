@@ -24,7 +24,11 @@ import {
 type SessionNamespace = Cloudflare.Env['RECON_SESSIONS'];
 type SessionStub = ReturnType<SessionNamespace['get']>;
 
-type BackendEnv = { GENESIS_BASE_URL: string; RECON_SESSIONS: SessionNamespace };
+type BackendEnv = {
+    GENESIS_BASE_URL: string;
+    GENESIS_REGISTER_PROXY_SECRET?: string;
+    RECON_SESSIONS: SessionNamespace;
+};
 
 const RECON_PREFIX = '/api/reconstruction';
 const MAX_JSON_BODY_BYTES = 256 * 1024;
@@ -222,20 +226,14 @@ const sessionRoute = async (request: Request, env: BackendEnv,
         const input = {
             firstName: String(body.firstName || '').trim(),
             lastName: String(body.lastName || '').trim(),
-            email: String(body.email || '').trim(),
-            password: String(body.password || ''),
-            confirmPassword: String(body.confirmPassword || '')
+            email: String(body.email || '').trim()
         };
         validateRegistration(input);
-        await registerUser(env.GENESIS_BASE_URL, input);
-        try {
-            return await loginAndEstablish(request, env, input.email, input.password, 201);
-        } catch (error) {
-            if (error instanceof HttpError && error.code === 'account_setup_required') {
-                return json({ authenticated: false, verificationRequired: true }, 201);
-            }
-            throw error;
-        }
+        await registerUser(env.GENESIS_BASE_URL, input, {
+            ip: request.headers.get('cf-connecting-ip'),
+            proxySecret: env.GENESIS_REGISTER_PROXY_SECRET
+        });
+        return json({ authenticated: false, verificationRequired: true }, 201);
     }
     return null;
 };

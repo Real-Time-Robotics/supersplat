@@ -11,10 +11,14 @@ const errorDetail = (payload: any, fallback: string): string => {
     return fallback;
 };
 
-const validateLogin = (email: string, password: string): void => {
+const validateEmail = (email: string): void => {
     if (!EMAIL_PATTERN.test(email) || email.length > 255) {
         throw new HttpError(400, 'Enter a valid email address.', 'invalid_email');
     }
+};
+
+const validateLogin = (email: string, password: string): void => {
+    validateEmail(email);
     if (!password || password.length > 256) {
         throw new HttpError(400, 'Enter your password.', 'invalid_password');
     }
@@ -22,20 +26,13 @@ const validateLogin = (email: string, password: string): void => {
 
 const validateRegistration = (input: {
     firstName: string; lastName: string; email: string;
-    password: string; confirmPassword: string;
 }): void => {
-    validateLogin(input.email, input.password);
+    validateEmail(input.email);
     if (!input.firstName || input.firstName.length > 100) {
         throw new HttpError(400, 'First Name is required.', 'invalid_first_name');
     }
     if (!input.lastName || input.lastName.length > 100) {
         throw new HttpError(400, 'Last Name is required.', 'invalid_last_name');
-    }
-    if (input.password.length < 6) {
-        throw new HttpError(400, 'Password must contain at least 6 characters.', 'password_too_short');
-    }
-    if (!input.confirmPassword || input.password !== input.confirmPassword) {
-        throw new HttpError(400, 'Passwords do not match.', 'password_mismatch');
     }
 };
 
@@ -120,15 +117,19 @@ const refreshTokens = async (baseUrl: string, refreshToken: string): Promise<Tok
 };
 
 const registerUser = (baseUrl: string, input: {
-    firstName: string; lastName: string; email: string; password: string;
-}): Promise<any> => gatewayJson(baseUrl, '/v1/auth/register', {
+    firstName: string; lastName: string; email: string;
+}, visitor: { ip: string | null; proxySecret?: string }): Promise<any> => gatewayJson(baseUrl, '/v1/auth/register', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+        'Content-Type': 'application/json',
+        ...(visitor.ip && visitor.proxySecret ?
+            { 'X-Genesis-Client-IP': visitor.ip, 'X-Genesis-Proxy-Secret': visitor.proxySecret } :
+            {})
+    },
     body: JSON.stringify({
         first_name: input.firstName,
         last_name: input.lastName,
-        email: input.email,
-        password: input.password
+        email: input.email
     })
 });
 

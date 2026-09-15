@@ -67,7 +67,7 @@ test('auth sessions and photogrammetry proxy flow remain isolated and typed', as
             sendJson(res, 201, { sub: 'registered-user' });
         } else if (req.method === 'GET' && url.pathname === '/billing/credits') {
             sendJson(res, 200, { customer_id: 'direct-user', balance: 123, billable: true });
-        } else if (req.method === 'GET' && url.pathname === '/billing/quote') {
+        } else if (req.method === 'GET' && url.pathname === '/v1/billing/quote') {
             quotes.push(Object.fromEntries(url.searchParams));
             sendJson(res, 200, { required: 40, balance: 123, billable_gpx: 1.5 });
         } else if (req.method === 'GET' && url.pathname === '/v1/pipelines') {
@@ -149,19 +149,13 @@ test('auth sessions and photogrammetry proxy flow remain isolated and typed', as
     const anonymous = await call(env, '/api/reconstruction/session');
     assert.equal(anonymous.status, 401);
 
-    const mismatch = await call(env, '/api/reconstruction/session/register', {
+    const nameless = await call(env, '/api/reconstruction/session/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            firstName: 'Ada',
-            lastName: 'Lovelace',
-            email: 'ada@example.com',
-            password: 'secret',
-            confirmPassword: 'different'
-        })
+        body: JSON.stringify({ firstName: '', lastName: 'Lovelace', email: 'ada@example.com' })
     });
-    assert.equal(mismatch.status, 400);
-    assert.equal((await mismatch.json()).code, 'password_mismatch');
+    assert.equal(nameless.status, 400);
+    assert.equal((await nameless.json()).code, 'invalid_first_name');
     assert.deepEqual(registrations, []);
 
     const registration = await call(env, '/api/reconstruction/session/register', {
@@ -171,16 +165,16 @@ test('auth sessions and photogrammetry proxy flow remain isolated and typed', as
             firstName: 'Ada',
             lastName: 'Lovelace',
             email: 'ada@example.com',
-            password: 'secret',
-            confirmPassword: 'secret'
+            password: 'typed-by-an-old-page'
         })
     });
     assert.equal(registration.status, 201);
+    assert.deepEqual(await registration.json(), { authenticated: false, verificationRequired: true });
+    assert.equal(registration.headers.get('set-cookie'), null);
     assert.deepEqual(registrations, [{
         first_name: 'Ada',
         last_name: 'Lovelace',
-        email: 'ada@example.com',
-        password: 'secret'
+        email: 'ada@example.com'
     }]);
 
     const direct = await call(env, '/api/reconstruction/session/api-key', {
@@ -261,7 +255,13 @@ test('an account that still has to verify its email is created without a session
             let body = '';
             for await (const chunk of req) body += chunk;
             registrations.push(JSON.parse(body));
-            sendJson(res, 201, { sub: 'unverified-user' });
+            if (registrations.length === 1) {
+                sendJson(res, 201, { sub: 'unverified-user' });
+            } else {
+                sendJson(res, 429, {
+                    detail: 'a setup email was just sent to this address', code: 'setup_email_cooldown'
+                });
+            }
         } else if (req.method === 'POST' && url.pathname === '/protocol/openid-connect/token') {
             sendJson(res, 400, { error: 'invalid_grant', error_description: 'Account is not fully set up' });
         } else {
@@ -273,21 +273,20 @@ test('an account that still has to verify its email is created without a session
     context.after(() => gateway.close());
     const env = envFor(gatewayPort);
 
-    const registration = await call(env, '/api/reconstruction/session/register', {
+    const register = () => call(env, '/api/reconstruction/session/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            firstName: 'Ada',
-            lastName: 'Lovelace',
-            email: 'ada@example.com',
-            password: 'secret',
-            confirmPassword: 'secret'
-        })
+        body: JSON.stringify({ firstName: 'Ada', lastName: 'Lovelace', email: 'ada@example.com' })
     });
+    const registration = await register();
     assert.equal(registration.status, 201);
     assert.deepEqual(await registration.json(), { authenticated: false, verificationRequired: true });
     assert.equal(registration.headers.get('set-cookie'), null);
     assert.equal(registrations.length, 1);
+
+    const again = await register();
+    assert.equal(again.status, 429);
+    assert.equal((await again.json()).code, 'setup_email_cooldown');
 
     const login = await call(env, '/api/reconstruction/session/login', {
         method: 'POST',
@@ -346,4 +345,31 @@ test('a splat run name is placed at the published nested path, merging not repla
         { iterations: 30000, sh_degree: 3, result_name: 'standard-2' });
     assert.equal(submissions[0].config.other, 1);
     assert.equal(submissions[0].config.run_name, undefined);
+});
+
+test('registration names the visitor to the gateway only with the proxy secret', async (context) => {
+    const seen = [];
+    const gateway = createServer((req, res) => {
+        if (req.method === 'POST' && req.url === '/v1/auth/register') {
+            req.resume();
+            seen.push({ ip: req.headers['x-genesis-client-ip'], secret: req.headers['x-genesis-proxy-secret'] });
+            sendJson(res, 201, { sub: 'new-user' });
+        } else {
+            sendJson(res, 404, { detail: `Unexpected ${req.method} ${req.url}` });
+        }
+    });
+    const gatewayPort = await listenOnRandomPort(gateway);
+    context.after(() => gateway.close());
+    const register = env => call(env, '/api/reconstruction/session/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'CF-Connecting-IP': '203.0.113.7' },
+        body: JSON.stringify({ firstName: 'Ada', lastName: 'Lovelace', email: 'ada@example.com' })
+    });
+
+    assert.equal((await register(envFor(gatewayPort))).status, 201);
+    assert.equal((await register({ ...envFor(gatewayPort), GENESIS_REGISTER_PROXY_SECRET: 'proxy-secret' })).status, 201);
+    assert.deepEqual(seen, [
+        { ip: undefined, secret: undefined },
+        { ip: '203.0.113.7', secret: 'proxy-secret' }
+    ]);
 });
