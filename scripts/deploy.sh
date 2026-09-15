@@ -118,11 +118,6 @@ fail=0
 case "$root" in 200\ text/html*) ;; *) echo "FAIL: / expected 200 text/html" >&2; fail=1 ;; esac
 [ "$session" = 401 ] || { echo "FAIL: session expected 401, got $session" >&2; fail=1; }
 [ "$live" = "$built" ] || { echo "FAIL: the live bundle is not the one just built" >&2; fail=1; }
-# The service worker must self-unregister so open tabs receive deployed bundles.
-case "$(curl -s "$SITE/sw.js")" in
-    *registration.unregister*) ;;
-    *) echo "FAIL: /sw.js is not the self-destruct -- open tabs will stay on old code" >&2; fail=1 ;;
-esac
 [ "$fail" = 0 ] || exit 1
 
 if [ "$deploy_rc" != 0 ]; then

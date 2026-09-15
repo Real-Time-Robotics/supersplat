@@ -38,23 +38,24 @@ class Underlay extends Element {
                 return;
             }
 
-            // apply at the start of the gizmo layer
-            if (layer !== this.scene.gizmoLayer || transparent) {
+            // apply at the start of the centers layer, which is the last thing
+            // drawn before the centers themselves
+            if (layer !== this.scene.centersLayer || transparent) {
                 return;
             }
 
             this.renderPass.execute({
-                srcTexture: camera.workTarget.colorBuffer
+                srcTexture: camera.workTarget.colorBuffer,
+                // 1:1 copy - source and destination are both targetSize, and the
+                // underlay must not be quad-averaged like a stochastic frame
+                blitScale: [1, 1],
+                quadResolve: 0
             });
         });
     }
 
     remove() {
         // event listeners are cleaned up when camera is destroyed
-    }
-
-    onPreRender() {
-        // no longer need to manage a separate camera
     }
 }
 

@@ -4,7 +4,7 @@
  * Synthesizing the gaussian properties a cloud lacks turns it into an ordinary Splat.
  */
 
-import { Column, DataTable } from '@playcanvas/splat-transform';
+import { Column, DataTable, type ChunkSourceMetadata } from '@playcanvas/splat-transform';
 
 import { dcEncode } from '../../splat-math';
 
@@ -35,15 +35,15 @@ const pointCloudBudget = (deviceMemory = (globalThis.navigator as Navigator & {
 };
 
 /**
- * True when the table holds positions but not gaussians. Checks one property per
- * group: a file with f_dc but no scale is a broken splat, not a cloud, and should
+ * True when a source holds positions but no gaussian layers. A file carrying only
+ * one of the colour or geometric layers is a broken splat, not a cloud, and should
  * still fail validation.
  */
-const isPointCloud = (dataTable: DataTable): boolean => {
-    return POSITION_PROPS.every(name => dataTable.hasColumn(name)) &&
-        !dataTable.hasColumn('f_dc_0') &&
-        !dataTable.hasColumn('scale_0') &&
-        !dataTable.hasColumn('rot_0');
+const isPointCloudSource = (meta: Pick<ChunkSourceMetadata, 'availableLayers'>): boolean => {
+    const { availableLayers } = meta;
+    return availableLayers.has('position') &&
+        !availableLayers.has('geometric') &&
+        !availableLayers.has('color');
 };
 
 /**
@@ -150,7 +150,7 @@ export {
     FALLBACK_RADIUS,
     OPAQUE_LOGIT,
     estimatePointRadius,
-    isPointCloud,
+    isPointCloudSource,
     pointCloudBudget,
     promotePointCloud
 };

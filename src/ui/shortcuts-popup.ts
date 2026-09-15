@@ -45,9 +45,8 @@ const popupConfig: Record<string, CategoryConfig> = {
     show: {
         localeKey: 'popup.shortcuts.show',
         shortcuts: [
-            { id: 'camera.toggleOverlay', localeKey: 'popup.shortcuts.toggle-splat-overlay' },
-            { id: 'camera.toggleMode', localeKey: 'popup.shortcuts.toggle-overlay-mode' },
             { id: 'grid.toggleVisible', localeKey: 'popup.shortcuts.toggle-grid' },
+            { id: 'view.toggleEditView', localeKey: 'popup.shortcuts.toggle-edit-view' },
             { id: 'camera.toggleShowInfo', localeKey: 'popup.shortcuts.toggle-camera-info' },
             { id: 'select.hide', localeKey: 'popup.shortcuts.lock-selected-splats' },
             { id: 'select.unhide', localeKey: 'popup.shortcuts.unlock-all-splats' }
@@ -59,11 +58,14 @@ const popupConfig: Record<string, CategoryConfig> = {
             { id: 'select.all', localeKey: 'popup.shortcuts.select-all' },
             { id: 'select.none', localeKey: 'popup.shortcuts.deselect-all' },
             { id: 'select.invert', localeKey: 'popup.shortcuts.invert-selection' },
-            { id: 'select.delete', localeKey: 'popup.shortcuts.delete-selected-splats' }
+            { id: 'select.delete', localeKey: 'popup.shortcuts.delete-selected-splats' },
+            { id: 'selection.toggleUseDepth', localeKey: 'popup.shortcuts.toggle-depth' },
+            { id: 'selection.toggleFootprint', localeKey: 'popup.shortcuts.toggle-footprint' }
         ],
         hints: [
             { displayKey: 'Shift', localeKey: 'popup.shortcuts.add-to-selection' },
-            { displayKey: 'Ctrl', localeKey: 'popup.shortcuts.remove-from-selection' }
+            { displayKey: 'Ctrl', localeKey: 'popup.shortcuts.remove-from-selection' },
+            { displayKey: 'Shift + Ctrl', localeKey: 'popup.shortcuts.intersect-selection' }
         ]
     },
     tools: {
@@ -76,13 +78,18 @@ const popupConfig: Record<string, CategoryConfig> = {
             { id: 'tool.lassoSelection', localeKey: 'popup.shortcuts.lasso-selection' },
             { id: 'tool.polygonSelection', localeKey: 'popup.shortcuts.polygon-selection' },
             { id: 'tool.brushSelection', localeKey: 'popup.shortcuts.brush-selection' },
+            { id: 'tool.sphereBrushSelection', localeKey: 'popup.shortcuts.sphere-brush-selection' },
             { id: 'tool.floodSelection', localeKey: 'popup.shortcuts.flood-selection' },
             { id: 'tool.eyedropperSelection', localeKey: 'popup.shortcuts.eyedropper-selection' },
             { id: 'tool.deactivate', localeKey: 'popup.shortcuts.deactivate-tool' },
             { id: 'tool.toggleCoordSpace', localeKey: 'popup.shortcuts.toggle-gizmo-coordinate-space' }
         ],
         hints: [
-            { displayKey: '[ ]', localeKey: 'popup.shortcuts.brush-size' }
+            { displayKey: '[ ]', localeKey: 'popup.shortcuts.brush-size' },
+            { displayKey: 'Alt + Wheel', localeKey: 'popup.shortcuts.brush-size' },
+            { displayKey: 'Enter', localeKey: 'popup.shortcuts.close-polygon' },
+            { displayKey: 'Backspace', localeKey: 'popup.shortcuts.remove-last-polygon-point' },
+            { displayKey: 'Backspace', localeKey: 'popup.shortcuts.remove-tool-point' }
         ]
     },
     playback: {
@@ -95,6 +102,10 @@ const popupConfig: Record<string, CategoryConfig> = {
             { id: 'timeline.nextKey', localeKey: 'popup.shortcuts.next-key' },
             { id: 'track.addKey', localeKey: 'popup.shortcuts.add-key' },
             { id: 'track.removeKey', localeKey: 'popup.shortcuts.remove-key' }
+        ],
+        hints: [
+            { displayKey: 'Ctrl + Click', localeKey: 'popup.shortcuts.stamp-key' },
+            { displayKey: 'Shift + Drag', localeKey: 'popup.shortcuts.copy-key' }
         ]
     },
     other: {

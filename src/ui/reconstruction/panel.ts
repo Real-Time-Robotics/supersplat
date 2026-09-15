@@ -52,6 +52,8 @@ class ReconstructionPanel extends Container {
                 this.hidden = !visible;
                 events.fire('reconstructionPanel.visible', visible);
                 if (visible) {
+                    events.fire('appearancePanel.setVisible', false);
+                    events.fire('overlaysPanel.setVisible', false);
                     auth.ensure();
                 }
             }
@@ -59,11 +61,10 @@ class ReconstructionPanel extends Container {
         events.function('reconstructionPanel.visible', () => !this.hidden);
         events.on('reconstructionPanel.setVisible', (visible: boolean) => setVisible(visible));
         events.on('reconstructionPanel.toggleVisible', () => setVisible(this.hidden));
-        events.on('colorPanel.visible', (visible: boolean) => {
-            if (visible) setVisible(false);
-        });
-        events.on('settingsPanel.visible', (visible: boolean) => {
-            if (visible) setVisible(false);
+        ['appearancePanel.visible', 'overlaysPanel.visible', 'settingsPanel.visible'].forEach((name) => {
+            events.on(name, (visible: boolean) => {
+                if (visible) setVisible(false);
+            });
         });
 
         this.dom.addEventListener('reconClose', () => setVisible(false));

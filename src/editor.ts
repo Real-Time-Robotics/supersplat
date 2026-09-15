@@ -1,32 +1,19 @@
-import { MemoryFileSystem } from '@playcanvas/splat-transform';
-import { Color, Mat4, path, Quat, Texture, Vec3, Vec4 } from 'playcanvas';
+import { Color, Mat4, Quat, Texture, Vec3 } from 'playcanvas';
 
+import { createGradeTerms, gradeTerms, type GradeParams } from './color-grade';
 import { EditHistory } from './edit-history';
-import { SelectAllOp, SelectNoneOp, SelectInvertOp, SelectOp, HideSelectionOp, UnhideAllOp, DeleteSelectionOp, ResetOp, MultiOp, AddSplatOp, SetLocalFrameOp } from './edit-ops';
+import { selectedRanges, SelectAllOp, SelectNoneOp, SelectInvertOp, SelectOp, HideSelectionOp, UnhideAllOp, RemoveInstancesOp, RestoreMissingInstancesOp, MultiOp, AddSplatOp, SetLocalFrameOp, SplatsColorOp } from './edit-ops';
 import { Element, ElementType } from './element';
 import { Events } from './events';
 import type { GridPlane } from './infinite-grid';
-import { MappedReadFileSystem } from './io';
 import { ModelElement } from './model/model-element';
 import { Scene } from './scene';
 import { Splat } from './splat';
-import { dcDecode } from './splat-math';
-import { writeSplatFile } from './splat-serialize';
-
-const removeExtension = (filename: string) => {
-    return filename.substring(0, filename.length - path.getExtension(filename).length);
-};
 
 // register for editor and scene events
 const registerEditorEvents = (events: Events, editHistory: EditHistory, scene: Scene) => {
     const vec = new Vec3();
     const vec2 = new Vec3();
-    const vec4 = new Vec4();
-    const mat = new Mat4();
-
-    const decodeColorChannel = (value: number) => {
-        return Math.min(1, Math.max(0, dcDecode(value)));
-    };
 
     // get the list of selected splats (currently limited to just a single one)
     const selectedSplats = () => {
@@ -58,9 +45,14 @@ const registerEditorEvents = (events: Events, editHistory: EditHistory, scene: S
         lastExportCursor = 0;
     });
 
-    // Remove edit operations that reference content which has left the scene.
-    events.on('scene.elementRemoved', (element: Element) => {
-        if (element.type === ElementType.splat || element.type === ElementType.model) {
+    // When a splat is destroyed, drop the edit operations that reference it: they
+    // can never be replayed. Deliberately keyed on destruction rather than on
+    // removal from the scene - undoing an AddSplatOp (duplicate / separate) also
+    // removes the layer, and pruning there would delete the very op redo needs.
+    events.on('scene.elementDestroyed', (element: Element) => {
+        if (element.type === ElementType.splat) {
+            editHistory.removeForSplat(element as Splat);
+        } else if (element.type === ElementType.model) {
             editHistory.removeForElement(element);
         }
     });
@@ -76,9 +68,14 @@ const registerEditorEvents = (events: Events, editHistory: EditHistory, scene: S
     // force render on some events
 
     [
-        'camera.mode', 'camera.overlay', 'camera.splatSize', 'view.outlineSelection',
-        'view.centersUseGaussianColor', 'view.bands', 'camera.bound', 'camera.boundDimensions', 'camera.showPoses',
-        'camera.showInfo', 'selection.changed', 'tool.coordSpace'
+        'view.centerSize', 'view.outlineSelection', 'view.gaussians', 'view.centers', 'view.rings',
+        'view.ringSize', 'view.editView',
+        'view.selectionColor', 'view.selectionCenters', 'view.selectionRings',
+        'view.splatsColorBlend', 'view.splatsSelectionBlend',
+        'view.centersColorBlend', 'view.centersSelectionBlend',
+        'view.ringsColorBlend', 'view.ringsSelectionBlend',
+        'view.bands', 'view.minPixelSize', 'view.stochastic', 'view.perfOverlay', 'camera.bound', 'camera.boundDimensions', 'camera.showPoses',
+        'camera.showInfo', 'selection.changed', 'tool.coordSpace', 'colorPanel.pendingChanged'
     ].forEach((eventName) => {
         events.on(eventName, () => {
             scene.forceRender = true;
@@ -108,21 +105,29 @@ const registerEditorEvents = (events: Events, editHistory: EditHistory, scene: S
 
     setGridVisible(scene.config.show.grid);
 
-    // grid.plane
+    // grid.planes: the set of planes drawn, in xz, xy, yz order
 
-    const setGridPlane = (plane: GridPlane) => {
-        if (plane !== scene.grid.plane) {
-            scene.grid.plane = plane;
-            events.fire('grid.plane', plane);
+    const planeOrder: GridPlane[] = ['xz', 'xy', 'yz'];
+
+    const setGridPlanes = (planes: GridPlane[]) => {
+        const next = planeOrder.filter(plane => planes.includes(plane));
+        if (next.join() !== scene.grid.planes.join()) {
+            scene.grid.planes = next;
+            events.fire('grid.planes', next.slice());
         }
     };
 
-    events.function('grid.plane', () => {
-        return scene.grid.plane;
+    events.function('grid.planes', () => {
+        return scene.grid.planes.slice();
     });
 
-    events.on('grid.setPlane', (plane: GridPlane) => {
-        setGridPlane(plane);
+    events.on('grid.setPlanes', (planes: GridPlane[]) => {
+        setGridPlanes(planes);
+    });
+
+    events.on('grid.togglePlane', (plane: GridPlane) => {
+        const planes = scene.grid.planes;
+        setGridPlanes(planes.includes(plane) ? planes.filter(p => p !== plane) : [...planes, plane]);
     });
 
     // camera.fovDolly
@@ -282,6 +287,8 @@ const registerEditorEvents = (events: Events, editHistory: EditHistory, scene: S
     // camera.focus
 
     events.on('camera.focus', () => {
+        events.fire('camera.setControlMode', 'orbit');
+
         // the active tool's focus target (e.g. orient points) takes precedence
         const toolFocus: { position: Vec3, radius: number } | null = events.invoke('tool.focus');
         if (toolFocus) {
@@ -417,6 +424,8 @@ const registerEditorEvents = (events: Events, editHistory: EditHistory, scene: S
     // undo, drag-while-camera-settling, etc).
     const runSelectIntersect = (splat: Splat, op: 'add'|'remove'|'set'|'intersect', options: any) => {
         return scene.commandQueue.enqueue(async () => {
+            // the splat may have been deleted while the task was queued
+            if (!splat.scene) return;
             const data = await scene.dataProcessor.intersect(options, splat);
             // SelectOp consumes `data` synchronously in its constructor
             // (IndexRanges.fromPredicate iterates immediately), so we can
@@ -426,11 +435,152 @@ const registerEditorEvents = (events: Events, editHistory: EditHistory, scene: S
         });
     };
 
+    // which machinery a screen-space select gesture runs on: depth on -> the
+    // per-pixel id pick (frontmost wins, op-aware peeling); depth off -> the
+    // centers intersect at footprint 0, otherwise the footprint pass, which
+    // tests each splat's projected ellipse against the region through all depths
+    const selectionMethod = () => {
+        if (events.invoke('selection.useDepth')) {
+            return 'pick';
+        }
+        return (events.invoke('selection.footprint') as number) > 0 ? 'footprint' : 'centers';
+    };
+
+    type SelectRegion = { y0: number, y1: number, intervals: Uint32Array };
+
+    // footprint is passed in rather than read here: the task runs from the
+    // queue after the gesture, and toggling the footprint in between must not
+    // change an already-finished stroke's semantics
+    const runFootprintSelect = (splat: Splat, op: 'add'|'remove'|'set'|'intersect', region: SelectRegion, footprint: number) => {
+        return scene.commandQueue.enqueue(async () => {
+            if (!splat.scene) return;
+            const data = await scene.projectedSplatRenderer.footprintIntersect(splat, region, footprint);
+            if (data) {
+                events.fire('edit.add', new SelectOp(splat, op, data));
+            }
+        });
+    };
+
+    // centers + depth: exactly the surface (rings) pick - the splats visible
+    // in the region, rendered at full footprint with the same op filtering so
+    // peeling works identically - narrowed to those whose center lies in the
+    // region. The centers test reuses the through-mode intersect compute
+    const runVisibleCentersSelect = (splat: Splat, op: 'add'|'remove'|'set'|'intersect', visible: Set<number>, options: any) => {
+        return scene.commandQueue.enqueue(async () => {
+            if (!splat.scene) return;
+            const data = await scene.dataProcessor.intersect(options, splat);
+            for (let i = 0; i < splat.instances.count; i++) {
+                if (data[i] && !visible.has(i)) {
+                    data[i] = 0;
+                }
+            }
+            events.fire('edit.add', new SelectOp(splat, op, data));
+            scene.dataProcessor.releaseMask(data);
+        });
+    };
+
+    // per-row x-interval tables in render-target pixels for the footprint
+    // pass: (rowCount + 1) offsets into the same buffer, then (x0, x1) pairs,
+    // so every row's runs are represented exactly
+
+    const packRegion = (py0: number, py1: number, rowRuns: number[][]): SelectRegion => {
+        const rows = py1 - py0 + 1;
+        const table = rows + 1;
+        let total = 0;
+        for (const runs of rowRuns) {
+            total += runs.length;
+        }
+        const intervals = new Uint32Array(table + total);
+        let cursor = table;
+        for (let r = 0; r < rows; r++) {
+            intervals[r] = cursor;
+            intervals.set(rowRuns[r], cursor);
+            cursor += rowRuns[r].length;
+        }
+        intervals[rows] = cursor;
+        return { y0: py0, y1: py1, intervals };
+    };
+
+    const emptyRegion = (): SelectRegion => {
+        return packRegion(0, 0, [[]]);
+    };
+
+    const rectRegion = (x0: number, y0: number, x1: number, y1: number): SelectRegion => {
+        const { width, height } = scene.targetSize;
+        const py0 = Math.max(0, Math.floor(y0 * height));
+        const py1 = Math.min(height - 1, Math.ceil(y1 * height) - 1);
+        const px0 = Math.max(0, Math.floor(x0 * width));
+        const px1 = Math.min(width - 1, Math.ceil(x1 * width) - 1);
+        if (py1 < py0 || px1 < px0) {
+            return emptyRegion();
+        }
+        const rowRuns: number[][] = [];
+        for (let r = py0; r <= py1; r++) {
+            rowRuns.push([px0, px1]);
+        }
+        return packRegion(py0, py1, rowRuns);
+    };
+
+    const maskRegion = (context: CanvasRenderingContext2D, maskWidth: number, maskHeight: number): SelectRegion => {
+        const { width, height } = scene.targetSize;
+        const mask = context.getImageData(0, 0, maskWidth, maskHeight);
+        const xScale = width / maskWidth;
+
+        // covered runs of a mask row, scaled to render-target pixels
+        const rowRuns = (maskY: number) => {
+            const runs: number[] = [];
+            const rowBase = maskY * maskWidth * 4;
+            let start = -1;
+            for (let x = 0; x <= maskWidth; x++) {
+                const covered = x < maskWidth && mask.data[rowBase + x * 4 + 3] === 255;
+                if (covered && start === -1) {
+                    start = x;
+                } else if (!covered && start !== -1) {
+                    runs.push(Math.floor(start * xScale), Math.ceil(x * xScale) - 1);
+                    start = -1;
+                }
+            }
+            return runs;
+        };
+
+        // mask row bounds
+        let my0 = maskHeight;
+        let my1 = -1;
+        for (let y = 0; y < maskHeight; y++) {
+            const rowBase = y * maskWidth * 4;
+            for (let x = 0; x < maskWidth; x++) {
+                if (mask.data[rowBase + x * 4 + 3] === 255) {
+                    my0 = Math.min(my0, y);
+                    my1 = Math.max(my1, y);
+                    break;
+                }
+            }
+        }
+        if (my1 < my0) {
+            return emptyRegion();
+        }
+
+        const py0 = Math.max(0, Math.floor(my0 / maskHeight * height));
+        const py1 = Math.min(height - 1, Math.ceil((my1 + 1) / maskHeight * height) - 1);
+        const cache = new Map<number, number[]>();
+        const rows: number[][] = [];
+        for (let r = py0; r <= py1; r++) {
+            const maskY = Math.min(maskHeight - 1, Math.floor((r + 0.5) / height * maskHeight));
+            let runs = cache.get(maskY);
+            if (!runs) {
+                runs = rowRuns(maskY);
+                cache.set(maskY, runs);
+            }
+            rows.push(runs);
+        }
+        return packRegion(py0, py1, rows);
+    };
+
     // transform maps the unit sphere (diameter 1) to world space
     events.on('select.bySphere', async (op: 'add'|'remove'|'set'|'intersect', transform: Mat4) => {
         for (const splat of selectedSplats()) {
             await runSelectIntersect(splat, op, {
-                sphere: { transform }
+                sphere: { transform, footprint: events.invoke('selection.footprint') as number }
             });
         }
     });
@@ -439,20 +589,23 @@ const registerEditorEvents = (events: Events, editHistory: EditHistory, scene: S
     events.on('select.byBox', async (op: 'add'|'remove'|'set'|'intersect', transform: Mat4) => {
         for (const splat of selectedSplats()) {
             await runSelectIntersect(splat, op, {
-                box: { transform }
+                box: { transform, footprint: events.invoke('selection.footprint') as number }
             });
         }
     });
 
     events.function('select.rect', async (op: 'add'|'remove'|'set'|'intersect', rect: any) => {
-        const mode = events.invoke('camera.mode');
+        const method = selectionMethod();
+        const footprint = events.invoke('selection.footprint') as number;
 
         for (const splat of selectedSplats()) {
-            if (mode === 'centers') {
+            if (method === 'centers') {
                 await runSelectIntersect(splat, op, {
                     rect: { x1: rect.start.x, y1: rect.start.y, x2: rect.end.x, y2: rect.end.y }
                 });
-            } else if (mode === 'rings') {
+            } else if (method === 'footprint') {
+                await runFootprintSelect(splat, op, rectRegion(rect.start.x, rect.start.y, rect.end.x, rect.end.y), footprint);
+            } else {
                 scene.camera.pickPrep(splat, op);
                 const pick = await scene.camera.pickRect(
                     rect.start.x,
@@ -461,124 +614,206 @@ const registerEditorEvents = (events: Events, editHistory: EditHistory, scene: S
                     rect.end.y - rect.start.y
                 );
 
-                const sortedIds = new Uint32Array(new Set(pick)).sort();
-                events.fire('edit.add', new SelectOp(splat, op, sortedIds));
+                if (footprint === 0) {
+                    await runVisibleCentersSelect(splat, op, new Set(pick), {
+                        rect: { x1: rect.start.x, y1: rect.start.y, x2: rect.end.x, y2: rect.end.y }
+                    });
+                } else {
+                    const sortedIds = new Uint32Array(new Set(pick)).sort();
+                    events.fire('edit.add', new SelectOp(splat, op, sortedIds));
+                }
             }
         }
     });
 
-    let maskTexture: Texture = null;
+    // build an operation-private mask texture from the stroke canvas: the gpu
+    // upload from setSource is deferred until the queued intersect dispatches,
+    // so the pixels are copied into a fresh canvas nothing else repaints, and
+    // the texture is not shared with any other gesture. Callers destroy it
+    // once their queued tasks have consumed it.
+    const createMaskTexture = (canvas: HTMLCanvasElement) => {
+        const snapshot = document.createElement('canvas');
+        snapshot.width = canvas.width;
+        snapshot.height = canvas.height;
+        snapshot.getContext('2d').drawImage(canvas, 0, 0);
+        const texture = new Texture(scene.graphicsDevice);
+        texture.setSource(snapshot);
+        return texture;
+    };
 
     events.function('select.byMask', async (op: 'add'|'remove'|'set'|'intersect', canvas: HTMLCanvasElement, context: CanvasRenderingContext2D) => {
-        const mode = events.invoke('camera.mode');
+        const method = selectionMethod();
 
-        for (const splat of selectedSplats()) {
-            if (mode === 'centers') {
-                // create mask texture
-                if (!maskTexture || maskTexture.width !== canvas.width || maskTexture.height !== canvas.height) {
-                    if (maskTexture) {
-                        maskTexture.destroy();
-                    }
-                    maskTexture = new Texture(scene.graphicsDevice);
-                }
-                maskTexture.setSource(canvas);
+        // snapshot everything the stroke depends on before yielding - the
+        // canvas reads so later gestures repainting it can't leak into this
+        // selection (or make splats within one gesture see different masks),
+        // and the footprint so toggling it can't change a finished stroke
+        const maskTexture = method === 'footprint' ? null : createMaskTexture(canvas);
+        const region = method === 'footprint' ? maskRegion(context, canvas.width, canvas.height) : null;
+        const maskPixels = method === 'pick' ? context.getImageData(0, 0, canvas.width, canvas.height) : null;
+        const footprint = events.invoke('selection.footprint') as number;
 
-                await runSelectIntersect(splat, op, {
-                    mask: maskTexture
-                });
-            } else if (mode === 'rings') {
-                const mask = context.getImageData(0, 0, canvas.width, canvas.height);
+        try {
+            for (const splat of selectedSplats()) {
+                if (method === 'centers') {
+                    await runSelectIntersect(splat, op, {
+                        mask: maskTexture
+                    });
+                } else if (method === 'footprint') {
+                    await runFootprintSelect(splat, op, region, footprint);
+                } else {
+                    const mask = maskPixels;
 
-                // calculate mask bound so we limit pixel operations
-                let mx0 = mask.width - 1;
-                let my0 = mask.height - 1;
-                let mx1 = 0;
-                let my1 = 0;
-                for (let y = 0; y < mask.height; ++y) {
-                    for (let x = 0; x < mask.width; ++x) {
-                        if (mask.data[(y * mask.width + x) * 4 + 3] === 255) {
-                            mx0 = Math.min(mx0, x);
-                            my0 = Math.min(my0, y);
-                            mx1 = Math.max(mx1, x);
-                            my1 = Math.max(my1, y);
+                    // calculate mask bound so we limit pixel operations
+                    let mx0 = mask.width - 1;
+                    let my0 = mask.height - 1;
+                    let mx1 = 0;
+                    let my1 = 0;
+                    for (let y = 0; y < mask.height; ++y) {
+                        for (let x = 0; x < mask.width; ++x) {
+                            if (mask.data[(y * mask.width + x) * 4 + 3] === 255) {
+                                mx0 = Math.min(mx0, x);
+                                my0 = Math.min(my0, y);
+                                mx1 = Math.max(mx1, x);
+                                my1 = Math.max(my1, y);
+                            }
                         }
                     }
-                }
 
-                // Convert mask bounds to normalized coordinates
-                const nx0 = mx0 / mask.width;
-                const ny0 = my0 / mask.height;
-                const nx1 = (mx1 + 1) / mask.width;
-                const ny1 = (my1 + 1) / mask.height;
-                const nw = nx1 - nx0;
-                const nh = ny1 - ny0;
+                    // Convert mask bounds to normalized coordinates
+                    const nx0 = mx0 / mask.width;
+                    const ny0 = my0 / mask.height;
+                    const nx1 = (mx1 + 1) / mask.width;
+                    const ny1 = (my1 + 1) / mask.height;
+                    const nw = nx1 - nx0;
+                    const nh = ny1 - ny0;
 
-                scene.camera.pickPrep(splat, op);
-                const pick = await scene.camera.pickRect(nx0, ny0, nw, nh);
+                    scene.camera.pickPrep(splat, op);
+                    const pick = await scene.camera.pickRect(nx0, ny0, nw, nh);
 
-                // Calculate actual pixel dimensions for iteration
-                const { width, height } = scene.targetSize;
+                    // Calculate actual pixel dimensions for iteration
+                    const { width, height } = scene.targetSize;
 
-                // Convert normalized coordinates to render target pixels
-                const px = Math.floor(nx0 * width);
-                const py = Math.floor(ny0 * height);
-                const pw = Math.max(1, Math.ceil((nx0 + nw) * width) - px);
-                const ph = Math.max(1, Math.ceil((ny0 + nh) * height) - py);
+                    // Convert normalized coordinates to render target pixels
+                    const px = Math.floor(nx0 * width);
+                    const py = Math.floor(ny0 * height);
+                    const pw = Math.max(1, Math.ceil((nx0 + nw) * width) - px);
+                    const ph = Math.max(1, Math.ceil((ny0 + nh) * height) - py);
 
-                const selected = new Set<number>();
-                for (let y = 0; y < ph; ++y) {
-                    for (let x = 0; x < pw; ++x) {
-                        const mx = Math.floor((nx0 + x / width) * mask.width);
-                        const my = Math.floor((ny0 + y / height) * mask.height);
-                        if (mask.data[(my * mask.width + mx) * 4] === 255) {
-                            selected.add(pick[(ph - 1 - y) * pw + x]);
+                    const selected = new Set<number>();
+                    for (let y = 0; y < ph; ++y) {
+                        for (let x = 0; x < pw; ++x) {
+                            const mx = Math.floor((nx0 + x / width) * mask.width);
+                            const my = Math.floor((ny0 + y / height) * mask.height);
+                            if (mask.data[(my * mask.width + mx) * 4] === 255) {
+                                selected.add(pick[y * pw + x]);
+                            }
                         }
                     }
-                }
 
-                const sortedIds = new Uint32Array(selected).sort();
-                events.fire('edit.add', new SelectOp(splat, op, sortedIds));
+                    if (footprint === 0) {
+                        await runVisibleCentersSelect(splat, op, selected, { mask: maskTexture });
+                    } else {
+                        const sortedIds = new Uint32Array(selected).sort();
+                        events.fire('edit.add', new SelectOp(splat, op, sortedIds));
+                    }
+                }
             }
+        } finally {
+            maskTexture?.destroy();
+        }
+    });
+
+    // points are stroke samples in normalized screen coordinates with radii in
+    // css pixels. Each sample is depth-picked to a world position and the world
+    // radius matched to the on-screen brush size, giving a capsule path the
+    // compute pass tests splat centers against.
+    events.function('select.bySphereBrush', async (
+        op: 'add'|'remove'|'set'|'intersect',
+        points: { x: number, y: number, radius: number }[],
+        canvas: HTMLCanvasElement
+    ) => {
+        const splats = selectedSplats();
+
+        // snapshot everything gesture-dependent now: the shared stroke canvas
+        // may be repainted by another tool, the camera moved and the footprint
+        // toggled before the queued work below runs
+        const mask = createMaskTexture(canvas);
+        const projection = scene.camera.camera.projectionMatrix.clone();
+        const view = scene.camera.camera.viewMatrix.clone();
+        const footprint = events.invoke('selection.footprint') as number;
+        const pixelScale = scene.camera.worldSizePerPixel(1);
+        const ortho = scene.camera.ortho;
+        const pose = {
+            position: scene.camera.mainCamera.getPosition().clone(),
+            rotation: scene.camera.mainCamera.getRotation().clone(),
+            orthoHeight: scene.camera.camera.orthoHeight,
+            near: scene.camera.near,
+            far: scene.camera.far
+        };
+
+        // one queued operation reserves the stroke's place in history now and
+        // runs the depth picking and the intersect against the same scene
+        // state; enqueueing only after the readbacks would let a queued
+        // delete/undo apply in between. The intersect is inlined rather than
+        // going through runSelectIntersect because nesting enqueues deadlocks.
+        try {
+            await scene.commandQueue.enqueue(async () => {
+                const hits = await scene.camera.intersectMany(points, splats, pose);
+                const path: number[] = [];
+                let previous: { position: Vec3, radius: number } | null = null;
+
+                for (let i = 0; i < points.length; ++i) {
+                    const hit = hits[i];
+                    if (!hit) {
+                        previous = null;
+                        continue;
+                    }
+
+                    const radius = points[i].radius * pixelScale * (ortho ? 1 : hit.depth);
+                    const startsPath = !previous || previous.position.distance(hit.position) > Math.max(previous.radius, radius) * 2;
+                    path.push(hit.position.x, hit.position.y, hit.position.z, startsPath ? -radius : radius);
+                    previous = { position: hit.position, radius };
+                }
+
+                const pathPoints = new Float32Array(path);
+                for (const splat of splats) {
+                    const data = await scene.dataProcessor.intersect({
+                        sphereBrush: { points: pathPoints, mask, footprint, projection, view }
+                    }, splat);
+                    // SelectOp consumes `data` synchronously in its constructor
+                    events.fire('edit.add', new SelectOp(splat, op, data));
+                    scene.dataProcessor.releaseMask(data);
+                }
+            });
+        } finally {
+            mask.destroy();
         }
     });
 
     events.function('select.point', async (op: 'add'|'remove'|'set'|'intersect', point: { x: number, y: number }) => {
         const { width, height } = scene.targetSize;
-        const mode = events.invoke('camera.mode');
+        const method = selectionMethod();
+        const footprint = events.invoke('selection.footprint') as number;
 
         for (const splat of selectedSplats()) {
-            const splatData = splat.splatData;
-
-            if (mode === 'centers') {
-                const x = splatData.getProp('x');
-                const y = splatData.getProp('y');
-                const z = splatData.getProp('z');
-
-                const splatSize = events.invoke('camera.splatSize');
-                const camera = scene.camera.camera;
-                const sx = point.x * width;
-                const sy = point.y * height;
-
-                // calculate final matrix
-                mat.mul2(camera.camera._viewProjMat, splat.worldTransform);
-
-                // materialize hits into an owned mask. SelectOp consumes a
-                // committed snapshot rather than a closure so we never have to
-                // worry about state shifting between capture and apply.
-                const numSplats = splatData.numSplats;
-                const mask = new Uint8Array(numSplats);
-                for (let i = 0; i < numSplats; i++) {
-                    vec4.set(x[i], y[i], z[i], 1.0);
-                    mat.transformVec4(vec4, vec4);
-                    const px = (vec4.x / vec4.w * 0.5 + 0.5) * width;
-                    const py = (-vec4.y / vec4.w * 0.5 + 0.5) * height;
-                    if (Math.abs(px - sx) < splatSize && Math.abs(py - sy) < splatSize) {
-                        mask[i] = 255;
+            if (method === 'centers') {
+                await runSelectIntersect(splat, op, {
+                    rect: {
+                        x1: point.x,
+                        y1: point.y,
+                        x2: point.x + 1 / width,
+                        y2: point.y + 1 / height
                     }
-                }
-
-                events.fire('edit.add', new SelectOp(splat, op, mask));
-            } else if (mode === 'rings') {
+                });
+            } else if (method === 'footprint') {
+                await runFootprintSelect(splat, op, rectRegion(
+                    point.x, point.y, point.x + 1 / width, point.y + 1 / height), footprint);
+            } else {
+                // depth-mode clicks deliberately ignore the footprint toggle
+                // and pick the frontmost splat under the cursor: requiring a
+                // visible center at the clicked pixel (as rect/mask gestures do
+                // in centers mode) would make clicking practically never land
                 scene.camera.pickPrep(splat, op);
 
                 // Use normalized coordinates with minimal size for single pixel pick
@@ -599,7 +834,7 @@ const registerEditorEvents = (events: Events, editHistory: EditHistory, scene: S
     // TO DO:
     // -  alternative distance metrics such as HSV.
     // -  alternative UI for threshold, two handles for min/max?
-    events.function('select.colorMatch', async (op: 'add'|'remove'|'set', point: { x: number, y: number }, threshold = 0) => {
+    events.function('select.colorMatch', async (op: 'add'|'remove'|'set'|'intersect', point: { x: number, y: number }, threshold = 0) => {
         const splats = selectedSplats();
         const targetSize = scene.targetSize;
         if (!splats.length || !targetSize || !point) {
@@ -625,31 +860,17 @@ const registerEditorEvents = (events: Events, editHistory: EditHistory, scene: S
                 continue;
             }
 
-            const reds = splat.splatData.getProp('f_dc_0') as Float32Array;
-            const greens = splat.splatData.getProp('f_dc_1') as Float32Array;
-            const blues = splat.splatData.getProp('f_dc_2') as Float32Array;
-            // validate pickId and color channels exist
-            if (!reds || !greens || !blues || pickId < 0 || pickId >= reds.length) {
+            if (pickId < 0 || pickId >= splat.instances.count) {
                 continue;
             }
-            // decode color channels for the reference pixel
-            const refR = decodeColorChannel(reds[pickId]);
-            const refG = decodeColorChannel(greens[pickId]);
-            const refB = decodeColorChannel(blues[pickId]);
-
-            // materialize hits into an owned mask up front; SelectOp consumes
-            // a committed snapshot.
-            const numSplats = splat.splatData.numSplats;
-            const mask = new Uint8Array(numSplats);
-            for (let i = 0; i < numSplats; i++) {
-                if (Math.abs(decodeColorChannel(reds[i]) - refR) <= colorThreshold &&
-                    Math.abs(decodeColorChannel(greens[i]) - refG) <= colorThreshold &&
-                    Math.abs(decodeColorChannel(blues[i]) - refB) <= colorThreshold) {
-                    mask[i] = 255;
-                }
-            }
-
-            events.fire('edit.add', new SelectOp(splat, op, mask));
+            await scene.commandQueue.enqueue(async () => {
+                const mask = await scene.dataProcessor.colorMatch(splat, pickId, colorThreshold, {
+                    entityMatrix: splat.entity.getWorldTransform(),
+                    cameraPos: scene.camera.position
+                });
+                events.fire('edit.add', new SelectOp(splat, op, mask));
+                scene.dataProcessor.releaseMask(mask);
+            });
         }
     });
 
@@ -679,80 +900,166 @@ const registerEditorEvents = (events: Events, editHistory: EditHistory, scene: S
             return;
         }
         selectedSplats().forEach((splat) => {
-            editHistory.add(new DeleteSelectionOp(splat));
+            editHistory.add(new RemoveInstancesOp(splat));
         });
     });
 
-    const performSelectionFunc = async (func: 'duplicate' | 'separate') => {
-        const splats = selectedSplats();
+    // Duplicate and separate both create a new layer holding the selected
+    // gaussians. The new layer *shares* the source layer's static data, so this
+    // copies the instance list only: no gaussians are duplicated, and there is no
+    // PLY round trip to lose SH precision, drop extra columns or reorder out of
+    // Morton. The asset is reference counted, so it outlives either layer.
+    const performSelectionFunc = (func: 'duplicate' | 'separate') => {
+        const splat = selectedSplats()[0];
+        if (!splat) {
+            return;
+        }
 
-        const memFs = new MemoryFileSystem();
+        const ranges = selectedRanges(splat);
+        if (ranges.count === 0) {
+            return;
+        }
 
-        await writeSplatFile(splats, {
-            maxSHBands: 3,
-            selected: true
-        }, 'ply', 'output.ply', {}, memFs);
+        const copy = splat.createLayer(ranges, splat.name);
 
-        const data = memFs.results.get('output.ply');
-
-        if (data) {
-            const splat = splats[0];
-
-            // wrap PLY in a blob and load it. pass the view rather than the
-            // underlying buffer, which is the writer's oversized scratch allocation
-            const blob = new Blob([data as BlobPart], { type: 'application/octet-stream' });
-            const filename = `${removeExtension(splat.filename)}.ply`;
-            const fileSystem = new MappedReadFileSystem();
-            fileSystem.addFile(filename, blob);
-            const copy = await scene.assetLoader.load(filename, fileSystem);
-
-            if (func === 'separate') {
-                editHistory.add(new MultiOp([
-                    new DeleteSelectionOp(splat),
-                    new AddSplatOp(scene, copy)
-                ]));
-            } else {
-                editHistory.add(new AddSplatOp(scene, copy));
-            }
+        if (func === 'separate') {
+            editHistory.add(new MultiOp([
+                new RemoveInstancesOp(splat),
+                new AddSplatOp(scene, copy)
+            ]));
+        } else {
+            editHistory.add(new AddSplatOp(scene, copy));
         }
     };
 
     // duplicate the current selection
-    events.on('edit.duplicate', async () => {
-        await performSelectionFunc('duplicate');
+    events.on('edit.duplicate', () => {
+        performSelectionFunc('duplicate');
     });
 
-    events.on('edit.separate', async () => {
-        await performSelectionFunc('separate');
+    events.on('edit.separate', () => {
+        performSelectionFunc('separate');
+    });
+
+    // bake the panel's pending grade into the selected gaussians. `params` are the
+    // seven authored values; the op composes them onto whatever grade the targets
+    // already carry, so applying twice is the same as applying the composition.
+    events.on('edit.applyColor', (params: GradeParams) => {
+        const splat = events.invoke('selection') as Splat;
+        if (splat) {
+            editHistory.add(new SplatsColorOp({ splat, grade: gradeTerms(params, createGradeTerms()) }));
+        }
+    });
+
+    // clear the grade on the selected gaussians
+    events.on('edit.resetColor', () => {
+        const splat = events.invoke('selection') as Splat;
+        if (splat) {
+            editHistory.add(new SplatsColorOp({ splat, grade: null }));
+        }
     });
 
     events.on('scene.reset', () => {
         selectedSplats().forEach((splat) => {
-            editHistory.add(new ResetOp(splat));
+            editHistory.add(new RestoreMissingInstancesOp(splat));
         });
     });
 
-    // camera mode (visual: centers/rings)
+    // display
 
-    let activeMode = 'centers';
+    let showGaussians = true;
+    let showCenters = false;
+    let showRings = false;
+    let ringSize = 4;
 
-    const setCameraMode = (mode: string) => {
-        if (mode !== activeMode) {
-            activeMode = mode;
-            events.fire('camera.mode', activeMode);
+    events.function('view.gaussians', () => showGaussians);
+    events.function('view.centers', () => showCenters);
+    events.function('view.rings', () => showRings);
+    events.function('view.ringSize', () => ringSize);
+
+    events.on('view.setGaussians', (value: boolean) => {
+        if (value !== showGaussians) {
+            showGaussians = value;
+            events.fire('view.gaussians', value);
         }
-    };
-
-    events.function('camera.mode', () => {
-        return activeMode;
     });
 
-    events.on('camera.setMode', (mode: string) => {
-        setCameraMode(mode);
+    events.on('view.setCenters', (value: boolean) => {
+        if (value !== showCenters) {
+            showCenters = value;
+            events.fire('view.centers', value);
+        }
     });
 
-    events.on('camera.toggleMode', () => {
-        setCameraMode(events.invoke('camera.mode') === 'centers' ? 'rings' : 'centers');
+    events.on('view.setRings', (value: boolean) => {
+        if (value !== showRings) {
+            showRings = value;
+            events.fire('view.rings', value);
+        }
+    });
+
+    events.on('view.setRingSize', (value: number) => {
+        if (value !== ringSize) {
+            ringSize = value;
+            events.fire('view.ringSize', value);
+        }
+    });
+
+    // per-surface colour blend weights. colorBlend mixes the base colour from
+    // the gaussian's own colour (0) toward the flat unselected colour (1);
+    // selectionBlend mixes a selected splat from that base toward the
+    // selection colour
+    const blends: [name: string, value: number][] = [
+        ['splatsColorBlend', 0],
+        ['splatsSelectionBlend', 1],
+        ['centersColorBlend', 1],
+        ['centersSelectionBlend', 1],
+        ['ringsColorBlend', 0],
+        ['ringsSelectionBlend', 1]
+    ];
+    blends.forEach(([name, initial]) => {
+        let value = initial;
+        const setEvent = `view.set${name[0].toUpperCase()}${name.slice(1)}`;
+        events.function(`view.${name}`, () => value);
+        events.on(setEvent, (next: number) => {
+            if (next !== value) {
+                value = next;
+                events.fire(`view.${name}`, next);
+            }
+        });
+    });
+
+    // selection controls: depth on = the per-pixel id pick (frontmost wins),
+    // depth off = through all layers; footprint scales how much of each splat's
+    // projected ellipse counts, from its center point (0) to the full footprint (1)
+
+    let selectionUseDepth = false;
+    let selectionFootprint = 0;
+
+    events.function('selection.useDepth', () => selectionUseDepth);
+
+    events.on('selection.setUseDepth', (value: boolean) => {
+        if (value !== selectionUseDepth) {
+            selectionUseDepth = value;
+            events.fire('selection.useDepth', value);
+        }
+    });
+
+    events.on('selection.toggleUseDepth', () => {
+        events.fire('selection.setUseDepth', !selectionUseDepth);
+    });
+
+    events.function('selection.footprint', () => selectionFootprint);
+
+    events.on('selection.setFootprint', (value: number) => {
+        if (value !== selectionFootprint) {
+            selectionFootprint = value;
+            events.fire('selection.footprint', value);
+        }
+    });
+
+    events.on('selection.toggleFootprint', () => {
+        events.fire('selection.setFootprint', selectionFootprint > 0 ? 0 : 1);
     });
 
     // camera control mode (orbit/fly)
@@ -779,46 +1086,23 @@ const registerEditorEvents = (events: Events, editHistory: EditHistory, scene: S
         setControlMode(controlMode === 'orbit' ? 'fly' : 'orbit');
     });
 
-    // camera overlay
+    // center size
 
-    let cameraOverlay = scene.config.camera.overlay;
+    let centerSize = 2;
 
-    const setCameraOverlay = (enabled: boolean) => {
-        if (enabled !== cameraOverlay) {
-            cameraOverlay = enabled;
-            events.fire('camera.overlay', cameraOverlay);
+    const setCenterSize = (value: number) => {
+        if (value !== centerSize) {
+            centerSize = value;
+            events.fire('view.centerSize', centerSize);
         }
     };
 
-    events.function('camera.overlay', () => {
-        return cameraOverlay;
+    events.function('view.centerSize', () => {
+        return centerSize;
     });
 
-    events.on('camera.setOverlay', (value: boolean) => {
-        setCameraOverlay(value);
-    });
-
-    events.on('camera.toggleOverlay', () => {
-        setCameraOverlay(!events.invoke('camera.overlay'));
-    });
-
-    // splat size
-
-    let splatSize = 2;
-
-    const setSplatSize = (value: number) => {
-        if (value !== splatSize) {
-            splatSize = value;
-            events.fire('camera.splatSize', splatSize);
-        }
-    };
-
-    events.function('camera.splatSize', () => {
-        return splatSize;
-    });
-
-    events.on('camera.setSplatSize', (value: number) => {
-        setSplatSize(value);
+    events.on('view.setCenterSize', (value: number) => {
+        setCenterSize(value);
     });
 
     // camera fly speed
@@ -836,6 +1120,123 @@ const registerEditorEvents = (events: Events, editHistory: EditHistory, scene: S
 
     events.on('camera.setFlySpeed', (value: number) => {
         setFlySpeed(value);
+    });
+
+    // selection display
+
+    let selectionColor = false;
+    let selectionCenters = true;
+    let selectionRings = false;
+
+    events.function('view.selectionColor', () => selectionColor);
+    events.function('view.selectionCenters', () => selectionCenters);
+    events.function('view.selectionRings', () => selectionRings);
+
+    events.on('view.setSelectionColor', (value: boolean) => {
+        if (value !== selectionColor) {
+            selectionColor = value;
+            events.fire('view.selectionColor', value);
+        }
+    });
+
+    events.on('view.setSelectionCenters', (value: boolean) => {
+        if (value !== selectionCenters) {
+            selectionCenters = value;
+            events.fire('view.selectionCenters', value);
+        }
+    });
+
+    events.on('view.setSelectionRings', (value: boolean) => {
+        if (value !== selectionRings) {
+            selectionRings = value;
+            events.fire('view.selectionRings', value);
+        }
+    });
+
+    // per-footprint-mode view profiles: each footprint mode (centers/rings)
+    // remembers its own overlay arrangement. The live view flags are the
+    // active mode's profile; this holds the other mode's, applied when the
+    // footprint toggle crosses the centers/rings boundary. Encoded as 0/1 in
+    // [gaussians, centers, rings, selectionCenters, selectionRings] order
+    const profileFlags: [get: string, set: string][] = [
+        ['view.gaussians', 'view.setGaussians'],
+        ['view.centers', 'view.setCenters'],
+        ['view.rings', 'view.setRings'],
+        ['view.selectionCenters', 'view.setSelectionCenters'],
+        ['view.selectionRings', 'view.setSelectionRings']
+    ];
+    let inactiveProfile = [1, 0, 1, 0, 1];
+    let profileMode = (events.invoke('selection.footprint') as number) > 0;
+
+    // preference application sets the footprint, the live flags and the
+    // inactive profile explicitly, so the boundary-crossing swap below must
+    // stay out of its way or it shuffles the slots it is being loaded into
+    let prefsSuspendDepth = 0;
+    events.on('preferences.suspend', () => {
+        prefsSuspendDepth++;
+    });
+    events.on('preferences.resume', () => {
+        prefsSuspendDepth = Math.max(0, prefsSuspendDepth - 1);
+    });
+
+    events.function('view.inactiveProfile', () => inactiveProfile.slice());
+
+    events.on('view.setInactiveProfile', (profile: number[]) => {
+        inactiveProfile = profile.slice();
+    });
+
+    // the swap is a mode change, not an appearance edit: it must not switch
+    // the edit view back on (see below)
+    let swappingProfile = false;
+
+    events.on('selection.footprint', (value: number) => {
+        const mode = value > 0;
+        if (mode !== profileMode) {
+            profileMode = mode;
+            if (prefsSuspendDepth > 0) {
+                return;
+            }
+            const snapshot = profileFlags.map(([get]) => (events.invoke(get) ? 1 : 0));
+            swappingProfile = true;
+            profileFlags.forEach(([, set], i) => {
+                events.fire(set, !!inactiveProfile[i]);
+            });
+            swappingProfile = false;
+            inactiveProfile = snapshot;
+            events.fire('view.inactiveProfile', inactiveProfile.slice());
+        }
+    });
+
+    // edit view switch (tab): while off, the non-selection overlays hide
+    // and gaussians render regardless of the profile, so it toggles between
+    // the editing view and the raw scene. Off by default and stored as a
+    // preference. Toggling one of the display overlays below switches it
+    // back on so the toggle is never adjusted blind - but not preference
+    // application or the footprint profile swap, which are not the user
+    // toggling a display overlay
+    let editView = false;
+
+    const setEditView = (value: boolean) => {
+        if (value !== editView) {
+            editView = value;
+            events.fire('view.editView', value);
+        }
+    };
+
+    events.function('view.editView', () => editView);
+
+    events.on('view.setEditView', setEditView);
+
+    events.on('view.toggleEditView', () => {
+        setEditView(!editView);
+    });
+
+    ['view.gaussians', 'view.centers', 'view.rings'].forEach((eventName) => {
+        events.on(eventName, () => {
+            if (prefsSuspendDepth === 0 && !swappingProfile) {
+                setEditView(true);
+            }
+        });
     });
 
     // outline selection
@@ -876,12 +1277,54 @@ const registerEditorEvents = (events: Events, editHistory: EditHistory, scene: S
         setViewBands(value);
     });
 
-    // centers gaussian color toggle
-    let centersUseGaussianColor = false;
-    events.function('view.centersUseGaussianColor', () => centersUseGaussianColor);
-    events.on('view.setCentersUseGaussianColor', (value: boolean) => {
-        centersUseGaussianColor = value;
-        events.fire('view.centersUseGaussianColor', value);
+    // minimum projected splat size in pixels (0 disables the cull)
+
+    let minPixelSize = 2;
+
+    events.function('view.minPixelSize', () => {
+        return minPixelSize;
+    });
+
+    events.on('view.setMinPixelSize', (value: number) => {
+        if (value !== minPixelSize) {
+            minPixelSize = value;
+            events.fire('view.minPixelSize', minPixelSize);
+        }
+    });
+
+    // stochastic-transparency splat renderer (1 spp, no sort).
+    // 'disabled' never uses it, 'enabled' always does, 'movement' uses it only
+    // while the scene is changing - trading the sort for speed exactly when the
+    // eye is least able to see the sampling noise - and 'auto' behaves like
+    // 'movement' while the last sorted frame proved slow (see
+    // Scene.autoEngageMs).
+
+    let stochastic = 'auto';
+
+    events.function('view.stochastic', () => {
+        return stochastic;
+    });
+
+    events.on('view.setStochastic', (value: string) => {
+        if (value !== stochastic) {
+            stochastic = value;
+            events.fire('view.stochastic', value);
+        }
+    });
+
+    // gpu/cpu frame timing overlay
+
+    let perfOverlay = false;
+
+    events.function('view.perfOverlay', () => {
+        return perfOverlay;
+    });
+
+    events.on('view.setPerfOverlay', (value: boolean) => {
+        if (value !== perfOverlay) {
+            perfOverlay = value;
+            events.fire('view.perfOverlay', value);
+        }
     });
 
     events.function('camera.getPose', () => {
@@ -914,9 +1357,11 @@ const registerEditorEvents = (events: Events, editHistory: EditHistory, scene: S
 
     // hack: fire events to initialize UI
     events.fire('camera.fov', scene.camera.fov);
-    events.fire('camera.overlay', cameraOverlay);
     events.fire('view.bands', viewBands);
     events.fire('camera.showInfo', showInfo);
+    // needed because view.setStochastic only notifies on a change, so a stored
+    // preference equal to the initial value leaves the ui showing its own default
+    events.fire('view.stochastic', stochastic);
 
     // doc serialization
     events.function('docSerialize.view', () => {
@@ -927,10 +1372,10 @@ const registerEditorEvents = (events: Events, editHistory: EditHistory, scene: S
             unselectedColor: packC(events.invoke('unselectedClr')),
             lockedColor: packC(events.invoke('lockedClr')),
             shBands: events.invoke('view.bands'),
-            centersSize: events.invoke('camera.splatSize'),
+            centersSize: events.invoke('view.centerSize'),
             outlineSelection: events.invoke('view.outlineSelection'),
             showGrid: events.invoke('grid.visible'),
-            gridPlane: events.invoke('grid.plane'),
+            gridPlanes: events.invoke('grid.planes'),
             showBound: events.invoke('camera.bound'),
             showBoundDimensions: events.invoke('camera.boundDimensions'),
             showCameraPoses: events.invoke('camera.showPoses'),
@@ -946,10 +1391,11 @@ const registerEditorEvents = (events: Events, editHistory: EditHistory, scene: S
         events.fire('setUnselectedClr', new Color(docView.unselectedColor));
         events.fire('setLockedClr', new Color(docView.lockedColor));
         events.fire('view.setBands', docView.shBands);
-        events.fire('camera.setSplatSize', docView.centersSize);
+        events.fire('view.setCenterSize', docView.centersSize);
         events.fire('view.setOutlineSelection', docView.outlineSelection);
         events.fire('grid.setVisible', docView.showGrid);
-        events.fire('grid.setPlane', docView.gridPlane ?? 'xz');
+        // documents before the per-plane toggles stored a single gridPlane
+        events.fire('grid.setPlanes', docView.gridPlanes ?? [docView.gridPlane ?? 'xz']);
         events.fire('camera.setBound', docView.showBound);
         events.fire('camera.setBoundDimensions', docView.showBoundDimensions ?? false);
         events.fire('camera.setShowPoses', docView.showCameraPoses ?? false);

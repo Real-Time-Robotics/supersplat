@@ -95,6 +95,11 @@ class Picker {
             return;
         }
 
+        // the id pass draws the compact list through the sort, so it needs a
+        // current sorted projection: a stochastic frame leaves sortedIndices
+        // stale (old camera, old survivor set)
+        this.scene.projectedSplatRenderer.renderSortedForPick();
+
         const { splatLayer } = this.scene;
 
         // Hide non-selected elements
@@ -106,10 +111,12 @@ class Picker {
         // 'intersect' picks against the currently-selected set (same render as
         // 'remove') so unselected splats can't occlude selected ones and skew it.
         const pickOp = mode === 'intersect' ? 'remove' : mode;
+        const pickOpIndex = ['add', 'remove', 'set'].indexOf(pickOp);
 
         // Set picker uniforms
-        this.device.scope.resolve('pickOp').setValue(['add', 'remove', 'set'].indexOf(pickOp));
+        this.device.scope.resolve('pickOp').setValue(pickOpIndex);
         this.device.scope.resolve('pickMode').setValue(0);
+        this.scene.projectedSplatRenderer.preparePick(splat, pickOpIndex, false);
 
         // Render ID picking pass
         const emptyMap = new Map();
@@ -118,6 +125,7 @@ class Picker {
         this.renderPass.setClearColor(idClearColor);
         this.renderPass.update(this.scene.camera.camera, this.scene.app.scene, [splatLayer], emptyMap, false);
         this.renderPass.render();
+        this.scene.projectedSplatRenderer.finishPick();
 
         // Re-enable all splats
         splats.forEach((s) => {
@@ -151,24 +159,29 @@ class Picker {
         const pw = Math.max(1, Math.ceil((x + width) * rt.width) - px);
         const ph = Math.max(1, Math.ceil((y + height) * rt.height) - py);
 
-        // Flip Y for texture read on WebGL (texture origin is bottom-left)
-        const texY = this.device.isWebGL2 ? rt.height - py - ph : py;
-
-        // Read pixels using texture.read() API
-        const pixels = await colorBuffer.read(px, texY, pw, ph, {
+        // Read pixels using texture.read() API. The read must be immediate: the
+        // id pass is rendered synchronously by prepareId and nothing submits the
+        // shared command encoder before the caller awaits us, so a deferred read
+        // maps the staging buffer before the copy has run and returns zeros.
+        const pixels = await colorBuffer.read(px, py, pw, ph, {
             renderTarget: rt,
-            immediate: false
+            immediate: true
         });
 
+        // Row 0 of the result is the top row of the requested rectangle.
         const result: number[] = [];
-        for (let i = 0; i < pw * ph; i++) {
-            // Use >>> 0 to convert signed 32-bit to unsigned (so 0xffffffff instead of -1)
-            result.push(
-                (pixels[i * 4] |
-                (pixels[i * 4 + 1] << 8) |
-                (pixels[i * 4 + 2] << 16) |
-                (pixels[i * 4 + 3] << 24)) >>> 0
-            );
+        for (let row = 0; row < ph; ++row) {
+            const src = row * pw;
+            for (let col = 0; col < pw; ++col) {
+                const i = (src + col) * 4;
+                // Use >>> 0 to convert signed 32-bit to unsigned (so 0xffffffff instead of -1)
+                result.push(
+                    (pixels[i] |
+                    (pixels[i + 1] << 8) |
+                    (pixels[i + 2] << 16) |
+                    (pixels[i + 3] << 24)) >>> 0
+                );
+            }
         }
 
         return result;
@@ -193,6 +206,7 @@ class Picker {
         // Set depth estimation mode uniform
         this.device.scope.resolve('pickOp').setValue(2); // 'set' mode - don't skip any visible splats
         this.device.scope.resolve('pickMode').setValue(1);
+        scene.projectedSplatRenderer.preparePick(splat, 2, true);
 
         // Render scene with depth pass
         this.renderPass.blendState = this.depthBlendState;
@@ -200,6 +214,7 @@ class Picker {
         this.renderPass.setClearColor(depthClearColor);
         this.renderPass.update(camera.camera, app.scene, [splatLayer], emptyMap, false);
         this.renderPass.render();
+        scene.projectedSplatRenderer.finishPick();
 
         // Re-enable all splats
         splats.forEach((s) => {
@@ -216,21 +231,83 @@ class Picker {
         const rt = this.depthRenderTarget;
         const colorBuffer = rt.colorBuffer;
 
-        // Convert normalized coordinates to render target pixels
-        const px = Math.floor(x * rt.width);
-        const py = Math.floor(y * rt.height);
+        if (!Number.isFinite(x) || !Number.isFinite(y) || x < 0 || x > 1 || y < 0 || y > 1 || rt.width < 1 || rt.height < 1) {
+            return null;
+        }
 
-        // Flip Y for texture read on WebGL (texture origin is bottom-left)
-        const texY = this.device.isWebGL2 ? rt.height - py - 1 : py;
+        // Convert normalized coordinates to render target pixels
+        const px = Math.min(Math.floor(x * rt.width), rt.width - 1);
+        const py = Math.min(Math.floor(y * rt.height), rt.height - 1);
 
         // Read the pixel using Texture.read() which handles RGBA16F format
-        const pixels = await colorBuffer.read(px, texY, 1, 1, { renderTarget: rt });
+        const pixels = await colorBuffer.read(px, py, 1, 1, {
+            renderTarget: rt,
+            immediate: true
+        });
 
-        // Convert half-float values to floats
+        return this.decodeDepth(pixels, 0);
+    }
+
+    // Read normalized depth at scattered screen positions. Points are grouped
+    // into small tiles so a brush stroke needs a handful of readbacks instead
+    // of one readback per sample or one large read of its whole screen bound.
+    async readDepths(points: { x: number, y: number }[]): Promise<(number | null)[]> {
+        if (!this.depthRenderTarget) {
+            return new Array(points.length).fill(null);
+        }
+
+        const rt = this.depthRenderTarget;
+        const pixelsX = new Int32Array(points.length);
+        const pixelsY = new Int32Array(points.length);
+        const result: (number | null)[] = new Array(points.length).fill(null);
+        const tiles = new Map<string, { indices: number[], minX: number, minY: number, maxX: number, maxY: number }>();
+        const tileSize = 64;
+
+        for (let i = 0; i < points.length; ++i) {
+            const { x, y } = points[i];
+            if (!Number.isFinite(x) || !Number.isFinite(y) || x < 0 || x > 1 || y < 0 || y > 1 || rt.width < 1 || rt.height < 1) {
+                continue;
+            }
+
+            const px = Math.min(Math.floor(x * rt.width), rt.width - 1);
+            const py = Math.min(Math.floor(y * rt.height), rt.height - 1);
+            pixelsX[i] = px;
+            pixelsY[i] = py;
+            const key = `${Math.floor(px / tileSize)},${Math.floor(py / tileSize)}`;
+            const tile = tiles.get(key);
+            if (tile) {
+                tile.indices.push(i);
+                tile.minX = Math.min(tile.minX, px);
+                tile.minY = Math.min(tile.minY, py);
+                tile.maxX = Math.max(tile.maxX, px);
+                tile.maxY = Math.max(tile.maxY, py);
+            } else {
+                tiles.set(key, { indices: [i], minX: px, minY: py, maxX: px, maxY: py });
+            }
+        }
+
+        for (const tile of tiles.values()) {
+            const width = tile.maxX - tile.minX + 1;
+            const height = tile.maxY - tile.minY + 1;
+            const pixels = await rt.colorBuffer.read(tile.minX, tile.minY, width, height, {
+                renderTarget: rt,
+                immediate: true
+            });
+
+            for (const index of tile.indices) {
+                const offset = ((pixelsY[index] - tile.minY) * width + pixelsX[index] - tile.minX) * 4;
+                result[index] = this.decodeDepth(pixels, offset);
+            }
+        }
+
+        return result;
+    }
+
+    private decodeDepth(pixels: any, offset: number): number | null {
         // R channel: accumulated depth * alpha
         // A channel: transmittance (1 - alpha)
-        const r = half2Float(pixels[0]);
-        const transmittance = half2Float(pixels[3]);
+        const r = half2Float(pixels[offset]);
+        const transmittance = half2Float(pixels[offset + 3]);
         const alpha = 1 - transmittance;
 
         // Check alpha (transmittance close to 1 means nothing visible)

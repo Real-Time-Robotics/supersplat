@@ -51,11 +51,16 @@ class BlobReadSource implements ReadSource {
     readonly size: number;
     readonly seekable: boolean = true;
 
+    // The on-disk file `blob` came from, when known. Writes to it are refused
+    // while the source is in use (see scene.sourcesOf).
+    handle: FileSystemFileHandle | null;
+
     private blob: Blob;
     private closed: boolean = false;
 
-    constructor(blob: Blob) {
+    constructor(blob: Blob, handle: FileSystemFileHandle | null = null) {
         this.blob = blob;
+        this.handle = handle;
         this.size = blob.size;
     }
 
@@ -73,37 +78,55 @@ class BlobReadSource implements ReadSource {
     }
 
     close(): void {
+        if (this.closed) return;
         this.closed = true;
+        this.handle = null;
     }
 }
+
+// Every live source reading from the file behind `handle`.
+const sourcesOf = async (sources: Iterable<BlobReadSource>, handle: FileSystemFileHandle): Promise<BlobReadSource[]> => {
+    const result: BlobReadSource[] = [];
+    for (const source of new Set(sources)) {
+        if (source.handle && await handle.isSameEntry(source.handle)) {
+            result.push(source);
+        }
+    }
+    return result;
+};
 
 /**
  * ReadFileSystem for reading from browser File/Blob objects.
  * Used for drag & drop and file picker scenarios.
  */
 class BlobReadFileSystem implements ReadFileSystem {
-    private files: Map<string, Blob> = new Map();
+    private files: Map<string, { blob: Blob, handle: FileSystemFileHandle | null }> = new Map();
+
+    // every source handed out, so the owner knows which files are in use
+    readonly sources: BlobReadSource[] = [];
 
     /**
      * Add a file to the file system.
      */
-    set(name: string, blob: Blob): void {
-        this.files.set(name.toLowerCase(), blob);
+    set(name: string, blob: Blob, handle: FileSystemFileHandle | null = null): void {
+        this.files.set(name.toLowerCase(), { blob, handle });
     }
 
     /**
      * Get a file by name.
      */
     get(name: string): Blob | undefined {
-        return this.files.get(name.toLowerCase());
+        return this.files.get(name.toLowerCase())?.blob;
     }
 
     createSource(filename: string): Promise<ReadSource> {
-        const blob = this.files.get(filename.toLowerCase());
-        if (!blob) {
+        const entry = this.files.get(filename.toLowerCase());
+        if (!entry) {
             return Promise.reject(new Error(`File not found: ${filename}`));
         }
-        return Promise.resolve(new BlobReadSource(blob));
+        const source = new BlobReadSource(entry.blob, entry.handle);
+        this.sources.push(source);
+        return Promise.resolve(source);
     }
 }
 
@@ -124,15 +147,19 @@ class MappedReadFileSystem implements ReadFileSystem {
     /**
      * Add a local file.
      */
-    addFile(name: string, blob: Blob): void {
-        this.blobFs.set(name, blob);
+    addFile(name: string, blob: Blob, handle: FileSystemFileHandle | null = null): void {
+        this.blobFs.set(name, blob, handle);
+    }
+
+    // the sources handed out over local files
+    get sources(): BlobReadSource[] {
+        return this.blobFs.sources;
     }
 
     async createSource(filename: string): Promise<ReadSource> {
         // First check if we have a local blob
-        const localBlob = this.blobFs.get(filename);
-        if (localBlob) {
-            return new BlobReadSource(localBlob);
+        if (this.blobFs.get(filename)) {
+            return await this.blobFs.createSource(filename);
         }
 
         // Fall back to URL loading
@@ -142,5 +169,6 @@ class MappedReadFileSystem implements ReadFileSystem {
 
 export {
     BlobReadSource,
-    MappedReadFileSystem
+    MappedReadFileSystem,
+    sourcesOf
 };

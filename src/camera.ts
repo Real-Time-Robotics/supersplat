@@ -50,6 +50,9 @@ const v4 = new Vec4();
 // modulo dealing with negative numbers
 const mod = (n: number, m: number) => ((n % m) + m) % m;
 
+// scene.resolveMode -> the blit shader's quadResolve enum
+const RESOLVE_UNIFORM = { none: 0, old: 1, new: 2 };
+
 class Camera extends Element {
     /**
      * Calculate the forward vector given azimuth and elevation angles.
@@ -315,6 +318,7 @@ class Camera extends Element {
             scene.worldLayer.id,
             scene.splatLayer.id,
             scene.overlayLayer.id,
+            scene.centersLayer.id,
             scene.gizmoLayer.id
         ];
 
@@ -334,8 +338,15 @@ class Camera extends Element {
         this.finalPass = new SimpleRenderPass(device,
             new ShaderQuad(device, vertexShader, fragmentShader, 'final-blit'), {
                 vars: () => {
+                    const gd = this.scene.graphicsDevice;
+                    const ts = this.targetSize;
                     return {
-                        srcTexture: this.mainTarget.colorBuffer
+                        srcTexture: this.mainTarget.colorBuffer,
+                        // upscale the (possibly lower-res) target to the backbuffer
+                        blitScale: [ts.width / gd.width, ts.height / gd.height],
+                        // stochastic frames composite their samples through the
+                        // quad resolve; settled frames blit unfiltered
+                        quadResolve: this.scene.movingRender ? RESOLVE_UNIFORM[this.scene.resolveMode] : 0
                     };
                 }
             });
@@ -509,7 +520,6 @@ class Camera extends Element {
             this.mainTarget = new RenderTarget({
                 colorBuffer,
                 depthBuffer,
-                flipY: false,
                 autoResolve: false
             });
 
@@ -520,7 +530,6 @@ class Camera extends Element {
                     workBuffer          // RT1: overlay output (shared with workTarget)
                 ],
                 depthBuffer,
-                flipY: false,
                 autoResolve: false
             });
 
@@ -556,11 +565,15 @@ class Camera extends Element {
             this.splatPass.addLayer(this.camera, scene.splatLayer, false, false);
             this.splatPass.addLayer(this.camera, scene.splatLayer, true, false);
 
-            // configure gizmo pass. the gizmo layer clears depth and stencil
-            // before its opaque step, after the depth-independent tool overlay
+            // configure gizmo pass. the centers and gizmo layers each clear depth
+            // before their opaque step, after the depth-independent tool overlay,
+            // so centers depth-test against each other alone and the gizmos then
+            // start from a clean buffer again
             this.gizmoPass.init(this.mainTarget);
             this.gizmoPass.addLayer(this.camera, scene.overlayLayer, false, false);
             this.gizmoPass.addLayer(this.camera, scene.overlayLayer, true, false);
+            this.gizmoPass.addLayer(this.camera, scene.centersLayer, false, true);
+            this.gizmoPass.addLayer(this.camera, scene.centersLayer, true, false);
             this.gizmoPass.addLayer(this.camera, scene.gizmoLayer, false, true);
             this.gizmoPass.addLayer(this.camera, scene.gizmoLayer, true, false);
 
@@ -640,14 +653,20 @@ class Camera extends Element {
         vec.sub2(bound.center, cameraPosition);
         const dist = vec.dot(forwardVec);
 
-        if (dist > 0) {
-            this.far = dist + boundRadius;
-            // if camera is placed inside the sphere bound calculate near based far
-            this.near = Math.max(1e-6, dist < boundRadius ? this.far / (1024 * 16) : dist - boundRadius);
+        if (this.ortho) {
+            // orthographic has no perspective divide, so the near plane can sit
+            // behind the camera. Span the whole scene bound (near goes negative
+            // when the camera is inside it) so scene content is never clipped in
+            // front of or behind the camera.
+            const radius = Math.max(boundRadius, 1e-2);
+            this.far = dist + radius;
+            this.near = dist - radius;
         } else {
-            // if the scene is behind the camera
-            this.far = boundRadius * 2;
-            this.near = this.far / (1024 * 16);
+            const far = Math.max(dist + boundRadius, 1e-2);
+            const near = Math.max(dist - boundRadius, far / (1024 * 16));
+
+            this.far = far;
+            this.near = Math.min(1.0, near);
         }
     }
 
@@ -689,6 +708,13 @@ class Camera extends Element {
         return Math.sin(this.fov * math.DEG_TO_RAD * 0.5);
     }
 
+    // world size of one screen pixel at the given view depth (ortho is
+    // depth-independent)
+    worldSizePerPixel(depth: number) {
+        const pixelScale = (2 / this.camera.projectionMatrix.data[5]) / Math.max(1, this.scene.canvas.clientHeight);
+        return this.ortho ? pixelScale : pixelScale * depth;
+    }
+
     getRay(screenX: number, screenY: number, ray: Ray) {
         const { camera, ortho } = this;
         const cameraPos = this.mainCamera.getPosition();
@@ -706,49 +732,120 @@ class Camera extends Element {
         }
     }
 
-    // intersect the scene at the given normalized screen coordinate (0-1 range) using depth picking
-    async intersect(x: number, y: number) {
+    // intersect the scene at normalized screen coordinates (0-1 range) using
+    // depth picking. The depth pass is rendered once per splat for the whole
+    // batch, which keeps sampled brush strokes practical. The whole batch runs
+    // under one camera frame: the caller's gesture-time pose if provided (the
+    // call may run from the command queue well after the gesture), the live
+    // camera otherwise.
+    async intersectMany(
+        points: { x: number, y: number }[],
+        splats = this.scene.getElementsByType(ElementType.splat) as Splat[],
+        pose?: { position: Vec3, rotation: Quat, orthoHeight: number, near: number, far: number }
+    ) {
         const { scene } = this;
-        const splats = scene.getElementsByType(ElementType.splat);
+        const closestDepths = points.map(() => Infinity);
+        const closestSplats: (Splat | null)[] = new Array(points.length).fill(null);
 
-        let closestDepth = Infinity;
-        let closestSplat: Splat | null = null;
+        const cameraPos = pose?.position ?? this.mainCamera.getPosition().clone();
+        const cameraRot = pose?.rotation ?? this.mainCamera.getRotation().clone();
+        const orthoHeight = pose?.orthoHeight ?? this.camera.orthoHeight;
+        const near = pose?.near ?? this.near;
+        const far = pose?.far ?? this.far;
+        const forward = cameraRot.transformVector(Vec3.FORWARD, new Vec3());
 
-        // Find the splat with the smallest depth at this screen position
+        // run fn with the camera swapped to the snapshot frame and restored
+        // before returning. The camera can move between the awaits below
+        // (wheel, right-drag, fly keys, or the command queue delaying the
+        // call), and the rays, every depth pass, and the near/far encoding
+        // the depths are decoded with must all share one frame.
+        const withSnapshotCamera = (fn: () => void) => {
+            const livePos = this.mainCamera.getPosition().clone();
+            const liveRot = this.mainCamera.getRotation().clone();
+            const liveOrthoHeight = this.camera.orthoHeight;
+            const liveNear = this.camera.nearClip;
+            const liveFar = this.camera.farClip;
+            this.mainCamera.setPosition(cameraPos);
+            this.mainCamera.setRotation(cameraRot);
+            this.camera.orthoHeight = orthoHeight;
+            this.camera.nearClip = near;
+            this.camera.farClip = far;
+            fn();
+            this.mainCamera.setPosition(livePos);
+            this.mainCamera.setRotation(liveRot);
+            this.camera.orthoHeight = liveOrthoHeight;
+            this.camera.nearClip = liveNear;
+            this.camera.farClip = liveFar;
+        };
+
+        // build the pick rays under the snapshot frame. getRay seeds the ray
+        // origin differently per projection - at the camera for perspective, on
+        // (just behind) the near plane for ortho - so each origin's own view
+        // depth is measured here rather than assuming near.
+        const rays: { origin: Vec3, direction: Vec3, cosAngle: number, originDepth: number }[] = [];
+        withSnapshotCamera(() => {
+            for (const { x, y } of points) {
+                this.getRay(x * scene.canvas.clientWidth, y * scene.canvas.clientHeight, ray);
+                rays.push({
+                    origin: ray.origin.clone(),
+                    direction: ray.direction.clone(),
+                    cosAngle: ray.direction.dot(forward),
+                    originDepth: vecb.sub2(ray.origin, cameraPos).dot(forward)
+                });
+            }
+        });
+
+        // Find the splat with the smallest depth at each screen position. Each
+        // depth pass composites through the projected cache front to back, so
+        // it needs a sorted order under it, rendered under the same frame
         for (let i = 0; i < splats.length; ++i) {
-            const splat = splats[i] as Splat;
+            const splat = splats[i];
 
-            this.picker.prepareDepth(splat);
-            const normalizedDepth = await this.picker.readDepth(x, y);
-
-            if (normalizedDepth !== null && normalizedDepth < closestDepth) {
-                closestDepth = normalizedDepth;
-                closestSplat = splat;
+            withSnapshotCamera(() => {
+                scene.projectedSplatRenderer.renderSortedForPick();
+                this.picker.prepareDepth(splat);
+            });
+            const depths = await this.picker.readDepths(points);
+            for (let j = 0; j < depths.length; ++j) {
+                const depth = depths[j];
+                if (depth !== null && depth < closestDepths[j]) {
+                    closestDepths[j] = depth;
+                    closestSplats[j] = splat;
+                }
             }
         }
 
-        if (!closestSplat) {
-            return null;
-        }
+        return points.map((point, index) => {
+            const splat = closestSplats[index];
+            if (!splat) {
+                return null;
+            }
 
-        // Convert normalized depth to linear depth
-        const linearDepth = closestDepth * (this.far - this.near) + this.near;
+            // Convert normalized depth to linear depth
+            const linearDepth = closestDepths[index] * (far - near) + near;
 
-        // Convert normalized coordinates to screen pixels for getRay
-        const screenX = x * scene.canvas.clientWidth;
-        const screenY = y * scene.canvas.clientHeight;
+            // Calculate world position from the snapshotted ray and view depth
+            const { origin, direction, cosAngle, originDepth } = rays[index];
+            const t = (linearDepth - originDepth) / cosAngle;
+            const position = new Vec3();
+            position.copy(origin).add(vec.copy(direction).mulScalar(t));
 
-        // Calculate world position from ray and depth
-        this.getRay(screenX, screenY, ray);
-        const t = linearDepth / ray.direction.dot(this.mainCamera.forward);
-        const position = new Vec3();
-        position.copy(ray.origin).add(vec.copy(ray.direction).mulScalar(t));
+            // dolly distance for the caller: the along-view distance to the surface,
+            // |linearDepth| / cosAngle. abs keeps behind-camera ortho depths positive
+            // (a negative distance would clamp to minZoom and collapse the view), and
+            // dividing by cosAngle reproduces perspective's ray distance unchanged.
+            // Deliberately the along-view distance, not position.distance(cameraPos):
+            // the latter includes the lateral offset for an off-axis ortho pick, which
+            // would couple orthoHeight to where in the viewport the click landed.
+            const distance = Math.abs(linearDepth) / cosAngle;
 
-        return {
-            splat: closestSplat,
-            position: position,
-            distance: t
-        };
+            return { splat, position, distance, depth: linearDepth };
+        });
+    }
+
+    // intersect the scene at the given normalized screen coordinate (0-1 range) using depth picking
+    async intersect(x: number, y: number) {
+        return (await this.intersectMany([{ x, y }]))[0];
     }
 
     // intersect the scene at the normalized screen location (0-1 range) and focus the camera on this location

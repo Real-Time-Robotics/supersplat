@@ -1,10 +1,12 @@
 import { path, Quat, Vec3 } from 'playcanvas';
 
 import { fitCameraToBound } from './camera-fit';
+import type { Pose } from './camera-poses';
 import { CreateDropHandler } from './drop-handler';
 import { Element, ElementType } from './element';
 import { Events } from './events';
-import { BrowserFileSystem, MappedReadFileSystem } from './io';
+import { ExportSettings, loadExportSettings, saveExportSettings } from './export-settings';
+import { BlobReadSource, BrowserFileSystem, MappedReadFileSystem, pickWriteTarget, sourcesOf, WriteTarget } from './io';
 import { ModelLoader } from './model/model-loader';
 import { Scene } from './scene';
 import { getContentConflict, SceneContentKind } from './scene-content-policy';
@@ -21,6 +23,7 @@ type FileType = 'ply' | 'compressedPly' | 'splat' | 'sog' | 'spz' | 'htmlViewer'
 
 interface SceneExportOptions {
     filename: string;
+    fileTarget?: WriteTarget;
     splatIdx: 'all' | number;
     serializeSettings: SerializeSettings;
 
@@ -180,6 +183,7 @@ const loadCameraPoses = async (file: ImportFile, events: Events) => {
             return (avalue && bvalue) ? parseInt(avalue, 10) - parseInt(bvalue, 10) : 0;
         };
 
+        const poses: Pose[] = [];
         json.sort(sorter).forEach((pose: any, i: number) => {
             if (pose.hasOwnProperty('position') && pose.hasOwnProperty('rotation')) {
                 const p = new Vec3(pose.position);
@@ -189,14 +193,14 @@ const loadCameraPoses = async (file: ImportFile, events: Events) => {
                 vec.copy(z).mulScalar(10).add(p);
 
                 // compute max FOV from intrinsics (vertical or horizontal, whichever is larger)
-                let fov = 60;
+                let fov: number | undefined;
                 if (pose.fx && pose.fy && pose.width && pose.height) {
                     const fovX = 2 * Math.atan(pose.width / (2 * pose.fx)) * (180 / Math.PI);
                     const fovY = 2 * Math.atan(pose.height / (2 * pose.fy)) * (180 / Math.PI);
                     fov = Math.max(fovX, fovY);
                 }
 
-                events.fire('camera.addPose', {
+                poses.push({
                     name: pose.img_name ?? `${file.filename}_${i}`,
                     frame: i,
                     position: new Vec3(-p.x, -p.y, p.z),
@@ -205,6 +209,10 @@ const loadCameraPoses = async (file: ImportFile, events: Events) => {
                 });
             }
         });
+
+        if (poses.length > 0) {
+            events.fire('camera.loadPoses', poses);
+        }
     }
 };
 
@@ -247,7 +255,7 @@ const loadImagesTxt = async (file: ImportFile, events: Events) => {
     const q = new Quat();
     const t = new Vec3();
 
-    poses.forEach((pose, i) => {
+    const cameraPoses = poses.map((pose, i) => {
         const { w, x, y, z, tx, ty, tz } = pose;
 
         q.set(x, y, z, w).normalize().invert();
@@ -257,13 +265,17 @@ const loadImagesTxt = async (file: ImportFile, events: Events) => {
         q.transformVector(Vec3.BACK, vec);
         vec.mulScalar(10).add(t);
 
-        events.fire('camera.addPose', {
+        return {
             name: pose.name,
             frame: i,
             position: new Vec3(-t.x, -t.y, t.z),
             target: new Vec3(-vec.x, -vec.y, vec.z)
-        });
+        };
     });
+
+    if (cameraPoses.length > 0) {
+        events.fire('camera.loadPoses', cameraPoses);
+    }
 };
 
 // initialize file handler events
@@ -322,7 +334,7 @@ const initFileHandler = (scene: Scene, events: Events, dropTarget: HTMLElement) 
             // Create file system with all local files, falling back to URL loading
             const fileSystem = new MappedReadFileSystem(baseUrl);
             files.forEach((f) => {
-                if (f.contents) fileSystem.addFile(f.filename, f.contents);
+                if (f.contents) fileSystem.addFile(f.filename, f.contents, f.handle ?? null);
             });
 
             // Multi-file container formats must load by their relative name so the
@@ -341,6 +353,7 @@ const initFileHandler = (scene: Scene, events: Events, dropTarget: HTMLElement) 
                 // user cancelled the load
                 return null;
             }
+            model.resource.fileSources = fileSystem.sources;
             await scene.add(model);
             fitCameraToBound(scene.camera, model.worldBound);
             scene.camera.setAzimElev(0, 0, 0);
@@ -406,8 +419,11 @@ const initFileHandler = (scene: Scene, events: Events, dropTarget: HTMLElement) 
                 const filename = filenames[i].toLowerCase();
 
                 if (filename.endsWith('.ssproj')) {
-                    // load ssproj document
-                    await events.invoke('doc.load', files[i].contents ?? (await fetch(files[i].url)).arrayBuffer(), files[i].handle);
+                    // load ssproj document. doc.load expects a File (the zip
+                    // reader needs its size), so wrap url fetches in one
+                    const contents = files[i].contents ??
+                        new File([await (await fetch(files[i].url)).blob()], files[i].filename);
+                    await events.invoke('doc.load', contents, files[i].handle);
                 } else if (['.ply', '.splat', '.sog', '.ksplat', '.spz'].some(ext => filename.endsWith(ext))) {
                     // load gaussian splat model
                     const model = await importSplatModel([files[i]], animationFrame);
@@ -493,6 +509,37 @@ const initFileHandler = (scene: Scene, events: Events, dropTarget: HTMLElement) 
             scene.getElementsByType(ElementType.model).length === 0;
     });
 
+    // Include the document archive as well as imported files, including hidden layers.
+    events.function('scene.sourcesOf', (handle: FileSystemFileHandle) => {
+        const splats = scene.getElementsByType(ElementType.splat) as Splat[];
+        return sourcesOf(splats.flatMap(splat => splat.resource.fileSources).concat(events.invoke('doc.fileSources')), handle);
+    });
+
+    // Shared by document and splat writes. The document may exclude
+    // its own archive source because an in-place save rebinds it afterwards.
+    events.function('scene.pickWriteTarget', async (
+        location: FileSystemDirectoryHandle,
+        filename: string,
+        confirm: (handle: FileSystemFileHandle) => Promise<boolean>,
+        exclude?: BlobReadSource
+    ) => {
+        const target = await pickWriteTarget(location, filename);
+        if (target.exists) {
+            const sources = (await events.invoke('scene.sourcesOf', target.handle) as BlobReadSource[])
+            .filter(source => source !== exclude);
+            if (sources.length > 0) {
+                await events.invoke('showPopup', {
+                    type: 'error',
+                    header: i18n.t('popup.error'),
+                    message: i18n.t('popup.overwrite-source')
+                });
+                return null;
+            }
+            if (!await confirm(target.handle)) return null;
+        }
+        return target;
+    });
+
     events.function('scene.import', async () => {
         if (fileSelector) {
             fileSelector.click();
@@ -520,7 +567,8 @@ const initFileHandler = (scene: Scene, events: Events, dropTarget: HTMLElement) 
                 for (let i = 0; i < handles.length; i++) {
                     files.push({
                         filename: handles[i].name,
-                        contents: await handles[i].getFile()
+                        contents: await handles[i].getFile(),
+                        handle: handles[i]
                     });
                 }
 
@@ -562,17 +610,81 @@ const initFileHandler = (scene: Scene, events: Events, dropTarget: HTMLElement) 
         }
     });
 
+    let exportSettings: ExportSettings = {};
+    const exportSettingsReady = loadExportSettings().then((settings) => {
+        exportSettings = settings;
+    }).catch((error) => {
+        console.warn('Export settings could not be restored', error);
+    });
+
+    const persistExportSettings = () => saveExportSettings(exportSettings).catch((error) => {
+        console.warn('Export settings could not be saved', error);
+    });
+
+    events.function('scene.pickExportDirectory', async (reuse = false) => {
+        await exportSettingsReady;
+        try {
+            if (reuse && exportSettings.directory) {
+                await exportSettings.directory.requestPermission({ mode: 'readwrite' });
+                return await events.invoke('scene.getExportDirectory');
+            }
+
+            exportSettings.directory = await window.showDirectoryPicker({
+                id: 'SuperSplatFileExport',
+                mode: 'readwrite',
+                startIn: exportSettings.directory
+            });
+            await persistExportSettings();
+            return exportSettings.directory;
+        } catch (error) {
+            if (error.name !== 'AbortError') {
+                await events.invoke('showPopup', {
+                    type: 'error',
+                    header: i18n.t('popup.error'),
+                    message: `${error.message ?? error}`
+                });
+            }
+            return null;
+        }
+    });
+
+    events.function('scene.getExportDirectory', async () => {
+        await exportSettingsReady;
+        let directory = exportSettings.directory;
+        if (directory) {
+            try {
+                const permission = await directory.queryPermission({ mode: 'readwrite' });
+                // Keep the handle so the folder button can restore access.
+                if (permission === 'prompt') return undefined;
+                if (permission !== 'granted') {
+                    directory = undefined;
+                } else {
+                    // A saved handle can outlive the folder it refers to.
+                    await directory.values().next();
+                }
+            } catch {
+                directory = undefined;
+            }
+            if (!directory) {
+                exportSettings.directory = undefined;
+                await persistExportSettings();
+            }
+        }
+        return directory;
+    });
+
     events.function('scene.export', async (exportType: ExportType) => {
         if (!events.invoke('scene.hasSplatContent')) {
             return false;
         }
 
         const splats = getSplats();
+        const hasFilePicker = !!window.showDirectoryPicker;
 
-        const hasFilePicker = !!window.showSaveFilePicker;
+        await exportSettingsReady;
+        const directory = hasFilePicker ? await events.invoke('scene.getExportDirectory') : undefined;
 
-        // show viewer export options
-        const options = await events.invoke('show.exportPopup', exportType, splats.map(s => s.name), !hasFilePicker) as SceneExportOptions;
+        const options = await events.invoke('show.exportPopup', exportType, splats.map(s => s.name), { directory }) as SceneExportOptions;
 
         // return if user cancelled
         if (!options) {
@@ -587,15 +699,20 @@ const initFileHandler = (scene: Scene, events: Events, dropTarget: HTMLElement) 
 
         if (hasFilePicker) {
             try {
-                const fileHandle = await window.showSaveFilePicker({
-                    id: 'SuperSplatFileExport',
-                    types: [filePickerTypes[fileType]],
-                    suggestedName: options.filename
-                });
-                await events.invoke('scene.write', fileType, options, await fileHandle.createWritable());
+                let written = false;
+                try {
+                    written = await events.invoke('scene.write', fileType, options, await options.fileTarget.handle.createWritable());
+                } finally {
+                    if (!written) await options.fileTarget.discard?.();
+                }
             } catch (error) {
                 if (error.name !== 'AbortError') {
                     console.error(error);
+                    await events.invoke('showPopup', {
+                        type: 'error',
+                        header: i18n.t('popup.error'),
+                        message: `${error.message ?? error}`
+                    });
                 }
             }
         } else {
@@ -663,8 +780,10 @@ const initFileHandler = (scene: Scene, events: Events, dropTarget: HTMLElement) 
                     await serializeViewer(splats, serializeSettings, { ...viewerExportSettings!, events }, fs);
                     break;
             }
-
+            return true;
         } catch (error) {
+            // Release the writable stream before a newly created target is removed.
+            await stream?.abort().catch(() => { /* the writer may already have aborted */ });
             if (error instanceof WebGPUUnavailableError) {
                 await events.invoke('showPopup', {
                     type: 'error',
@@ -679,6 +798,7 @@ const initFileHandler = (scene: Scene, events: Events, dropTarget: HTMLElement) 
                     message: `${message} while saving file`
                 });
             }
+            return false;
         } finally {
             if (useSpinner) {
                 events.fire('stopSpinner');
