@@ -16,7 +16,8 @@
     "scripts": {
         "sdk:build": "npm run build --prefix ../reconstruction/sdk/typescript",
         "prebuild": "npm run sdk:build",
-        "build": "rollup -c",
+        "clean": "node -e \"require('fs').rmSync('dist', { recursive: true, force: true })\"",
+        "build": "npm run clean && rollup -c",
         "watch": "rollup -c -w",
         "serve": "node --import ./scripts/ts-resolve.mjs server.mjs",
         "deploy": "npm run typecheck:worker && npm run build && wrangler deploy",
