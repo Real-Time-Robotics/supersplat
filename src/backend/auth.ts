@@ -4,6 +4,23 @@ import type { TokenSet } from './session';
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@][^\s.@]*\.[^\s@]+$/;
 const ACCOUNT_NOT_SET_UP = 'Account is not fully set up';
 
+type OidcEnv = {
+    OIDC_ISSUER: string;
+    OIDC_CLIENT_ID: string;
+    OIDC_CLIENT_SECRET?: string;
+};
+
+type OidcConfig = {
+    issuer: string;
+    clientId: string;
+    clientSecret: string;
+};
+
+type PkcePair = {
+    verifier: string;
+    challenge: string;
+};
+
 const errorDetail = (payload: any, fallback: string): string => {
     const detail = payload?.detail ?? payload?.error_description ?? payload?.error ?? fallback;
     if (typeof detail === 'string') return detail;
@@ -14,13 +31,6 @@ const errorDetail = (payload: any, fallback: string): string => {
 const validateEmail = (email: string): void => {
     if (!EMAIL_PATTERN.test(email) || email.length > 255) {
         throw new HttpError(400, 'Enter a valid email address.', 'invalid_email');
-    }
-};
-
-const validateLogin = (email: string, password: string): void => {
-    validateEmail(email);
-    if (!password || password.length > 256) {
-        throw new HttpError(400, 'Enter your password.', 'invalid_password');
     }
 };
 
@@ -58,19 +68,21 @@ const creditBalance = (baseUrl: string, apiKey: string): Promise<any> => {
     });
 };
 
-const oidcConfig = async (baseUrl: string): Promise<{ issuer: string; clientId: string }> => {
-    const config = await gatewayJson(baseUrl, '/v1/config');
-    const issuer = String(config?.oidc_issuer || '').replace(/\/$/, '');
-    const clientId = String(config?.oidc_client_id || '');
-    if (!issuer || !clientId) {
+const oidcConfig = (env: OidcEnv): OidcConfig => {
+    const issuer = String(env.OIDC_ISSUER || '').replace(/\/$/, '');
+    const clientId = String(env.OIDC_CLIENT_ID || '');
+    const clientSecret = String(env.OIDC_CLIENT_SECRET || '');
+    if (!issuer || !clientId || !clientSecret) {
         throw new HttpError(503, 'Genesis authentication is not configured.', 'auth_not_configured');
     }
-    return { issuer, clientId };
+    return { issuer, clientId, clientSecret };
 };
 
-const tokenRequest = async (issuer: string, body: URLSearchParams,
+const tokenRequest = async (config: OidcConfig, body: URLSearchParams,
     fallback: string, code: string): Promise<TokenSet> => {
-    const response = await fetch(`${issuer}/protocol/openid-connect/token`, {
+    body.set('client_id', config.clientId);
+    body.set('client_secret', config.clientSecret);
+    const response = await fetch(`${config.issuer}/protocol/openid-connect/token`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body
@@ -95,25 +107,74 @@ const tokenRequest = async (issuer: string, body: URLSearchParams,
     };
 };
 
-const passwordLogin = async (baseUrl: string, email: string,
-    password: string): Promise<TokenSet> => {
-    const { issuer, clientId } = await oidcConfig(baseUrl);
-    return tokenRequest(issuer, new URLSearchParams({
-        grant_type: 'password',
-        client_id: clientId,
-        username: email,
-        password,
-        scope: 'openid'
-    }), 'Email or password is incorrect.', 'login_failed');
+const base64Url = (bytes: Uint8Array): string => {
+    let binary = '';
+    for (const byte of bytes) binary += String.fromCharCode(byte);
+    return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/[=]+$/, '');
 };
 
-const refreshTokens = async (baseUrl: string, refreshToken: string): Promise<TokenSet> => {
-    const { issuer, clientId } = await oidcConfig(baseUrl);
-    return tokenRequest(issuer, new URLSearchParams({
+const pkcePair = async (): Promise<PkcePair> => {
+    const verifier = base64Url(crypto.getRandomValues(new Uint8Array(32)));
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier));
+    return { verifier, challenge: base64Url(new Uint8Array(digest)) };
+};
+
+const callbackUrl = (request: Request): string => new URL(
+    '/api/reconstruction/auth/callback', request.url
+).toString();
+
+const authorizationUrl = (request: Request, env: OidcEnv, input: {
+    state: string;
+    challenge: string;
+    provider?: string | null;
+}): string => {
+    const config = oidcConfig(env);
+    const params = new URLSearchParams({
+        client_id: config.clientId,
+        response_type: 'code',
+        scope: 'openid profile email',
+        redirect_uri: callbackUrl(request),
+        state: input.state,
+        code_challenge: input.challenge,
+        code_challenge_method: 'S256'
+    });
+    if (input.provider) params.set('kc_idp_hint', input.provider);
+    return `${config.issuer}/protocol/openid-connect/auth?${params}`;
+};
+
+const exchangeAuthorizationCode = (request: Request, env: OidcEnv,
+    code: string, verifier: string): Promise<TokenSet> => tokenRequest(
+    oidcConfig(env),
+    new URLSearchParams({
+        grant_type: 'authorization_code',
+        code,
+        code_verifier: verifier,
+        redirect_uri: callbackUrl(request)
+    }),
+    'Sign-in could not be completed.',
+    'login_failed'
+);
+
+const refreshTokens = (env: OidcEnv, refreshToken: string): Promise<TokenSet> => {
+    return tokenRequest(oidcConfig(env), new URLSearchParams({
         grant_type: 'refresh_token',
-        client_id: clientId,
         refresh_token: refreshToken
     }), 'The session has expired.', 'session_expired');
+};
+
+const userInfo = async (env: OidcEnv, accessToken: string): Promise<{
+    email?: string;
+    name?: string;
+    preferred_username?: string;
+}> => {
+    const response = await fetch(`${oidcConfig(env).issuer}/protocol/openid-connect/userinfo`, {
+        headers: { Authorization: `Bearer ${accessToken}` }
+    });
+    if (!response.ok) {
+        throw new HttpError(502, 'Signed in, but the account profile could not be loaded.',
+            'profile_unavailable');
+    }
+    return await response.json();
 };
 
 const registerUser = (baseUrl: string, input: {
@@ -134,13 +195,17 @@ const registerUser = (baseUrl: string, input: {
 });
 
 export {
+    type OidcEnv,
     type TokenSet,
+    authorizationUrl,
+    callbackUrl,
     creditBalance,
     errorDetail,
+    exchangeAuthorizationCode,
     gatewayJson,
-    passwordLogin,
+    pkcePair,
     refreshTokens,
     registerUser,
-    validateLogin,
+    userInfo,
     validateRegistration
 };

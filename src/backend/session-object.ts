@@ -1,5 +1,6 @@
-import { refreshTokens } from './auth';
+import { type OidcEnv, refreshTokens } from './auth';
 import {
+    AUTH_PENDING_LIFETIME_MS,
     SessionState,
     type SessionInput,
     type SessionKind,
@@ -20,6 +21,13 @@ const SCHEMA = `CREATE TABLE IF NOT EXISTS session(
   expires_at        INTEGER NOT NULL,
   created_at        INTEGER NOT NULL,
   updated_at        INTEGER NOT NULL
+)`;
+
+const PENDING_SCHEMA = `CREATE TABLE IF NOT EXISTS pending_auth(
+  id         INTEGER PRIMARY KEY CHECK (id = 1),
+  state      TEXT    NOT NULL,
+  verifier   TEXT    NOT NULL,
+  expires_at INTEGER NOT NULL
 )`;
 
 type SessionRow = {
@@ -122,10 +130,10 @@ class ReconstructionSession {
     readonly #ctx: DurableObjectState;
     #schemaReady = false;
 
-    constructor(ctx: DurableObjectState, env: { GENESIS_BASE_URL: string }) {
+    constructor(ctx: DurableObjectState, env: OidcEnv & { GENESIS_BASE_URL: string }) {
         this.#ctx = ctx;
         this.#state = new SessionState(sqliteStorage(ctx.storage.sql), {
-            refreshTokens: token => refreshTokens(env.GENESIS_BASE_URL, token)
+            refreshTokens: token => refreshTokens(env, token)
         });
     }
 
@@ -133,6 +141,7 @@ class ReconstructionSession {
         if (this.#schemaReady) return;
         const sql = this.#ctx.storage.sql;
         sql.exec(SCHEMA);
+        sql.exec(PENDING_SCHEMA);
         const columns = sql.exec<{ name: string }>('PRAGMA table_info(session)').toArray();
         if (!columns.some(column => column.name === 'version')) {
             sql.exec('ALTER TABLE session ADD COLUMN version INTEGER NOT NULL DEFAULT 1');
@@ -154,10 +163,37 @@ class ReconstructionSession {
         this.#ensureSchema();
         const { pathname } = new URL(request.url);
         if (pathname === '/create') {
+            this.#ctx.storage.sql.exec('DELETE FROM pending_auth');
             const account = this.#state.create(await request.json() as SessionInput);
             const expiresAt = this.#state.expiresAt();
             if (expiresAt) await this.#ctx.storage.setAlarm?.(expiresAt);
             return json({ account, expiresAt });
+        }
+        if (pathname === '/oauth/start') {
+            const pending = await request.json() as { state?: string; verifier?: string };
+            if (!pending.state || !pending.verifier || pending.state.length > 128 ||
+                pending.verifier.length > 128) {
+                return json({ error: 'invalid pending authorization' }, 400);
+            }
+            const expiresAt = Date.now() + AUTH_PENDING_LIFETIME_MS;
+            this.#ctx.storage.sql.exec(
+                `INSERT INTO pending_auth(id, state, verifier, expires_at) VALUES(1, ?, ?, ?)
+                 ON CONFLICT(id) DO UPDATE SET state = excluded.state,
+                   verifier = excluded.verifier, expires_at = excluded.expires_at`,
+                pending.state, pending.verifier, expiresAt
+            );
+            await this.#ctx.storage.setAlarm?.(expiresAt);
+            return json({ expiresAt });
+        }
+        if (pathname === '/oauth/consume') {
+            const { state } = await request.json() as { state?: string };
+            const [pending] = this.#ctx.storage.sql.exec<{
+                state: string; verifier: string; expires_at: number;
+            }>('DELETE FROM pending_auth RETURNING state, verifier, expires_at').toArray();
+            if (!pending || !state || pending.state !== state || pending.expires_at <= Date.now()) {
+                return json({ error: 'invalid pending authorization' }, 401);
+            }
+            return json({ verifier: pending.verifier });
         }
         if (pathname === '/credential') {
             const credential = await this.#state.credential();

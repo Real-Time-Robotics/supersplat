@@ -25,9 +25,9 @@ npm install
 Copy-Item .env.example .env.local
 ```
 
-`.env.local` only configures the optional Genesis base URL and local port. User
-credentials are requested inside the Reconstruction panel and are not read from the
-environment.
+`.env.local` configures the Genesis base URL, local port and the server-side OIDC client.
+Set `OIDC_CLIENT_SECRET` to the `supersplat-web` development secret. It is read only by
+the local server and must never be exposed to the browser bundle.
 
 Build and run the local app:
 
@@ -36,7 +36,8 @@ npm run build
 npm run serve
 ```
 
-Open [http://localhost:3000](http://localhost:3000). For development with automatic
+Open [http://127.0.0.1:3000](http://127.0.0.1:3000). The exact loopback host matters
+because it is part of the registered OIDC callback. For development with automatic
 browser-bundle rebuilds, run `npm run sdk:build` once and then `npm run develop`.
 
 ## Usage
@@ -60,6 +61,10 @@ maps to a Durable Object whose SQLite state holds either the submitted API key o
 access/refresh tokens. Sessions have a fixed seven-day lifetime and are erased by logout or
 their cleanup alarm. The local Node server uses an in-memory equivalent, so restarting it
 clears local sessions.
+
+Account sign-in uses the confidential `supersplat-web` client with authorization code +
+PKCE. Keep `OIDC_CLIENT_SECRET` in the deployment secret store (for Cloudflare, a Worker
+secret); never add it to `wrangler.jsonc` or a browser bundle.
 
 ## Cloudflare deployment
 

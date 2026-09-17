@@ -1,5 +1,6 @@
 const SESSION_COOKIE = 'genesis_reconstruction_session';
 const SESSION_LIFETIME_MS = 7 * 24 * 60 * 60 * 1000;
+const AUTH_PENDING_LIFETIME_MS = 10 * 60 * 1000;
 const ACCESS_REFRESH_MARGIN_MS = 60_000;
 const SESSION_ID_BYTES = 32;
 const SESSION_ID_RE = /^[\w-]{43}$/;
@@ -81,11 +82,11 @@ const readCookie = (request: Request, name: string): string | null => {
 };
 
 const sessionCookieHeader = (value: string,
-    opts: { secure: boolean; maxAgeSeconds: number }): string => {
+    opts: { secure: boolean; maxAgeSeconds: number; sameSite?: 'Strict' | 'Lax' }): string => {
     const attributes = [
         `${SESSION_COOKIE}=${encodeURIComponent(value)}`,
         'HttpOnly',
-        'SameSite=Strict',
+        `SameSite=${opts.sameSite ?? 'Strict'}`,
         'Path=/',
         `Max-Age=${opts.maxAgeSeconds}`
     ];
@@ -202,6 +203,7 @@ class SessionState {
 }
 
 export {
+    AUTH_PENDING_LIFETIME_MS,
     SESSION_COOKIE,
     SESSION_LIFETIME_MS,
     SessionState,

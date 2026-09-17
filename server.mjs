@@ -28,7 +28,11 @@ try {
 
 const env = {
     GENESIS_BASE_URL: process.env.GENESIS_BASE_URL || localEnv.GENESIS_BASE_URL ||
-        'https://recons.rtrobotics.com'
+        'https://recons.rtrobotics.com',
+    OIDC_ISSUER: process.env.OIDC_ISSUER || localEnv.OIDC_ISSUER ||
+        'https://id.rtrobotics.com/realms/rtrobotics',
+    OIDC_CLIENT_ID: process.env.OIDC_CLIENT_ID || localEnv.OIDC_CLIENT_ID || 'supersplat-web',
+    OIDC_CLIENT_SECRET: process.env.OIDC_CLIENT_SECRET || localEnv.OIDC_CLIENT_SECRET || ''
 };
 env.RECON_SESSIONS = sessionNamespace(env);
 const port = Number(process.env.PORT || localEnv.PORT || 3000);
@@ -106,6 +110,6 @@ createServer(async (req, res) => {
         res.end(JSON.stringify({ error: 'Internal error', code: 'local_error' }));
     }
 }).listen(port, '127.0.0.1', () => {
-    console.log(`SuperSplat Reconstruction running at http://localhost:${port}`);
+    console.log(`SuperSplat Reconstruction running at http://127.0.0.1:${port}`);
     console.log(`Genesis API: ${env.GENESIS_BASE_URL}`);
 });

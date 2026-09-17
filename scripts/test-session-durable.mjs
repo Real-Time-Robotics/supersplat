@@ -14,9 +14,7 @@ const deferred = () => {
 
 const gatewayFor = (state) => createServer(async (req, res) => {
     const url = new URL(req.url, state.issuer);
-    if (req.method === 'GET' && url.pathname === '/v1/config') {
-        sendJson(res, 200, { oidc_issuer: state.issuer, oidc_client_id: 'supersplat-test' });
-    } else if (req.method === 'POST' && url.pathname === '/protocol/openid-connect/token') {
+    if (req.method === 'POST' && url.pathname === '/protocol/openid-connect/token') {
         let body = '';
         for await (const chunk of req) body += chunk;
         const grant = new URLSearchParams(body).get('grant_type');
@@ -35,10 +33,13 @@ const gatewayFor = (state) => createServer(async (req, res) => {
             refresh_token: `refresh-${state.issued}`,
             expires_in: state.expiresIn ?? 300
         });
+    } else if (req.method === 'GET' && url.pathname === '/protocol/openid-connect/userinfo') {
+        sendJson(res, 200, { email: 'user@example.com' });
     } else if (url.pathname.startsWith('/v1/api-keys')) {
         state.keyCalls.push(`${req.method} ${url.pathname}`);
         sendJson(res, 200, { keys: [] });
-    } else if (req.method === 'GET' && url.pathname === '/billing/credits') {
+    } else if (req.method === 'GET' &&
+        (url.pathname === '/billing/credits' || url.pathname === '/v1/billing/credits')) {
         const presented = String(req.headers.authorization || '').replace('Bearer ', '');
         state.presented.push(presented);
         if (state.rejectUntil && presented !== state.rejectUntil) {
@@ -74,12 +75,14 @@ const worldFor = async (context, overrides = {}) => {
 };
 
 const signIn = async (env) => {
-    const response = await call(env, '/api/reconstruction/session/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: 'user@example.com', password: 'secret' })
-    });
-    assert.equal(response.status, 200);
+    const start = await call(env, '/api/reconstruction/auth/start');
+    assert.equal(start.status, 302);
+    const authorization = new URL(start.headers.get('location'));
+    const response = await call(env,
+        `/api/reconstruction/auth/callback?code=test-code&state=${authorization.searchParams.get('state')}`, {
+            headers: { Cookie: start.headers.getSetCookie()[0].split(';')[0] }
+        });
+    assert.equal(response.status, 303);
     return response.headers.getSetCookie()[0].split(';')[0];
 };
 
@@ -107,8 +110,8 @@ test('an upstream rejection is retried once against a renewed token', async (con
 
     const answer = await call(env, '/api/reconstruction/credits', { headers: { Cookie: cookie } });
 
-    assert.equal(answer.status, 200);
-    assert.deepEqual(state.grants, ['password', 'refresh_token']);
+    assert.equal(answer.status, 200, await answer.clone().text());
+    assert.deepEqual(state.grants, ['authorization_code', 'refresh_token']);
     assert.deepEqual(state.presented, ['access-1', 'access-1', 'access-2']);
 });
 
@@ -129,7 +132,7 @@ test('an unbounded request body is not buffered for credential replay', async (c
     assert.equal(answer.status, 409);
     assert.equal((await answer.json()).code, 'credential_refreshed_retry_required');
     assert.deepEqual(state.replayBodies, ['streamed-body']);
-    assert.deepEqual(state.grants, ['password', 'refresh_token']);
+    assert.deepEqual(state.grants, ['authorization_code', 'refresh_token']);
 });
 
 test('a refusal that survives the renewal ends the session', async (context) => {
@@ -138,7 +141,7 @@ test('a refusal that survives the renewal ends the session', async (context) => 
 
     const answer = await call(env, '/api/reconstruction/credits', { headers: { Cookie: cookie } });
 
-    assert.equal(answer.status, 401);
+    assert.equal(answer.status, 401, await answer.clone().text());
     assert.equal((await answer.json()).code, 'session_expired');
     assert.equal(state.grants.filter(grant => grant === 'refresh_token').length, 1,
         'one renewal, not a retry loop');
@@ -225,7 +228,7 @@ test('the schema is built once per object, and again only after a wipe', async (
         method: 'DELETE', headers: { Cookie: cookie }
     });
     await call(env, '/api/reconstruction/session', { headers: { Cookie: cookie } });
-    assert.equal(created.length, 1, 'a wiped database is rebuilt exactly once');
+    assert.equal(created.length, 2, 'the session and pending-auth tables are each rebuilt once');
 });
 
 test('an object created before lease versioning is migrated in place', async (context) => {

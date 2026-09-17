@@ -26,12 +26,9 @@ class AuthView {
                 </div>
                 <div class="recon-auth-stage">
                     <form class="recon-auth-form" data-auth-form="login">
-                        <label>Email<input name="email" type="email" autocomplete="username"
-                                           minlength="3" maxlength="255" required></label>
-                        <label>Password<input name="password" type="password"
-                                              autocomplete="current-password" maxlength="256"
-                                              required></label>
-                        <button class="recon-button recon-primary" type="submit">Log in</button>
+                        <p>Use your RTRobotics account. Password, passkey and Google sign-in stay
+                           on the protected identity page.</p>
+                        <button class="recon-button recon-primary" type="submit">Continue to sign in</button>
                     </form>
                     <form class="recon-auth-form" data-auth-form="register" hidden>
                         <div class="recon-auth-names">

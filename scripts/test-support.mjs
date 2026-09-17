@@ -15,7 +15,13 @@ const sendJson = (res, status, payload) => {
 };
 
 const envFor = (gatewayPort) => {
-    const env = { GENESIS_BASE_URL: `http://127.0.0.1:${gatewayPort}` };
+    const origin = `http://127.0.0.1:${gatewayPort}`;
+    const env = {
+        GENESIS_BASE_URL: origin,
+        OIDC_ISSUER: origin,
+        OIDC_CLIENT_ID: 'supersplat-test',
+        OIDC_CLIENT_SECRET: 'test-secret'
+    };
     env.RECON_SESSIONS = sessionNamespace(env);
     return env;
 };

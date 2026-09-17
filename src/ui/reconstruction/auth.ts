@@ -31,16 +31,13 @@ const validate = (mode: string, values: AuthValues): string | null => {
     if (mode === 'api-key') {
         return values.apiKey.startsWith('gp_live_') ? null : 'Enter a valid Genesis API key beginning with gp_live_.';
     }
-    if (!validEmail(values.email) || values.email.length > 255) {
-        return 'Enter a valid email address.';
-    }
     if (mode === 'register') {
+        if (!validEmail(values.email) || values.email.length > 255) {
+            return 'Enter a valid email address.';
+        }
         if (!values.firstName || values.firstName.length > 100) return 'First Name is required.';
         if (!values.lastName || values.lastName.length > 100) return 'Last Name is required.';
         return null;
-    }
-    if (!values.password || values.password.length > 256) {
-        return 'Enter your password.';
     }
     return null;
 };
@@ -125,6 +122,10 @@ class ReconstructionAuth {
     private async submit(form: HTMLFormElement) {
         if (this.requestInFlight) return;
         const mode = form.dataset.authForm;
+        if (mode === 'login') {
+            window.location.assign('/api/reconstruction/auth/start');
+            return;
+        }
         const values = Object.fromEntries(
             [...new FormData(form).entries()].map(([name, value]) => [
                 name,
@@ -138,9 +139,7 @@ class ReconstructionAuth {
         }
         const path = mode === 'register' ?
             '/api/reconstruction/session/register' :
-            mode === 'api-key' ?
-                '/api/reconstruction/session/api-key' :
-                '/api/reconstruction/session/login';
+            '/api/reconstruction/session/api-key';
         this.setBusy(true);
         this.setStatus(mode === 'register' ? 'Creating your account...' : 'Signing in...');
         try {

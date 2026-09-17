@@ -1,10 +1,13 @@
 import { Client } from 'genesis-recon';
 
 import {
+    type OidcEnv,
+    authorizationUrl,
     creditBalance,
-    passwordLogin,
+    exchangeAuthorizationCode,
+    pkcePair,
     registerUser,
-    validateLogin,
+    userInfo,
     validateRegistration
 } from './auth';
 import { PROXY_PREFIX, ProxyDenied, proxyToGateway } from './gateway';
@@ -24,7 +27,7 @@ import {
 type SessionNamespace = Cloudflare.Env['RECON_SESSIONS'];
 type SessionStub = ReturnType<SessionNamespace['get']>;
 
-type BackendEnv = {
+type BackendEnv = OidcEnv & {
     GENESIS_BASE_URL: string;
     GENESIS_REGISTER_PROXY_SECRET?: string;
     RECON_SESSIONS: SessionNamespace;
@@ -47,6 +50,13 @@ const objectFor = (request: Request, env: BackendEnv) => {
     if (!id || !isSessionId(id)) return null;
     if (!env.RECON_SESSIONS) {
         // Security: missing storage must not look like a logged-out session.
+        throw new HttpError(503, 'Session storage is unavailable.', 'sessions_unavailable');
+    }
+    return env.RECON_SESSIONS.get(env.RECON_SESSIONS.idFromName(id));
+};
+
+const objectForId = (env: BackendEnv, id: string): SessionStub => {
+    if (!env.RECON_SESSIONS) {
         throw new HttpError(503, 'Session storage is unavailable.', 'sessions_unavailable');
     }
     return env.RECON_SESSIONS.get(env.RECON_SESSIONS.idFromName(id));
@@ -84,12 +94,9 @@ const secureFor = (request: Request): boolean => {
 };
 
 const establish = async (request: Request, env: BackendEnv, record: Record<string, unknown>,
-    status = 200): Promise<Response> => {
-    if (!env.RECON_SESSIONS) {
-        throw new HttpError(503, 'Session storage is unavailable.', 'sessions_unavailable');
-    }
-    const id = newSessionId();
-    const object = env.RECON_SESSIONS.get(env.RECON_SESSIONS.idFromName(id));
+    status = 200, existingId?: string): Promise<Response> => {
+    const id = existingId ?? newSessionId();
+    const object = objectForId(env, id);
     const created = await askSession(object, '/create', record);
     if (!created.ok) {
         throw new HttpError(503, 'Session storage is unavailable.', 'sessions_unavailable');
@@ -104,19 +111,83 @@ const establish = async (request: Request, env: BackendEnv, record: Record<strin
     });
 };
 
-const loginAndEstablish = async (request: Request, env: BackendEnv, email: string, password: string,
-    status: number): Promise<Response> => {
-    const tokens = await passwordLogin(env.GENESIS_BASE_URL, email, password);
-    const credits = await creditBalance(env.GENESIS_BASE_URL, tokens.accessToken)
-    .catch((): null => null);
-    return establish(request, env, {
-        kind: 'oidc',
-        accessToken: tokens.accessToken,
-        refreshToken: tokens.refreshToken,
-        expiresIn: tokens.expiresIn,
-        label: email,
-        customerId: credits?.customer_id || ''
-    }, status);
+const authRoute = async (request: Request, env: BackendEnv,
+    rest: string): Promise<Response | null> => {
+    if (rest === '/start' && request.method === 'GET') {
+        const provider = new URL(request.url).searchParams.get('provider');
+        if (provider && provider !== 'google') {
+            throw new HttpError(400, 'Unsupported sign-in provider.', 'invalid_provider');
+        }
+        const id = newSessionId();
+        const state = newSessionId();
+        const { verifier, challenge } = await pkcePair();
+        const pending = await askSession(objectForId(env, id), '/oauth/start', { state, verifier });
+        if (!pending.ok) {
+            throw new HttpError(503, 'Sign-in state could not be stored.', 'sessions_unavailable');
+        }
+        return new Response(null, {
+            status: 302,
+            headers: {
+                Location: authorizationUrl(request, env, { state, challenge, provider }),
+                'Cache-Control': 'no-store',
+                'Set-Cookie': sessionCookieHeader(id, {
+                    secure: secureFor(request),
+                    maxAgeSeconds: 10 * 60,
+                    sameSite: 'Lax'
+                })
+            }
+        });
+    }
+    if (rest === '/callback' && request.method === 'GET') {
+        const url = new URL(request.url);
+        const code = url.searchParams.get('code');
+        const state = url.searchParams.get('state');
+        const providerError = url.searchParams.get('error');
+        if (providerError) {
+            throw new HttpError(401, 'Sign-in was cancelled or refused.', 'login_cancelled');
+        }
+        if (!code || !state) {
+            throw new HttpError(400, 'Sign-in response is incomplete.', 'invalid_callback');
+        }
+        const id = readCookie(request, SESSION_COOKIE);
+        if (!id || !isSessionId(id)) {
+            throw new HttpError(401, 'Sign-in state has expired. Start again.', 'login_state_expired');
+        }
+        const object = objectForId(env, id);
+        const consumed = await askSession(object, '/oauth/consume', { state });
+        if (!consumed.ok) {
+            throw new HttpError(401, 'Sign-in state is invalid or expired.', 'login_state_invalid');
+        }
+        const { verifier } = await consumed.json() as { verifier: string };
+        const tokens = await exchangeAuthorizationCode(request, env, code, verifier);
+        const [profile, credits] = await Promise.all([
+            userInfo(env, tokens.accessToken),
+            creditBalance(env.GENESIS_BASE_URL, tokens.accessToken).catch((): null => null)
+        ]);
+        const created = await askSession(object, '/create', {
+            kind: 'oidc',
+            accessToken: tokens.accessToken,
+            refreshToken: tokens.refreshToken,
+            expiresIn: tokens.expiresIn,
+            label: profile.name || profile.email || profile.preferred_username || 'Genesis account',
+            customerId: credits?.customer_id || ''
+        });
+        if (!created.ok) {
+            throw new HttpError(503, 'Session storage is unavailable.', 'sessions_unavailable');
+        }
+        return new Response(null, {
+            status: 303,
+            headers: {
+                Location: new URL('/', request.url).toString(),
+                'Cache-Control': 'no-store',
+                'Set-Cookie': sessionCookieHeader(id, {
+                    secure: secureFor(request),
+                    maxAgeSeconds: Math.floor(SESSION_LIFETIME_MS / 1000)
+                })
+            }
+        });
+    }
+    return null;
 };
 
 const contentLength = (request: Request): number | null => {
@@ -213,13 +284,6 @@ const sessionRoute = async (request: Request, env: BackendEnv,
             label: credits?.customer_id ? `Customer ${credits.customer_id}` : 'API key user',
             customerId: credits?.customer_id || ''
         });
-    }
-    if (rest === '/login' && request.method === 'POST') {
-        const body = await bodyOf(request);
-        const email = String(body.email || '').trim();
-        const password = String(body.password || '');
-        validateLogin(email, password);
-        return loginAndEstablish(request, env, email, password, 200);
     }
     if (rest === '/register' && request.method === 'POST') {
         const body = await bodyOf(request);
@@ -524,7 +588,11 @@ const handle = async (request: Request, env: BackendEnv): Promise<Response | nul
         if (pathname.startsWith(`${PROXY_PREFIX}/`)) {
             return await authenticated(request, env, (attempt, session) => proxyToGateway(attempt, session.token, env.GENESIS_BASE_URL));
         }
-        if (pathname === `${RECON_PREFIX}/session` ||
+        if (pathname.startsWith(`${RECON_PREFIX}/auth/`)) {
+            const answered = await authRoute(request, env,
+                pathname.slice(`${RECON_PREFIX}/auth`.length));
+            if (answered) return answered;
+        } else if (pathname === `${RECON_PREFIX}/session` ||
             pathname.startsWith(`${RECON_PREFIX}/session/`)) {
             const answered = await sessionRoute(request, env,
                 pathname.slice(`${RECON_PREFIX}/session`.length));

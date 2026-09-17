@@ -6,7 +6,7 @@ import { call, envFor, listenOnRandomPort, sendJson, signInWithApiKey } from './
 
 test('JSON endpoints reject malformed and oversized bodies', async () => {
     const env = { GENESIS_BASE_URL: 'https://gateway.invalid', RECON_SESSIONS: undefined };
-    const malformed = await call(env, '/api/reconstruction/session/login', {
+    const malformed = await call(env, '/api/reconstruction/session/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: '{'
@@ -14,7 +14,7 @@ test('JSON endpoints reject malformed and oversized bodies', async () => {
     assert.equal(malformed.status, 400);
     assert.equal((await malformed.json()).code, 'invalid_json');
 
-    const oversized = await call(env, '/api/reconstruction/session/login', {
+    const oversized = await call(env, '/api/reconstruction/session/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ value: 'x'.repeat(256 * 1024) })
@@ -33,9 +33,7 @@ test('auth sessions and photogrammetry proxy flow remain isolated and typed', as
     let issuer = '';
     const gateway = createServer(async (req, res) => {
         const url = new URL(req.url, issuer);
-        if (req.method === 'GET' && url.pathname === '/v1/config') {
-            sendJson(res, 200, { oidc_issuer: issuer, oidc_client_id: 'supersplat-test' });
-        } else if (req.method === 'GET' && url.pathname === '/v1/datasets') {
+        if (req.method === 'GET' && url.pathname === '/v1/datasets') {
             sendJson(res, 200, {
                 datasets: [{
                     dataset_id: 'dataset-1',
@@ -56,6 +54,8 @@ test('auth sessions and photogrammetry proxy flow remain isolated and typed', as
             sendJson(res, 200, {
                 access_token: 'human-token', refresh_token: 'human-refresh', expires_in: 300
             });
+        } else if (req.method === 'GET' && url.pathname === '/protocol/openid-connect/userinfo') {
+            sendJson(res, 200, { email: 'user@example.com' });
         } else if (url.pathname.startsWith('/v1/api-keys')) {
             keyCalls.push(`${req.method} ${url.pathname}`);
             if (req.method === 'DELETE') revoked.push(url.pathname);
@@ -106,13 +106,18 @@ test('auth sessions and photogrammetry proxy flow remain isolated and typed', as
     context.after(() => gateway.close());
     const env = envFor(gatewayPort);
 
-    const login = await call(env, '/api/reconstruction/session/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: 'user@example.com', password: 'secret' })
+    const start = await call(env, '/api/reconstruction/auth/start');
+    assert.equal(start.status, 302);
+    assert.match(start.headers.get('set-cookie'), /SameSite=Lax/);
+    const authorization = new URL(start.headers.get('location'));
+    assert.equal(authorization.searchParams.get('code_challenge_method'), 'S256');
+    assert.equal(authorization.searchParams.get('client_id'), 'supersplat-test');
+    const pendingCookie = start.headers.get('set-cookie').split(';')[0];
+    const login = await call(env,
+        `/api/reconstruction/auth/callback?code=test-code&state=${authorization.searchParams.get('state')}`, {
+            headers: { Cookie: pendingCookie }
     });
-    assert.equal(login.status, 200);
-    assert.equal((await login.json()).apiKey, undefined);
+    assert.equal(login.status, 303);
     const cookie = login.headers.get('set-cookie');
     assert.match(cookie, /HttpOnly/);
     assert.match(cookie, /SameSite=Strict/);
@@ -121,6 +126,13 @@ test('auth sessions and photogrammetry proxy flow remain isolated and typed', as
     for (const secret of ['gp_live_', 'human-token', 'human-refresh']) {
         assert.ok(!cookie.includes(secret), `the cookie leaked ${secret}`);
     }
+
+    const callbackReplay = await call(env,
+        `/api/reconstruction/auth/callback?code=replayed-code&state=${authorization.searchParams.get('state')}`, {
+            headers: { Cookie: pendingCookie }
+    });
+    assert.equal(callbackReplay.status, 401);
+    assert.equal((await callbackReplay.json()).code, 'login_state_invalid');
 
     const session = await call(env, '/api/reconstruction/session', { headers: { Cookie: cookie } });
     assert.equal(session.status, 200);
@@ -249,9 +261,7 @@ test('an account that still has to verify its email is created without a session
     let issuer = '';
     const gateway = createServer(async (req, res) => {
         const url = new URL(req.url, issuer);
-        if (req.method === 'GET' && url.pathname === '/v1/config') {
-            sendJson(res, 200, { oidc_issuer: issuer, oidc_client_id: 'supersplat-test' });
-        } else if (req.method === 'POST' && url.pathname === '/v1/auth/register') {
+        if (req.method === 'POST' && url.pathname === '/v1/auth/register') {
             let body = '';
             for await (const chunk of req) body += chunk;
             registrations.push(JSON.parse(body));
@@ -288,10 +298,11 @@ test('an account that still has to verify its email is created without a session
     assert.equal(again.status, 429);
     assert.equal((await again.json()).code, 'setup_email_cooldown');
 
-    const login = await call(env, '/api/reconstruction/session/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: 'ada@example.com', password: 'secret' })
+    const start = await call(env, '/api/reconstruction/auth/start');
+    const authorization = new URL(start.headers.get('location'));
+    const login = await call(env,
+        `/api/reconstruction/auth/callback?code=test-code&state=${authorization.searchParams.get('state')}`, {
+            headers: { Cookie: start.headers.get('set-cookie').split(';')[0] }
     });
     assert.equal(login.status, 403);
     const refused = await login.json();
