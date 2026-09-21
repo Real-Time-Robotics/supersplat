@@ -25,5 +25,25 @@
     { "tag": "v1", "new_sqlite_classes": ["ReconstructionSession"] }
   ],
   "routes": [{ "pattern": "editor.rtrobotics.com", "custom_domain": true }],
-  "observability": { "enabled": true }
+  "observability": { "enabled": true },
+  "env": {
+    "staging": {
+      "name": "supersplat-editor-staging",
+      "vars": {
+        "GENESIS_BASE_URL": "https://recons-staging.rtrobotics.com",
+        "OIDC_ISSUER": "https://id-staging.rtrobotics.com/realms/rtrobotics",
+        "OIDC_CLIENT_ID": "supersplat-web"
+      },
+      "durable_objects": {
+        "bindings": [
+          { "name": "RECON_SESSIONS", "class_name": "ReconstructionSession" }
+        ]
+      },
+      "migrations": [
+        { "tag": "v1", "new_sqlite_classes": ["ReconstructionSession"] }
+      ],
+      "routes": [{ "pattern": "editor-staging.rtrobotics.com", "custom_domain": true }],
+      "observability": { "enabled": true }
+    }
+  }
 }

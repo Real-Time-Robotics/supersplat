@@ -21,6 +21,7 @@
         "watch": "rollup -c -w",
         "serve": "node --import ./scripts/ts-resolve.mjs server.mjs",
         "deploy": "npm run typecheck:worker && npm run build && wrangler deploy",
+        "deploy:staging": "npm run typecheck:worker && npm run build && wrangler deploy --env staging",
         "typecheck": "wrangler types && tsc --noEmit && tsc -p tsconfig.worker.json",
         "test:backend": "node --experimental-transform-types --import ./scripts/ts-resolve.mjs --test \"src/backend/*.test.ts\"",
         "test:ui": "node --experimental-transform-types --import ./scripts/ts-resolve.mjs --test \"src/ui/**/*.test.ts\"",

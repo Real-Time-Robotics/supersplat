@@ -78,5 +78,7 @@ npm run build
 npm run deploy
 ```
 
+`npm run deploy:staging` ships the `staging` environment to `editor-staging.rtrobotics.com`.
+
 For the production preflight, version bump, deploy, and smoke checks, configure the
 credentials documented at the top of `scripts/deploy.sh` and run that script instead.
