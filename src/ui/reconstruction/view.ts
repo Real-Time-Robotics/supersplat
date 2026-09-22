@@ -1,5 +1,6 @@
 import { ProgressVisual, ReconstructionProgress, TransferProgress } from './progress';
 import { runTitle, type Run } from './run';
+import type { SiteChoice } from './site';
 import type {
     JobHeartbeatEvent,
     JobProgressEvent,
@@ -155,6 +156,14 @@ class ReconstructionView {
 
     get datasetNameInput() {
         return this.create.datasetNameInput;
+    }
+
+    renderSite(choice: SiteChoice) {
+        this.create.renderSite(choice);
+    }
+
+    siteValue(): string {
+        return this.create.siteValue();
     }
 
     get runNameInput() {

@@ -1615,7 +1615,16 @@
         font-size: 10px;
     }
 
-    input {
+    .recon-site-field {
+        grid-column: 1 / -1;
+
+        &[hidden] {
+            display: none;
+        }
+    }
+
+    input,
+    select {
         min-width: 0;
         padding: 5px 7px;
         color: $text-primary;

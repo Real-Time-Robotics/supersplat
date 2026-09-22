@@ -41,7 +41,8 @@ class ReconstructionPanel extends Container {
             await Promise.all([
                 billing.refreshCredits(),
                 artifacts.refreshRecentRuns(),
-                workflow.restoreOpenSessions()
+                workflow.restoreOpenSessions(),
+                workflow.loadSites()
             ]);
         });
 

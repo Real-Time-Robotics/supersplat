@@ -2,6 +2,8 @@ import {
     Client,
     optionsFromPolicy,
     type ClientPolicy,
+    type TagOptions,
+    type Tags,
     type UploadOptions,
     type Uploadable
 } from 'genesis-recon';
@@ -66,9 +68,10 @@ class UploadPaused extends Error {
 
 /** The two store calls, injectable so the keyed bookkeeping can be tested without a network. */
 type UploadDeps = {
-    createDatasetSession(): Promise<string>;
+    createDatasetSession(tags?: Tags): Promise<string>;
     uploadDataset(files: Uploadable[], opts: UploadOptions): Promise<string>;
     clientPolicy?(): Promise<ClientPolicy>;
+    tagOptions?(): Promise<TagOptions>;
 };
 
 class ReconstructionUpload {
@@ -78,9 +81,10 @@ class ReconstructionUpload {
     private readonly deps: UploadDeps;
 
     constructor(deps: UploadDeps = {
-        createDatasetSession: async () => (await genesisConnection()).client.createDatasetSession(),
+        createDatasetSession: async tags => (await genesisConnection()).client.createDatasetSession({ tags }),
         uploadDataset: async (files, opts) => (await genesisConnection()).client.uploadDataset(files, opts),
-        clientPolicy: async () => (await genesisConnection()).policy
+        clientPolicy: async () => (await genesisConnection()).policy,
+        tagOptions: async () => (await genesisConnection()).client.listDatasetTags()
     }) {
         this.deps = deps;
     }
@@ -114,14 +118,18 @@ class ReconstructionUpload {
         await this.records.remove(datasetId);
     }
 
+    tagOptions(): Promise<TagOptions | null> {
+        return this.deps.tagOptions ? this.deps.tagOptions() : Promise.resolve(null);
+    }
+
     async openSessions(): Promise<UploadRecord[]> {
         const sessions = await (await genesisConnection()).client.listOpenSessions();
         return this.records.reconcile(sessions.map(session => session.dataset_id));
     }
 
     async start(key: string, named: Named[], fingerprint: string, pipeline: string,
-        preset: string, label: string, hooks: TransferHooks = {}): Promise<string> {
-        const datasetId = await this.deps.createDatasetSession();
+        preset: string, label: string, hooks: TransferHooks = {}, tags?: Tags): Promise<string> {
+        const datasetId = await this.deps.createDatasetSession(tags);
         const record: UploadRecord = {
             datasetId,
             label,

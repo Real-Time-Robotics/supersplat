@@ -53,6 +53,20 @@ const after = (ms: number) => new Promise((resolve) => {
 const settle = () => after(0);
 
 describe('ReconstructionUpload keyed transfers', () => {
+    it('opens a new session with the tags the run was started with', async () => {
+        const seen: unknown[] = [];
+        const upload = new ReconstructionUpload({
+            createDatasetSession: (tags) => {
+                seen.push(tags);
+                return Promise.resolve('ds-t');
+            },
+            uploadDataset: () => Promise.reject(new Error('unused'))
+        });
+        await upload.start('run-t', namedFiles(), 'fp-t', 'splat', 'standard', 'label', {},
+            { 'eyrie:genesis:site': 'tayninh' }).catch((): void => undefined);
+        assert.deepEqual(seen, [{ 'eyrie:genesis:site': 'tayninh' }]);
+    });
+
     it('streams several runs at once and counts each one', async () => {
         const deps = hangingDeps();
         const upload = new ReconstructionUpload(deps);

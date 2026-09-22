@@ -1,3 +1,4 @@
+import { MAX_CODE, type SiteChoice } from '../site';
 import { UploadList } from './upload-list';
 
 type ModelSource = 'upload' | 'dataset';
@@ -22,6 +23,10 @@ class CreateView {
     readonly fileSummary: HTMLElement;
     readonly datasetNameInput: HTMLInputElement;
     readonly runNameInput: HTMLInputElement;
+    readonly siteField: HTMLElement;
+    readonly siteSelect: HTMLSelectElement;
+    readonly siteInput: HTMLInputElement;
+    readonly siteSuggestions: HTMLDataListElement;
     readonly recentRuns: HTMLElement;
     readonly refreshRunsButton: HTMLButtonElement;
     readonly startButton: HTMLButtonElement;
@@ -128,6 +133,13 @@ class CreateView {
                                maxlength="200" autocomplete="off"
                                title="Chỉ là tên hiển thị; không đổi gì trên kho lưu trữ">
                     </label>
+                    <label class="recon-site-field" hidden>Site
+                        <select class="recon-site-select" aria-label="Site" hidden></select>
+                        <input class="recon-site-input" type="text" maxlength="${MAX_CODE}"
+                               autocomplete="off" list="recon-site-suggestions"
+                               aria-label="Site" placeholder="Không gắn site" hidden>
+                        <datalist id="recon-site-suggestions"></datalist>
+                    </label>
                 </div>
             </div>
             <footer class="recon-footer">
@@ -154,6 +166,10 @@ class CreateView {
         this.fileSummary = root.querySelector('.recon-file-summary');
         this.datasetNameInput = root.querySelector('.recon-dataset-name');
         this.runNameInput = root.querySelector('.recon-run-name-input');
+        this.siteField = root.querySelector('.recon-site-field');
+        this.siteSelect = root.querySelector('.recon-site-select');
+        this.siteInput = root.querySelector('.recon-site-input');
+        this.siteSuggestions = root.querySelector('#recon-site-suggestions');
         this.recentRuns = root.querySelector('.recon-recent-list');
         this.refreshRunsButton = root.querySelector('.recon-refresh-runs');
         this.startButton = root.querySelector('.recon-start');
@@ -183,6 +199,31 @@ class CreateView {
             button.setAttribute('aria-checked', String(selected));
         }
         for (const pane of this.panes) pane.hidden = pane.dataset.source !== source;
+    }
+
+    renderSite(choice: SiteChoice) {
+        const option = (value: string, label = value) => {
+            const element = document.createElement('option');
+            element.value = value;
+            element.textContent = label;
+            return element;
+        };
+        this.siteField.hidden = choice.mode === 'none';
+        this.siteSelect.hidden = choice.mode === 'free' || choice.mode === 'none';
+        this.siteInput.hidden = choice.mode !== 'free';
+        this.siteSelect.disabled = choice.mode === 'fixed';
+        if (choice.mode === 'fixed') {
+            this.siteSelect.replaceChildren(option(choice.value));
+        } else if (choice.mode === 'choose') {
+            this.siteSelect.replaceChildren(option('', 'Chọn site'),
+                ...choice.values.map(value => option(value)));
+        }
+        this.siteSuggestions.replaceChildren(
+            ...(choice.mode === 'free' ? choice.suggestions.map(value => option(value)) : []));
+    }
+
+    siteValue(): string {
+        return this.siteInput.hidden ? this.siteSelect.value : this.siteInput.value;
     }
 
     /** A run in flight replaces the composer: its dataset and pipeline are already fixed. */

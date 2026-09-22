@@ -1,3 +1,5 @@
+import type { Tags } from 'genesis-recon';
+
 import { ReconstructionArtifacts } from './artifacts';
 import { ReconstructionBilling } from './billing';
 import { estimateTotalPixels, shortfallNote } from './estimate';
@@ -10,6 +12,7 @@ import { runCard, type Run, type RunAction } from './run';
 import { RunCoordinator } from './run-coordinator';
 import { RunFeeds } from './run-feed';
 import { RunStore } from './run-store';
+import { NO_SITE, siteChoice, siteTags, type SiteChoice } from './site';
 import type {
     Artifact,
     ArtifactSource,
@@ -37,7 +40,12 @@ import {
 import { ReconstructionView } from './view';
 import { Events } from '../../events';
 
-type PickedFolder = { named: Named[]; fingerprint: string; record: UploadRecord | null };
+type PickedFolder = {
+    named: Named[];
+    fingerprint: string;
+    record: UploadRecord | null;
+    tags?: Tags;
+};
 
 class ReconstructionWorkflow {
     private files: File[] = [];
@@ -48,6 +56,7 @@ class ReconstructionWorkflow {
     }) | null = null;
     private pipeline: ReconstructionPipeline = 'splat';
     private pendingResume: UploadRecord | null = null;
+    private site: SiteChoice = NO_SITE;
     /** The last dataset name this app filled in, so a name the user typed is never replaced. */
     private suggestedName = '';
     private watchGeneration = 0;
@@ -204,6 +213,14 @@ class ReconstructionWorkflow {
         this.coordinator.beginSession(this.billing.concurrentCap);
     }
 
+    async loadSites() {
+        const generation = this.sessionGeneration;
+        const options = await this.upload.tagOptions().catch((): null => null);
+        if (generation !== this.sessionGeneration) return;
+        this.site = siteChoice(options);
+        this.view.renderSite(this.site);
+    }
+
     private endSession() {
         resetGenesisConnection();
         this.sessionGeneration++;
@@ -221,6 +238,8 @@ class ReconstructionWorkflow {
         this.releaseComposeFolder();
         this.cancelling.clear();
         this.submitting.clear();
+        this.site = NO_SITE;
+        this.view.renderSite(this.site);
         this.view.checkoutLink.hidden = true;
     }
 
@@ -686,11 +705,11 @@ class ReconstructionWorkflow {
         return (await readJson<{ job: JobStatus }>(response)).job;
     }
 
-    private trackRun(): Run {
+    private trackRun(tags?: Tags): Run {
         const resuming = this.pendingResume;
         const folder = this.named.length === 0 ?
             null :
-            { named: this.named, fingerprint: this.fingerprint, record: resuming };
+            { named: this.named, fingerprint: this.fingerprint, record: resuming, tags };
         const run = this.runs.upsert({
             id: crypto.randomUUID(),
             state: folder ? 'uploading' : 'quoting',
@@ -731,7 +750,7 @@ class ReconstructionWorkflow {
         return folder.record ?
             this.upload.resume(run.id, folder.record, folder.named, hooks) :
             this.upload.start(run.id, folder.named, folder.fingerprint, run.pipeline,
-                run.preset, run.label, hooks);
+                run.preset, run.label, hooks, folder.tags);
     }
 
     /** Invariant: use the run's pipeline, never the current picker value. */
@@ -760,7 +779,16 @@ class ReconstructionWorkflow {
 
     private reconstruct() {
         if (!this.canStart) return;
-        const run = this.trackRun();
+        let tags: Tags | undefined;
+        if (this.named.length > 0 && !this.pendingResume) {
+            try {
+                tags = siteTags(this.site, this.view.siteValue());
+            } catch (error) {
+                this.view.setState('Site chưa hợp lệ', messageOf(error), { mode: 'failed' });
+                return;
+            }
+        }
+        const run = this.trackRun(tags);
         this.releaseComposeFolder();
         this.startRun(run).catch((error) => {
             this.card(run, 'Reconstruction failed', messageOf(error), { mode: 'failed' });
