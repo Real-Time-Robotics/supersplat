@@ -1,84 +1,17 @@
-# SuperSplat × Genesis Point
+# SuperSplat x Genesis Point
 
-This is the [Real-Time-Robotics fork of SuperSplat](https://github.com/Real-Time-Robotics/supersplat).
-It adds a Reconstruction panel that turns a folder or a selection of photos into either
-a Gaussian Splat or a textured photogrammetry mesh through the Genesis Point TypeScript
-SDK, then opens the primary PLY or GLB model directly in SuperSplat.
+RTRobotics' fork of [PlayCanvas SuperSplat](https://github.com/playcanvas/supersplat),
+with photo reconstruction through the Genesis Point SDK.
 
-The original editor and its Gaussian Splat inspection and editing tools come from
-[playcanvas/supersplat](https://github.com/playcanvas/supersplat).
+The Reconstruction panel uploads or reuses datasets, follows processing and opens
+Gaussian splats or textured meshes directly in the editor. The original inspection
+and editing tools remain available.
 
-## Local setup
+| Component | Responsibility |
+| --- | --- |
+| [src](src/) | Editor and reconstruction interface. |
+| [server.mjs](server.mjs) | Local server and authentication boundary. |
+| [Cloudflare configuration](wrangler.jsonc) | Hosted assets and durable sessions. |
+| [scripts](scripts/) | Deployment and regression checks. |
 
-The `reconstruction` and `supersplat` repositories must be cloned next to each other.
-Node.js 20.19 or newer is required.
-
-```powershell
-git clone https://github.com/Real-Time-Robotics/reconstruction.git
-git clone https://github.com/Real-Time-Robotics/supersplat.git
-
-cd reconstruction\sdk\typescript
-npm install
-
-cd ..\..\..\supersplat
-npm install
-Copy-Item .env.example .env.local
-```
-
-`.env.local` configures the Genesis base URL, local port and the server-side OIDC client.
-Set `OIDC_CLIENT_SECRET` to the `supersplat-web` development secret. It is read only by
-the local server and must never be exposed to the browser bundle.
-
-Build and run the local app:
-
-```powershell
-npm run build
-npm run serve
-```
-
-Open [http://127.0.0.1:3000](http://127.0.0.1:3000). The exact loopback host matters
-because it is part of the registered OIDC callback. For development with automatic
-browser-bundle rebuilds, run `npm run sdk:build` once and then `npm run develop`.
-
-## Usage
-
-1. Select the orange Reconstruction icon in the right toolbar.
-2. Log in, register, or enter an existing Genesis API key without leaving SuperSplat.
-3. Choose **3D Gaussian Splatting** or **Photogrammetry**.
-4. Choose an image folder, select multiple images, drop images into the panel, or select
-   **Use dataset** under **Recent models** to reconstruct existing source images without
-   uploading them again.
-5. Add credits from the panel if the quoted balance is insufficient.
-6. Start reconstruction and follow the shared stage/in-stage progress display.
-7. When processing finishes, the primary PLY or GLB artifact opens in SuperSplat.
-
-The Photogrammetry card extends the Standard preset with the SfM front-half needed for
-direct image uploads. It requires EXIF GPS in at least three source photos and produces
-the preset's textured GLB, orthophoto, and DSM deliverables.
-
-The browser receives only an opaque, HttpOnly, SameSite cookie. On Cloudflare, each cookie
-maps to a Durable Object whose SQLite state holds either the submitted API key or the OIDC
-access/refresh tokens. Sessions have a fixed seven-day lifetime and are erased by logout or
-their cleanup alarm. The local Node server uses an in-memory equivalent, so restarting it
-clears local sessions.
-
-Account sign-in uses the confidential `supersplat-web` client with authorization code +
-PKCE. Keep `OIDC_CLIENT_SECRET` in the deployment secret store (for Cloudflare, a Worker
-secret); never add it to `wrangler.jsonc` or a browser bundle.
-
-## Cloudflare deployment
-
-`wrangler.jsonc` binds the static assets and the `RECON_SESSIONS` Durable Object. Validate
-the generated binding types and bundles before deploying:
-
-```bash
-npm run typecheck
-npm run lint
-npm run build
-npm run deploy
-```
-
-`npm run deploy:staging` ships the `staging` environment to `editor-staging.rtrobotics.com`.
-
-For the production preflight, version bump, deploy, and smoke checks, configure the
-credentials documented at the top of `scripts/deploy.sh` and run that script instead.
+[Operations](OPERATIONS.md) | [Project commands](package.json) | [License](LICENSE)
