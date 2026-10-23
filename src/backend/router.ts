@@ -6,9 +6,7 @@ import {
     creditBalance,
     exchangeAuthorizationCode,
     pkcePair,
-    registerUser,
-    userInfo,
-    validateRegistration
+    userInfo
 } from './auth';
 import { PROXY_PREFIX, ProxyDenied, proxyToGateway } from './gateway';
 import { HttpError } from './http-error';
@@ -29,7 +27,7 @@ type SessionStub = ReturnType<SessionNamespace['get']>;
 
 type BackendEnv = OidcEnv & {
     GENESIS_BASE_URL: string;
-    GENESIS_REGISTER_PROXY_SECRET?: string;
+    EYRIE_ACCOUNTS_URL: string;
     RECON_SESSIONS: SessionNamespace;
 };
 
@@ -285,19 +283,8 @@ const sessionRoute = async (request: Request, env: BackendEnv,
             customerId: credits?.customer_id || ''
         });
     }
-    if (rest === '/register' && request.method === 'POST') {
-        const body = await bodyOf(request);
-        const input = {
-            firstName: String(body.firstName || '').trim(),
-            lastName: String(body.lastName || '').trim(),
-            email: String(body.email || '').trim()
-        };
-        validateRegistration(input);
-        await registerUser(env.GENESIS_BASE_URL, input, {
-            ip: request.headers.get('cf-connecting-ip'),
-            proxySecret: env.GENESIS_REGISTER_PROXY_SECRET
-        });
-        return json({ authenticated: false, verificationRequired: true }, 201);
+    if (rest === '/register' && request.method === 'GET') {
+        return json({ url: new URL('/v1/auth/register', env.EYRIE_ACCOUNTS_URL).href });
     }
     return null;
 };

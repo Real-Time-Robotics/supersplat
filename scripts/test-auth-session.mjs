@@ -6,7 +6,7 @@ import { call, envFor, listenOnRandomPort, sendJson, signInWithApiKey } from './
 
 test('JSON endpoints reject malformed and oversized bodies', async () => {
     const env = { GENESIS_BASE_URL: 'https://gateway.invalid', RECON_SESSIONS: undefined };
-    const malformed = await call(env, '/api/reconstruction/session/register', {
+    const malformed = await call(env, '/api/reconstruction/session/api-key', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: '{'
@@ -14,7 +14,7 @@ test('JSON endpoints reject malformed and oversized bodies', async () => {
     assert.equal(malformed.status, 400);
     assert.equal((await malformed.json()).code, 'invalid_json');
 
-    const oversized = await call(env, '/api/reconstruction/session/register', {
+    const oversized = await call(env, '/api/reconstruction/session/api-key', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ value: 'x'.repeat(256 * 1024) })
@@ -24,7 +24,6 @@ test('JSON endpoints reject malformed and oversized bodies', async () => {
 });
 
 test('auth sessions and photogrammetry proxy flow remain isolated and typed', async (context) => {
-    const registrations = [];
     const revoked = [];
     const keyCalls = [];
     const quotes = [];
@@ -60,11 +59,6 @@ test('auth sessions and photogrammetry proxy flow remain isolated and typed', as
             keyCalls.push(`${req.method} ${url.pathname}`);
             if (req.method === 'DELETE') revoked.push(url.pathname);
             sendJson(res, 200, { keys: [] });
-        } else if (req.method === 'POST' && url.pathname === '/v1/auth/register') {
-            let body = '';
-            for await (const chunk of req) body += chunk;
-            registrations.push(JSON.parse(body));
-            sendJson(res, 201, { sub: 'registered-user' });
         } else if (req.method === 'GET' && url.pathname === '/billing/credits') {
             sendJson(res, 200, { customer_id: 'direct-user', balance: 123, billable: true });
         } else if (req.method === 'GET' && url.pathname === '/v1/billing/quote') {
@@ -161,33 +155,10 @@ test('auth sessions and photogrammetry proxy flow remain isolated and typed', as
     const anonymous = await call(env, '/api/reconstruction/session');
     assert.equal(anonymous.status, 401);
 
-    const nameless = await call(env, '/api/reconstruction/session/register', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ firstName: '', lastName: 'Lovelace', email: 'ada@example.com' })
-    });
-    assert.equal(nameless.status, 400);
-    assert.equal((await nameless.json()).code, 'invalid_first_name');
-    assert.deepEqual(registrations, []);
-
-    const registration = await call(env, '/api/reconstruction/session/register', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            firstName: 'Ada',
-            lastName: 'Lovelace',
-            email: 'ada@example.com',
-            password: 'typed-by-an-old-page'
-        })
-    });
-    assert.equal(registration.status, 201);
-    assert.deepEqual(await registration.json(), { authenticated: false, verificationRequired: true });
+    const registration = await call(env, '/api/reconstruction/session/register');
+    assert.equal(registration.status, 200);
+    assert.deepEqual(await registration.json(), { url: `${env.EYRIE_ACCOUNTS_URL}/v1/auth/register` });
     assert.equal(registration.headers.get('set-cookie'), null);
-    assert.deepEqual(registrations, [{
-        first_name: 'Ada',
-        last_name: 'Lovelace',
-        email: 'ada@example.com'
-    }]);
 
     const direct = await call(env, '/api/reconstruction/session/api-key', {
         method: 'POST',
@@ -256,23 +227,11 @@ test('auth sessions and photogrammetry proxy flow remain isolated and typed', as
     assert.equal(uploadSessions, 0, 'reusing an existing dataset must not create an upload session');
 });
 
-test('an account that still has to verify its email is created without a session', async (context) => {
-    const registrations = [];
+test('an account that still has to verify its email gets no session', async (context) => {
     let issuer = '';
     const gateway = createServer(async (req, res) => {
         const url = new URL(req.url, issuer);
-        if (req.method === 'POST' && url.pathname === '/v1/auth/register') {
-            let body = '';
-            for await (const chunk of req) body += chunk;
-            registrations.push(JSON.parse(body));
-            if (registrations.length === 1) {
-                sendJson(res, 201, { sub: 'unverified-user' });
-            } else {
-                sendJson(res, 429, {
-                    detail: 'a setup email was just sent to this address', code: 'setup_email_cooldown'
-                });
-            }
-        } else if (req.method === 'POST' && url.pathname === '/protocol/openid-connect/token') {
+        if (req.method === 'POST' && url.pathname === '/protocol/openid-connect/token') {
             sendJson(res, 400, { error: 'invalid_grant', error_description: 'Account is not fully set up' });
         } else {
             sendJson(res, 404, { detail: `Unexpected ${req.method} ${url.pathname}` });
@@ -282,21 +241,6 @@ test('an account that still has to verify its email is created without a session
     issuer = `http://127.0.0.1:${gatewayPort}`;
     context.after(() => gateway.close());
     const env = envFor(gatewayPort);
-
-    const register = () => call(env, '/api/reconstruction/session/register', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ firstName: 'Ada', lastName: 'Lovelace', email: 'ada@example.com' })
-    });
-    const registration = await register();
-    assert.equal(registration.status, 201);
-    assert.deepEqual(await registration.json(), { authenticated: false, verificationRequired: true });
-    assert.equal(registration.headers.get('set-cookie'), null);
-    assert.equal(registrations.length, 1);
-
-    const again = await register();
-    assert.equal(again.status, 429);
-    assert.equal((await again.json()).code, 'setup_email_cooldown');
 
     const start = await call(env, '/api/reconstruction/auth/start');
     const authorization = new URL(start.headers.get('location'));
@@ -356,31 +300,4 @@ test('a splat run name is placed at the published nested path, merging not repla
         { iterations: 30000, sh_degree: 3, result_name: 'standard-2' });
     assert.equal(submissions[0].config.other, 1);
     assert.equal(submissions[0].config.run_name, undefined);
-});
-
-test('registration names the visitor to the gateway only with the proxy secret', async (context) => {
-    const seen = [];
-    const gateway = createServer((req, res) => {
-        if (req.method === 'POST' && req.url === '/v1/auth/register') {
-            req.resume();
-            seen.push({ ip: req.headers['x-genesis-client-ip'], secret: req.headers['x-genesis-proxy-secret'] });
-            sendJson(res, 201, { sub: 'new-user' });
-        } else {
-            sendJson(res, 404, { detail: `Unexpected ${req.method} ${req.url}` });
-        }
-    });
-    const gatewayPort = await listenOnRandomPort(gateway);
-    context.after(() => gateway.close());
-    const register = env => call(env, '/api/reconstruction/session/register', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'CF-Connecting-IP': '203.0.113.7' },
-        body: JSON.stringify({ firstName: 'Ada', lastName: 'Lovelace', email: 'ada@example.com' })
-    });
-
-    assert.equal((await register(envFor(gatewayPort))).status, 201);
-    assert.equal((await register({ ...envFor(gatewayPort), GENESIS_REGISTER_PROXY_SECRET: 'proxy-secret' })).status, 201);
-    assert.deepEqual(seen, [
-        { ip: undefined, secret: undefined },
-        { ip: '203.0.113.7', secret: 'proxy-secret' }
-    ]);
 });

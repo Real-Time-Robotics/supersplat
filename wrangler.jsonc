@@ -12,6 +12,7 @@
   },
   "vars": {
     "GENESIS_BASE_URL": "https://recons.rtrobotics.com",
+    "EYRIE_ACCOUNTS_URL": "https://accounts.rtrobotics.com",
     "OIDC_ISSUER": "https://id.rtrobotics.com/realms/rtrobotics",
     "OIDC_CLIENT_ID": "supersplat-web"
   },
@@ -31,6 +32,7 @@
       "name": "supersplat-editor-staging",
       "vars": {
         "GENESIS_BASE_URL": "https://recons-staging.rtrobotics.com",
+        "EYRIE_ACCOUNTS_URL": "https://accounts-staging.rtrobotics.com",
         "OIDC_ISSUER": "https://id-staging.rtrobotics.com/realms/rtrobotics",
         "OIDC_CLIENT_ID": "supersplat-web"
       },

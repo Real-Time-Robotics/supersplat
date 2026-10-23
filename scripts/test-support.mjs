@@ -18,6 +18,7 @@ const envFor = (gatewayPort) => {
     const origin = `http://127.0.0.1:${gatewayPort}`;
     const env = {
         GENESIS_BASE_URL: origin,
+        EYRIE_ACCOUNTS_URL: origin,
         OIDC_ISSUER: origin,
         OIDC_CLIENT_ID: 'supersplat-test',
         OIDC_CLIENT_SECRET: 'test-secret'

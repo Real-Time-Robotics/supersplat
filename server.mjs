@@ -29,6 +29,8 @@ try {
 const env = {
     GENESIS_BASE_URL: process.env.GENESIS_BASE_URL || localEnv.GENESIS_BASE_URL ||
         'https://recons-staging.rtrobotics.com',
+    EYRIE_ACCOUNTS_URL: process.env.EYRIE_ACCOUNTS_URL || localEnv.EYRIE_ACCOUNTS_URL ||
+        'https://accounts-staging.rtrobotics.com',
     OIDC_ISSUER: process.env.OIDC_ISSUER || localEnv.OIDC_ISSUER ||
         'https://id-staging.rtrobotics.com/realms/rtrobotics',
     OIDC_CLIENT_ID: process.env.OIDC_CLIENT_ID || localEnv.OIDC_CLIENT_ID || 'supersplat-web',

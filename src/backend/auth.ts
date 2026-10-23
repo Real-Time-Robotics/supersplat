@@ -1,7 +1,6 @@
 import { HttpError } from './http-error';
 import type { TokenSet } from './session';
 
-const EMAIL_PATTERN = /^[^\s@]+@[^\s@][^\s.@]*\.[^\s@]+$/;
 const ACCOUNT_NOT_SET_UP = 'Account is not fully set up';
 
 type OidcEnv = {
@@ -26,24 +25,6 @@ const errorDetail = (payload: any, fallback: string): string => {
     if (typeof detail === 'string') return detail;
     if (detail && typeof detail.message === 'string') return detail.message;
     return fallback;
-};
-
-const validateEmail = (email: string): void => {
-    if (!EMAIL_PATTERN.test(email) || email.length > 255) {
-        throw new HttpError(400, 'Enter a valid email address.', 'invalid_email');
-    }
-};
-
-const validateRegistration = (input: {
-    firstName: string; lastName: string; email: string;
-}): void => {
-    validateEmail(input.email);
-    if (!input.firstName || input.firstName.length > 100) {
-        throw new HttpError(400, 'First Name is required.', 'invalid_first_name');
-    }
-    if (!input.lastName || input.lastName.length > 100) {
-        throw new HttpError(400, 'Last Name is required.', 'invalid_last_name');
-    }
 };
 
 const gatewayJson = async (baseUrl: string, pathname: string,
@@ -177,23 +158,6 @@ const userInfo = async (env: OidcEnv, accessToken: string): Promise<{
     return await response.json();
 };
 
-const registerUser = (baseUrl: string, input: {
-    firstName: string; lastName: string; email: string;
-}, visitor: { ip: string | null; proxySecret?: string }): Promise<any> => gatewayJson(baseUrl, '/v1/auth/register', {
-    method: 'POST',
-    headers: {
-        'Content-Type': 'application/json',
-        ...(visitor.ip && visitor.proxySecret ?
-            { 'X-Genesis-Client-IP': visitor.ip, 'X-Genesis-Proxy-Secret': visitor.proxySecret } :
-            {})
-    },
-    body: JSON.stringify({
-        first_name: input.firstName,
-        last_name: input.lastName,
-        email: input.email
-    })
-});
-
 export {
     type OidcEnv,
     type TokenSet,
@@ -205,7 +169,5 @@ export {
     gatewayJson,
     pkcePair,
     refreshTokens,
-    registerUser,
-    userInfo,
-    validateRegistration
+    userInfo
 };

@@ -14,11 +14,6 @@ type SessionResponse = {
     expiresAt?: number | null;
 };
 
-type PendingVerification = {
-    authenticated: false;
-    verificationRequired: true;
-};
-
 type AuthValues = Record<string, string>;
 
 const validEmail = (value: string) => {
@@ -137,25 +132,24 @@ class ReconstructionAuth {
             this.setStatus(validationError, true);
             return;
         }
-        const path = mode === 'register' ?
-            '/api/reconstruction/session/register' :
-            '/api/reconstruction/session/api-key';
         this.setBusy(true);
         this.setStatus(mode === 'register' ? 'Creating your account...' : 'Signing in...');
         try {
-            const response = await fetch(path, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(values)
-            });
-            const session = await this.readResponse<SessionResponse | PendingVerification>(response);
-            form.reset();
-            if (!session.authenticated) {
+            if (mode === 'register') {
+                await this.register(values);
+                form.reset();
                 this.setBusy(false);
                 this.setTab('login');
                 this.setStatus(`Account created. Open the link we sent to ${values.email} to verify it and set your password, then sign in.`);
                 return;
             }
+            const response = await fetch('/api/reconstruction/session/api-key', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(values)
+            });
+            const session = await this.readResponse(response);
+            form.reset();
             this.account = session.account;
             sessionRestored();
             this.watch.arm(session.expiresAt);
@@ -167,9 +161,25 @@ class ReconstructionAuth {
         }
     }
 
+    private async register(values: AuthValues) {
+        const { url } = await this.readResponse<{ url: string }>(
+            await fetch('/api/reconstruction/session/register', { cache: 'no-store' }));
+        await this.readResponse(await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                first_name: values.firstName,
+                last_name: values.lastName,
+                email: values.email
+            })
+        }));
+    }
+
     private async readResponse<T = SessionResponse>(response: Response): Promise<T> {
         const payload = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(payload.error || `Request failed (${response.status}).`);
+        if (!response.ok) {
+            throw new Error(payload.error || payload.detail || payload.title || `Request failed (${response.status}).`);
+        }
         return payload as T;
     }
 
