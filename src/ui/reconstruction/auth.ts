@@ -10,8 +10,7 @@ type Account = {
 type SessionResponse = {
     authenticated: true;
     account: Account;
-    // Absent from a server older than the expiry watch; the watch then simply idles.
-    expiresAt?: number | null;
+    expiresAt: number;
 };
 
 type AuthValues = Record<string, string>;

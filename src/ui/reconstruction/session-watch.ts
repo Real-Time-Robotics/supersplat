@@ -26,11 +26,9 @@ class SessionWatch {
         this.#clearTimer = deps.clearTimer ?? (handle => clearTimeout(handle));
     }
 
-    /** Watch a session ending at `expiresAt`. No deadline (an older server) watches nothing. */
-    arm(expiresAt: number | null | undefined): void {
-        this.#deadline = typeof expiresAt === 'number' && Number.isFinite(expiresAt) ?
-            expiresAt :
-            null;
+    /** Watch a session ending at `expiresAt`. */
+    arm(expiresAt: number): void {
+        this.#deadline = expiresAt;
         this.#schedule();
     }
 

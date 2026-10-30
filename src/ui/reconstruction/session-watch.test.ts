@@ -87,14 +87,6 @@ test('disarming stops the watch outright', async () => {
     assert.deepEqual(h.expiries, [], 'a signed-out session is nobody to expire');
 });
 
-test('a server that reports no deadline is watched by nothing at all', async () => {
-    const h = harness();
-    h.watch.arm(null);
-    assert.equal(h.armed(), null);
-    await h.watch.wake();
-    assert.deepEqual(h.expiries, []);
-});
-
 test('re-arming replaces the previous deadline rather than stacking on it', () => {
     const h = harness();
     h.watch.arm(soon(h, 7 * 24 * 60 * MINUTE));
