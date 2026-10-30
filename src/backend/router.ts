@@ -333,7 +333,7 @@ const labelOf = (body: any): string => String(body?.label ?? '');
 
 const idempotencyKeyOf = (value: unknown): string => {
     if (value == null || value === '') return crypto.randomUUID();
-    if (typeof value !== 'string' || !/^[!-~]{1,128}$/.test(value)) {
+    if (typeof value !== 'string' || !/^[\x21-\x7e]{1,128}$/.test(value)) {
         throw new HttpError(400, 'Idempotency key must be 1-128 printable ASCII characters.',
             'invalid_idempotency_key');
     }
