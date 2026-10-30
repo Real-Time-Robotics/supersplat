@@ -53,12 +53,13 @@ const CONTENT_TYPES = {
     '.webp': 'image/webp'
 };
 
-const toRequest = (req) => {
+const toRequest = (req, signal) => {
     const url = new URL(req.url, `http://${req.headers.host ?? '127.0.0.1'}`);
     const hasBody = req.method !== 'GET' && req.method !== 'HEAD';
     return new Request(url, {
         method: req.method,
         headers: req.headers,
+        signal,
         ...(hasBody ? { body: Readable.toWeb(req), duplex: 'half' } : {})
     });
 };
@@ -94,14 +95,19 @@ const serveAsset = async (res, pathname) => {
 };
 
 createServer(async (req, res) => {
+    const disconnected = new AbortController();
+    res.on('close', () => {
+        if (!res.writableFinished) disconnected.abort();
+    });
     try {
-        const response = await handle(toRequest(req), env);
+        const response = await handle(toRequest(req, disconnected.signal), env);
         if (response) {
             await send(res, response);
             return;
         }
         await serveAsset(res, new URL(req.url, 'http://localhost').pathname);
     } catch (error) {
+        if (disconnected.signal.aborted) return;
         console.error(JSON.stringify({
             event: 'request.failed',
             method: req.method,
