@@ -301,3 +301,59 @@ test('a splat run name is placed at the published nested path, merging not repla
     assert.equal(submissions[0].config.other, 1);
     assert.equal(submissions[0].config.run_name, undefined);
 });
+
+test('bad job and estimate input is refused and gateway failures are not echoed', async (context) => {
+    let mode = 'ok';
+    const gateway = createServer((req, res) => {
+        const url = new URL(req.url, 'http://gateway.invalid');
+        if (url.pathname === '/billing/credits' || url.pathname === '/v1/billing/credits') {
+            if (mode === 'ok') {
+                sendJson(res, 200, { customer_id: 'c1', balance: 10, billable: true });
+            } else if (mode === 'refused') {
+                res.writeHead(402, { 'Content-Type': 'application/problem+json' });
+                res.end(JSON.stringify({ code: 'insufficient_credits', detail: 'Not enough credits.' }));
+            } else {
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                res.end('<<internal host db-7 exploded>>');
+            }
+            return;
+        }
+        sendJson(res, 404, { detail: 'unexpected' });
+    });
+    const port = await listenOnRandomPort(gateway);
+    context.after(() => gateway.close());
+    const env = envFor(port);
+    const cookie = await signInWithApiKey(env);
+    const post = (path, body) => call(env, path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Cookie: cookie },
+        body: JSON.stringify(body)
+    });
+
+    const refusals = [
+        ['/api/reconstruction/jobs', { datasetId: 'd', idempotencyKey: 'café' }, 'invalid_idempotency_key'],
+        ['/api/reconstruction/jobs', { datasetId: 'd', idempotencyKey: { nested: true } }, 'invalid_idempotency_key'],
+        ['/api/reconstruction/jobs', { datasetId: 'd', idempotencyKey: 'k'.repeat(129) }, 'invalid_idempotency_key']
+    ];
+    for (const [path, body, code] of refusals) {
+        const answer = await post(path, body);
+        assert.equal(answer.status, 400);
+        assert.equal((await answer.json()).code, code);
+    }
+    for (const totalPixels of [0, -5, 1.5, 'many', Number.MAX_SAFE_INTEGER + 2]) {
+        const answer = await post('/api/reconstruction/estimate', { nImages: 3, totalPixels });
+        assert.equal(answer.status, 400, `totalPixels ${totalPixels}`);
+    }
+
+    mode = 'refused';
+    const refused = await call(env, '/api/reconstruction/credits', { headers: { Cookie: cookie } });
+    assert.equal(refused.status, 402);
+    assert.deepEqual(await refused.json(), { error: 'Not enough credits.', code: 'insufficient_credits' });
+
+    mode = 'garbled';
+    const garbled = await call(env, '/api/reconstruction/credits', { headers: { Cookie: cookie } });
+    assert.equal(garbled.status, 500);
+    const payload = await garbled.json();
+    assert.equal(payload.code, 'local_error');
+    assert.ok(!JSON.stringify(payload).includes('db-7'), 'upstream text must not reach the browser');
+});

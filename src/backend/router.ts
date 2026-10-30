@@ -1,4 +1,4 @@
-import { Client } from 'genesis-recon';
+import { ApiError, Client } from 'genesis-recon';
 
 import {
     type OidcEnv,
@@ -331,6 +331,15 @@ const segmentsOf = (pathname: string): string[] => pathname.slice(RECON_PREFIX.l
 /** The display name out of a request body. The gateway does the trimming and capping. */
 const labelOf = (body: any): string => String(body?.label ?? '');
 
+const idempotencyKeyOf = (value: unknown): string => {
+    if (value == null || value === '') return crypto.randomUUID();
+    if (typeof value !== 'string' || !/^[!-~]{1,128}$/.test(value)) {
+        throw new HttpError(400, 'Idempotency key must be 1-128 printable ASCII characters.',
+            'invalid_idempotency_key');
+    }
+    return value;
+};
+
 const submitJob = async (request: Request, gp: any): Promise<Response> => {
     const body = await bodyOf(request);
     const datasetId = String(body.datasetId || '');
@@ -341,12 +350,12 @@ const submitJob = async (request: Request, gp: any): Promise<Response> => {
     if (!isValidRunName(runName)) {
         throw new HttpError(400, `Tên lần chạy không hợp lệ: ${runName}`, 'invalid_run_name');
     }
+    const idempotencyKey = idempotencyKeyOf(body.idempotencyKey);
     const [presetConfig, runNameField] = await Promise.all([
         gp.getPreset(pipeline, preset),
         runNameFieldFor(gp, pipeline)
     ]);
     const config = buildJobConfig({ presetConfig, pipeline, datasetId, runNameField, runName });
-    const idempotencyKey = String(body.idempotencyKey || crypto.randomUUID());
     // `label` is what the user calls the run; `runName` is where it lands on the store.
     const jobId = await gp.submitJob(pipeline, config,
         { idempotencyKey, label: labelOf(body) || undefined, preset });
@@ -403,6 +412,9 @@ const reconRoute = async (request: Request, env: BackendEnv, session: Credential
             return json({ error: 'nImages phải là số ảnh lớn hơn 0.' }, 400);
         }
         const totalPixels = body.totalPixels == null ? undefined : Number(body.totalPixels);
+        if (totalPixels !== undefined && (!Number.isSafeInteger(totalPixels) || totalPixels < 1)) {
+            return json({ error: 'totalPixels phải là số nguyên lớn hơn 0.' }, 400);
+        }
         return json(await gp.estimate(nImages, pipelineFor(body.pipeline), { totalPixels }));
     }
 
@@ -621,7 +633,16 @@ const handle = async (request: Request, env: BackendEnv): Promise<Response | nul
             } : {};
             return json({ error: error.message, code: error.code }, error.status, headers);
         }
-        return json({ error: String((error as Error)?.message ?? error), code: 'local_error' }, 500);
+        if (error instanceof ApiError && error.status >= 400 && error.status < 600) {
+            return json({ error: error.detail, code: error.code }, error.status);
+        }
+        console.error(JSON.stringify({
+            event: 'request.failed',
+            method: request.method,
+            path: pathname,
+            message: String((error as Error)?.message ?? error)
+        }));
+        return json({ error: 'Internal error.', code: 'local_error' }, 500);
     }
 };
 
