@@ -20,6 +20,7 @@ import type {
 import {
     JOB_NOT_FOUND_GRACE,
     JOB_POLL_FAILURE_GRACE,
+    JOB_POLL_INTERVAL_MS,
     OPENABLE_ARTIFACT_EXTENSIONS,
     delay,
     eventData,
@@ -175,6 +176,8 @@ const terminalError = (job: JobStatus) => {
             );
     }
 };
+
+const RECONNECT_NOTICE = 'Connection interrupted. Retrying…';
 
 class ReconstructionJob {
     private activeJobId: string | null = null;
@@ -438,13 +441,15 @@ class ReconstructionJob {
             } catch (error) {
                 if (signal.aborted) return 'detached';
                 if (!(error instanceof TypeError) || transientFailures++ >= JOB_POLL_FAILURE_GRACE) throw error;
-                await delay(2500);
+                this.view.progress.showNotice(RECONNECT_NOTICE);
+                await delay(JOB_POLL_INTERVAL_MS);
                 continue;
             }
             if (signal.aborted) return 'detached';
             if (response.status >= 500 && transientFailures++ < JOB_POLL_FAILURE_GRACE) {
                 await response.body?.cancel().catch((): void => undefined);
-                await delay(2500);
+                this.view.progress.showNotice(RECONNECT_NOTICE);
+                await delay(JOB_POLL_INTERVAL_MS);
                 continue;
             }
             if (response.status === 404 && transientNotFound < JOB_NOT_FOUND_GRACE) {
@@ -477,7 +482,7 @@ class ReconstructionJob {
                 break;
             }
             this.renderPending(job, data.artifacts ?? []);
-            await delay(this.cancelled ? 7500 : 2500);
+            await delay(this.cancelled ? 3 * JOB_POLL_INTERVAL_MS : JOB_POLL_INTERVAL_MS);
         }
 
         if (signal.aborted) return 'detached';

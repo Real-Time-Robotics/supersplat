@@ -24,10 +24,14 @@ const button = () => ({
 });
 
 /** The shared progress card, recorded so a test can ask what the user would have seen. */
-const stubView = (painted: string[]) => ({
+const stubView = (painted: string[], notices: string[] = []) => ({
     openPrimaryButton: button(),
     cancelButton: button(),
-    progress: { showNotice() {} },
+    progress: {
+        showNotice: (message: string) => {
+            notices.push(message);
+        }
+    },
     setState: (title: string) => {
         painted.push(title);
     },
@@ -91,7 +95,8 @@ test('a poll that fails in transit or with a 5xx is retried, not read as the job
     ];
     let polled = 0;
     globalThis.fetch = (async () => replies[polled++]()) as typeof fetch;
-    const job = new ReconstructionJob(stubView([]), stubBilling, stubArtifacts);
+    const notices: string[] = [];
+    const job = new ReconstructionJob(stubView([], notices), stubBilling, stubArtifacts);
 
     const outcome = job.attach('job-blip');
     for (let retry = 0; retry < 2; retry++) {
@@ -103,6 +108,7 @@ test('a poll that fails in transit or with a 5xx is retried, not read as the job
 
     assert.equal(await outcome, 'done');
     assert.equal(polled, 3);
+    assert.equal(notices.length, 2, 'each retry tells the user the connection is being retried');
 });
 
 test('a job the server calls failed throws rather than settling', async () => {

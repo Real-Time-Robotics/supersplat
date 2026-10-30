@@ -4,6 +4,7 @@ const PREPARED_DATASET_KEY = 'genesis.reconstruction.preparedDataset';
 const PIPELINE_KEY = 'genesis.reconstruction.pipeline';
 const JOB_NOT_FOUND_GRACE = 3;
 const JOB_POLL_FAILURE_GRACE = 60;
+const JOB_POLL_INTERVAL_MS = 2500;
 
 const delay = (ms: number) => new Promise<void>((resolve) => {
     setTimeout(resolve, ms);
@@ -61,6 +62,7 @@ export {
     IMAGE_EXTENSIONS,
     JOB_NOT_FOUND_GRACE,
     JOB_POLL_FAILURE_GRACE,
+    JOB_POLL_INTERVAL_MS,
     OPENABLE_ARTIFACT_EXTENSIONS,
     PIPELINE_KEY,
     PREPARED_DATASET_KEY,
