@@ -59,8 +59,8 @@ class ReconstructionWorkflow {
     private site: SiteChoice = NO_SITE;
     /** The last dataset name this app filled in, so a name the user typed is never replaced. */
     private suggestedName = '';
-    private watchGeneration = 0;
-    private sessionGeneration = 0;
+    private watch: AbortController | null = null;
+    private session = new AbortController();
     /** Runs whose start is in flight; guards a double Start on one run, not concurrency. */
     private readonly submitting = new Set<string>();
     /** Runs a cancel was accepted for, so a later error reads as cancelled not failed. */
@@ -209,22 +209,28 @@ class ReconstructionWorkflow {
 
     beginSession() {
         resetGenesisConnection();
-        this.sessionGeneration++;
+        this.renewSession();
         this.coordinator.beginSession(this.billing.concurrentCap);
     }
 
+    private renewSession() {
+        this.session.abort();
+        this.session = new AbortController();
+    }
+
     async loadSites() {
-        const generation = this.sessionGeneration;
+        const { signal } = this.session;
         const options = await this.upload.tagOptions().catch((): null => null);
-        if (generation !== this.sessionGeneration) return;
+        if (signal.aborted) return;
         this.site = siteChoice(options);
         this.view.renderSite(this.site);
     }
 
     private endSession() {
         resetGenesisConnection();
-        this.sessionGeneration++;
-        this.watchGeneration++;
+        this.renewSession();
+        this.watch?.abort();
+        this.watch = null;
         this.coordinator.stop();
         this.feeds.stop();
         this.upload.pauseAll();
@@ -244,9 +250,9 @@ class ReconstructionWorkflow {
     }
 
     async restoreOpenSessions() {
-        const generation = this.sessionGeneration;
+        const { signal } = this.session;
         const records = await this.upload.openSessions().catch(() => [] as UploadRecord[]);
-        if (generation !== this.sessionGeneration) return;
+        if (signal.aborted) return;
         const known = new Set(this.runs.list().map(run => run.datasetId).filter(Boolean));
         const held = new Set(Array.from(this.picked.values()).map(folder => folder.fingerprint));
         for (const record of records) {
@@ -576,15 +582,15 @@ class ReconstructionWorkflow {
      * say so on the row instead of reopening, which only earns another `end`.
      */
     private async settleEndedRun(runId: string, settled: boolean) {
-        const generation = this.sessionGeneration;
+        const { signal } = this.session;
         // A job's own end frame can beat its row's flip to terminal by a moment.
         for (const wait of settled ? [0, 2_000, 5_000, 10_000] : [0]) {
             if (wait) await delay(wait);
-            if (generation !== this.sessionGeneration) return;
+            if (signal.aborted) return;
             if (!this.runs.list().some(run => run.id === runId)) return;
             if (await this.coordinator.close(runId)) return;
         }
-        if (generation !== this.sessionGeneration) return;
+        if (signal.aborted) return;
         this.feeds.drop(runId);   // else sync counts the closed feed as coverage
         this.runs.update(runId, {
             detail: 'Mất liên lạc với luồng. Nhấn làm mới để xem trạng thái mới nhất.'
@@ -804,7 +810,7 @@ class ReconstructionWorkflow {
     }
 
     private async startRun(run: Run, select = true) {
-        const generation = this.sessionGeneration;
+        const { signal } = this.session;
         if (this.submitting.has(run.id)) return;
         const transferring = this.picked.has(run.id);
         // Only bytes are rationed. A run reusing an uploaded dataset must not wait behind someone else's upload.
@@ -828,10 +834,10 @@ class ReconstructionWorkflow {
             const datasetId = transferring ?
                 await this.transfer(run) :
                 run.datasetId ?? this.preparedDataset?.datasetId;
-            if (generation !== this.sessionGeneration) return;
+            if (signal.aborted) return;
             if (!datasetId) throw new Error('Không có dataset nào để chạy.');
             const prepared = await this.quoteDataset(datasetId, run.pipeline as ReconstructionPipeline);
-            if (generation !== this.sessionGeneration) return;
+            if (signal.aborted) return;
             this.picked.delete(run.id);
             this.coordinator.transition(run.id, 'quoting', { datasetId });
             this.billing.setBalance(prepared.quote.balance);
@@ -845,7 +851,7 @@ class ReconstructionWorkflow {
                     Math.ceil(prepared.quote.required - prepared.quote.balance)
                 );
                 await this.billing.showCreditShortfall(creditsNeeded);
-                if (generation !== this.sessionGeneration) return;
+                if (signal.aborted) return;
                 this.coordinator.transition(run.id, 'failed', {
                     detail: `Thiếu ${creditsNeeded.toLocaleString()} credit`
                 });
@@ -856,7 +862,7 @@ class ReconstructionWorkflow {
             }
 
             await this.coordinator.submitReady();
-            if (generation !== this.sessionGeneration) return;
+            if (signal.aborted) return;
             const submitted = this.runs.list().find(r => r.id === run.id);
             if (submitted?.state === 'waiting-slot') {
                 const cap = this.coordinator.slotCap();
@@ -872,7 +878,7 @@ class ReconstructionWorkflow {
             }
             if (this.runs.selected()?.id === run.id) this.watchRun(submitted);
         } catch (error) {
-            if (generation !== this.sessionGeneration) return;
+            if (signal.aborted) return;
             const alive = this.runs.list().some(r => r.id === run.id);
             if (error instanceof UploadPaused) {
                 if (!alive || this.discarding.has(run.id)) return;
@@ -888,7 +894,7 @@ class ReconstructionWorkflow {
             this.card(run, jobError?.title || 'Reconstruction failed', messageOf(error),
                 { mode: 'failed' });
         } finally {
-            if (generation === this.sessionGeneration) {
+            if (!signal.aborted) {
                 this.submitting.delete(run.id);
                 this.startQueuedRun();
             }
@@ -896,15 +902,17 @@ class ReconstructionWorkflow {
     }
 
     private async watchRun(run: Run) {
-        const generation = ++this.watchGeneration;
+        this.watch?.abort();
+        const watch = new AbortController();
+        this.watch = watch;
         try {
             const outcome = await this.job.attach(run.jobId as string,
                 detail => this.runs.update(run.id, { detail }));
-            if (generation !== this.watchGeneration) return;
+            if (watch.signal.aborted) return;
             if (outcome === 'detached') return;
             this.coordinator.settle(run.id, 'done', { percent: 100, detail: '' });
         } catch (error) {
-            if (generation !== this.watchGeneration) return;
+            if (watch.signal.aborted) return;
             if (this.settleCancelled(error, run)) return;
             const jobError = error instanceof ReconstructionJobError ? error : null;
             // A dropped stream is not a terminal job result.

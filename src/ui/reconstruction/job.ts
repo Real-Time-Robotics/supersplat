@@ -179,7 +179,7 @@ const terminalError = (job: JobStatus) => {
 class ReconstructionJob {
     private activeJobId: string | null = null;
     private activeEvents: EventSource | null = null;
-    private watchGeneration = 0;
+    private watch: AbortController | null = null;
     private cancelled = false;
     private lastStage: StageEvent | null = null;
     private lastProgress: JobProgressEvent | null = null;
@@ -233,7 +233,9 @@ class ReconstructionJob {
     }
 
     attach(jobId: string, onDetail: DetailSink | null = null): Promise<WatchOutcome> {
-        const generation = ++this.watchGeneration;
+        this.watch?.abort();
+        const watch = new AbortController();
+        this.watch = watch;
         this.cancelled = false;
         this.lastStage = null;
         this.lastProgress = null;
@@ -260,19 +262,16 @@ class ReconstructionJob {
 
         this.activeJobId = jobId;
         this.followEvents(jobId);
-        return this.waitForJob(jobId, generation);
+        return this.waitForJob(jobId, watch.signal);
     }
 
     get watching(): string | null {
         return this.activeJobId;
     }
 
-    private stillWatching(generation: number): boolean {
-        return generation === this.watchGeneration;
-    }
-
     detach() {
-        this.watchGeneration++;
+        this.watch?.abort();
+        this.watch = null;
         this.activeEvents?.close();
         this.activeEvents = null;
         this.activeJobId = null;
@@ -426,22 +425,23 @@ class ReconstructionJob {
         }));
     }
 
-    private async waitForJob(jobId: string, generation: number): Promise<WatchOutcome> {
+    private async waitForJob(jobId: string, signal: AbortSignal): Promise<WatchOutcome> {
         let transientNotFound = 0;
         let transientFailures = 0;
         let artifacts: Artifact[] = [];
         for (;;) {
-            if (!this.stillWatching(generation)) return 'detached';
+            if (signal.aborted) return 'detached';
             let response: Response;
             try {
-                response = await reconFetch(`/api/reconstruction/jobs/${encodeURIComponent(jobId)}`, { cache: 'no-store' });
+                response = await reconFetch(`/api/reconstruction/jobs/${encodeURIComponent(jobId)}`,
+                    { cache: 'no-store', signal });
             } catch (error) {
-                if (!this.stillWatching(generation)) return 'detached';
+                if (signal.aborted) return 'detached';
                 if (!(error instanceof TypeError) || transientFailures++ >= JOB_POLL_FAILURE_GRACE) throw error;
                 await delay(2500);
                 continue;
             }
-            if (!this.stillWatching(generation)) return 'detached';
+            if (signal.aborted) return 'detached';
             if (response.status >= 500 && transientFailures++ < JOB_POLL_FAILURE_GRACE) {
                 await response.body?.cancel().catch((): void => undefined);
                 await delay(2500);
@@ -480,12 +480,12 @@ class ReconstructionJob {
             await delay(this.cancelled ? 7500 : 2500);
         }
 
-        if (!this.stillWatching(generation)) return 'detached';
+        if (signal.aborted) return 'detached';
         if (this.primaryOpenPromise) await this.primaryOpenPromise;
         this.view.openPrimaryButton.hidden = true;
         await this.billing.refreshCredits();
         await this.artifacts.refreshRecentRuns();
-        if (!this.stillWatching(generation)) return 'detached';
+        if (signal.aborted) return 'detached';
         if (!artifacts.length) throw new Error('The job finished without any downloadable artifacts.');
         const source: ArtifactSource = {
             type: 'job',
