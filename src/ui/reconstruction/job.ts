@@ -458,10 +458,13 @@ class ReconstructionJob {
                 await delay(2000);
                 continue;
             }
-            const data = await readJson<{
-                job: JobStatus;
-                artifacts?: Artifact[];
-            }>(response);
+            let data: { job: JobStatus; artifacts?: Artifact[] };
+            try {
+                data = await readJson<{ job: JobStatus; artifacts?: Artifact[] }>(response);
+            } catch (error) {
+                if (signal.aborted) return 'detached';
+                throw error;
+            }
             transientNotFound = 0;
             transientFailures = 0;
             const { job } = data;

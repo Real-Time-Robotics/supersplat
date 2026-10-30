@@ -633,7 +633,7 @@ const handle = async (request: Request, env: BackendEnv): Promise<Response | nul
             } : {};
             return json({ error: error.message, code: error.code }, error.status, headers);
         }
-        if (error instanceof ApiError && error.status >= 400 && error.status < 600) {
+        if (error instanceof ApiError && error.status >= 400 && error.status < 500) {
             return json({ error: error.detail, code: error.code }, error.status);
         }
         console.error(JSON.stringify({

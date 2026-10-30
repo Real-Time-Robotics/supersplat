@@ -73,6 +73,16 @@ test('a watch let go of while the job is still running reports detached, never d
         'a let-go watch must leave the card to whoever took it');
 });
 
+test('a watch let go of while its response body is unreadable reports detached, not an error', async () => {
+    const job = new ReconstructionJob(stubView([]), stubBilling, stubArtifacts);
+    globalThis.fetch = (async () => {
+        job.detach();
+        return new Response('aborted mid-body', { status: 200 });
+    }) as typeof fetch;
+
+    assert.equal(await job.attach('job-cut'), 'detached');
+});
+
 test('a job the server calls done reports done', async () => {
     serve({
         job: { status: 'done', terminal: true },
