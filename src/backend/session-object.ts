@@ -143,10 +143,6 @@ class ReconstructionSession {
         const sql = this.#ctx.storage.sql;
         sql.exec(SCHEMA);
         sql.exec(PENDING_SCHEMA);
-        const columns = sql.exec<{ name: string }>('PRAGMA table_info(session)').toArray();
-        if (!columns.some(column => column.name === 'version')) {
-            sql.exec('ALTER TABLE session ADD COLUMN version INTEGER NOT NULL DEFAULT 1');
-        }
         this.#schemaReady = true;
     }
 
