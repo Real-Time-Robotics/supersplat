@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import {
+    RefreshUnavailable,
     SESSION_LIFETIME_MS,
     SessionState,
     type SessionRecord,
@@ -181,6 +182,30 @@ test('a refresh that fails ends the session rather than falling back', async () 
 
     assert.equal(await session.credential(), null);
     assert.equal(storage.record, null, 'nothing usable may survive a failed refresh');
+});
+
+test('a refresh the token endpoint could not answer leaves the session for the next try', async () => {
+    let outage = true;
+    const { session, storage } = stateFor({
+        refreshTokens: async () => {
+            if (outage) throw new RefreshUnavailable();
+            return { accessToken: 'a2', refreshToken: 'r2', expiresIn: 300 };
+        }
+    });
+    session.create({
+        kind: 'oidc',
+        accessToken: 'a1',
+        refreshToken: 'r1',
+        expiresIn: 0,
+        label: 'me',
+        customerId: 'c1'
+    });
+
+    await assert.rejects(session.credential(), RefreshUnavailable);
+    assert.equal(storage.record?.refreshToken, 'r1');
+
+    outage = false;
+    assert.equal((await session.credential())?.token, 'a2');
 });
 
 test('an oidc session with no refresh token dies with its access token', async () => {

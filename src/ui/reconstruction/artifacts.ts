@@ -600,8 +600,7 @@ class ReconstructionArtifacts {
         this.view.setTransferState('Loading artifact list', label, { mode: 'indeterminate' });
         try {
             const route = `/api/reconstruction/datasets/${encodeURIComponent(run.dataset_id)}` +
-                `/runs/${encodeURIComponent(run.pipeline)}/${encodeURIComponent(run.run_name)}/artifacts` +
-                `?created=${encodeURIComponent(run.created)}`;
+                `/runs/${encodeURIComponent(run.pipeline)}/${encodeURIComponent(run.run_name)}/artifacts`;
             const data = await readJson<{ artifacts: Artifact[] }>(
                 await reconFetch(route, { cache: 'no-store' })
             );

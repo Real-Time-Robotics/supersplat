@@ -1,5 +1,5 @@
 import { HttpError } from './http-error';
-import type { TokenSet } from './session';
+import { RefreshUnavailable, type TokenSet } from './session';
 
 const ACCOUNT_NOT_SET_UP = 'Account is not fully set up';
 
@@ -136,11 +136,16 @@ const exchangeAuthorizationCode = (request: Request, env: OidcEnv,
     'login_failed'
 );
 
-const refreshTokens = (env: OidcEnv, refreshToken: string): Promise<TokenSet> => {
-    return tokenRequest(oidcConfig(env), new URLSearchParams({
-        grant_type: 'refresh_token',
-        refresh_token: refreshToken
-    }), 'The session has expired.', 'session_expired');
+const refreshTokens = async (env: OidcEnv, refreshToken: string): Promise<TokenSet> => {
+    try {
+        return await tokenRequest(oidcConfig(env), new URLSearchParams({
+            grant_type: 'refresh_token',
+            refresh_token: refreshToken
+        }), 'The session has expired.', 'session_expired');
+    } catch (error) {
+        if (error instanceof HttpError && error.status < 500 && error.status !== 429) throw error;
+        throw new RefreshUnavailable();
+    }
 };
 
 const userInfo = async (env: OidcEnv, accessToken: string): Promise<{

@@ -94,6 +94,8 @@ const sessionCookieHeader = (value: string,
     return attributes.join('; ');
 };
 
+class RefreshUnavailable extends Error {}
+
 /** Coalesces refreshes and fences stale writes. */
 class SessionState {
     readonly #storage: SessionStorage;
@@ -185,7 +187,8 @@ class SessionState {
         let tokens: TokenSet;
         try {
             tokens = await this.#refreshTokens(record.refreshToken);
-        } catch {
+        } catch (error) {
+            if (error instanceof RefreshUnavailable) throw error;
             this.#storage.clear(record.version);
             return null;
         }
@@ -204,6 +207,7 @@ class SessionState {
 
 export {
     AUTH_PENDING_LIFETIME_MS,
+    RefreshUnavailable,
     SESSION_COOKIE,
     SESSION_LIFETIME_MS,
     SessionState,

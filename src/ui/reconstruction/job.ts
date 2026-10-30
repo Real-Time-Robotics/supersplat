@@ -19,6 +19,7 @@ import type {
 } from './types';
 import {
     JOB_NOT_FOUND_GRACE,
+    JOB_POLL_FAILURE_GRACE,
     OPENABLE_ARTIFACT_EXTENSIONS,
     delay,
     eventData,
@@ -427,11 +428,25 @@ class ReconstructionJob {
 
     private async waitForJob(jobId: string, generation: number): Promise<WatchOutcome> {
         let transientNotFound = 0;
+        let transientFailures = 0;
         let artifacts: Artifact[] = [];
         for (;;) {
             if (!this.stillWatching(generation)) return 'detached';
-            const response = await reconFetch(`/api/reconstruction/jobs/${encodeURIComponent(jobId)}`, { cache: 'no-store' });
+            let response: Response;
+            try {
+                response = await reconFetch(`/api/reconstruction/jobs/${encodeURIComponent(jobId)}`, { cache: 'no-store' });
+            } catch (error) {
+                if (!this.stillWatching(generation)) return 'detached';
+                if (!(error instanceof TypeError) || transientFailures++ >= JOB_POLL_FAILURE_GRACE) throw error;
+                await delay(2500);
+                continue;
+            }
             if (!this.stillWatching(generation)) return 'detached';
+            if (response.status >= 500 && transientFailures++ < JOB_POLL_FAILURE_GRACE) {
+                await response.body?.cancel().catch((): void => undefined);
+                await delay(2500);
+                continue;
+            }
             if (response.status === 404 && transientNotFound < JOB_NOT_FOUND_GRACE) {
                 transientNotFound++;
                 this.view.progress.showNotice('Syncing final status and artifacts…');
@@ -443,6 +458,7 @@ class ReconstructionJob {
                 artifacts?: Artifact[];
             }>(response);
             transientNotFound = 0;
+            transientFailures = 0;
             const { job } = data;
             if (job.terminal) {
                 artifacts = Array.isArray(data.artifacts) ? data.artifacts : [];

@@ -75,6 +75,10 @@ const askSession = (object: SessionStub,
 const expired = () => new HttpError(401,
     'Your session has ended. Sign in again to continue.', 'session_expired');
 
+const refused = (answer: Response) => (answer.status === 503 ?
+    new HttpError(503, 'Sign-in service is unavailable. Try again shortly.', 'auth_unavailable') :
+    expired());
+
 const requireSession = async (request: Request, env: BackendEnv): Promise<Credential> => {
     const object = objectFor(request, env);
     if (!object) {
@@ -82,7 +86,7 @@ const requireSession = async (request: Request, env: BackendEnv): Promise<Creden
             'authentication_required');
     }
     const answer = await askSession(object, '/credential');
-    if (!answer.ok) throw expired();
+    if (!answer.ok) throw refused(answer);
     return await answer.json() as Credential;
 };
 
@@ -91,9 +95,9 @@ const secureFor = (request: Request): boolean => {
     return forwarded === 'https' || new URL(request.url).protocol === 'https:';
 };
 
-const establish = async (request: Request, env: BackendEnv, record: Record<string, unknown>,
-    status = 200, existingId?: string): Promise<Response> => {
-    const id = existingId ?? newSessionId();
+const establish = async (request: Request, env: BackendEnv,
+    record: Record<string, unknown>): Promise<Response> => {
+    const id = newSessionId();
     const object = objectForId(env, id);
     const created = await askSession(object, '/create', record);
     if (!created.ok) {
@@ -101,7 +105,7 @@ const establish = async (request: Request, env: BackendEnv, record: Record<strin
     }
     const { account, expiresAt } = await created.json() as
         { account: Account; expiresAt: number | null };
-    return json({ authenticated: true, account, expiresAt }, status, {
+    return json({ authenticated: true, account, expiresAt }, 200, {
         'Set-Cookie': sessionCookieHeader(id, {
             secure: secureFor(request),
             maxAgeSeconds: Math.floor(SESSION_LIFETIME_MS / 1000)
@@ -307,7 +311,15 @@ const runNameFieldFor = async (gp: any, pipeline: string): Promise<string> => {
     return info.run_name_field;
 };
 
-const segmentsOf = (pathname: string): string[] => pathname.slice(RECON_PREFIX.length + 1).split('/').map(decodeURIComponent);
+const decodeSegment = (segment: string): string => {
+    try {
+        return decodeURIComponent(segment);
+    } catch {
+        throw new HttpError(400, 'Malformed request path.', 'invalid_path');
+    }
+};
+
+const segmentsOf = (pathname: string): string[] => pathname.slice(RECON_PREFIX.length + 1).split('/').map(decodeSegment);
 
 /** The display name out of a request body. The gateway does the trimming and capping. */
 const labelOf = (body: any): string => String(body?.label ?? '');
@@ -555,7 +567,8 @@ const authenticated = async (request: Request, env: BackendEnv,
 
     const object = objectFor(request, env);
     const renewed = object ? await askSession(object, '/reauthenticate') : null;
-    if (!renewed?.ok) throw expired();
+    if (!renewed) throw expired();
+    if (!renewed.ok) throw refused(renewed);
     if (!replay) {
         throw new HttpError(409,
             'Your credential was renewed; retry this request.',

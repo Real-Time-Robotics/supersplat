@@ -1,7 +1,7 @@
 const HOP_BY_HOP = new Set([
     'connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization',
     'te', 'trailer', 'transfer-encoding', 'upgrade',
-    'content-encoding', 'content-length'
+    'content-encoding', 'content-length', 'set-cookie'
 ]);
 const FORWARDED_REQUEST_HEADERS = ['content-type', 'accept', 'idempotency-key', 'last-event-id'];
 

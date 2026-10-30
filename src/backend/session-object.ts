@@ -1,6 +1,7 @@
 import { type OidcEnv, refreshTokens } from './auth';
 import {
     AUTH_PENDING_LIFETIME_MS,
+    RefreshUnavailable,
     SessionState,
     type SessionInput,
     type SessionKind,
@@ -195,13 +196,16 @@ class ReconstructionSession {
             }
             return json({ verifier: pending.verifier });
         }
-        if (pathname === '/credential') {
-            const credential = await this.#state.credential();
-            if (!credential) await this.#erase();
-            return credential ? json(credential) : json({ error: 'expired' }, 401);
-        }
-        if (pathname === '/reauthenticate') {
-            const credential = await this.#state.reauthenticate();
+        if (pathname === '/credential' || pathname === '/reauthenticate') {
+            let credential;
+            try {
+                credential = pathname === '/credential' ?
+                    await this.#state.credential() :
+                    await this.#state.reauthenticate();
+            } catch (error) {
+                if (!(error instanceof RefreshUnavailable)) throw error;
+                return json({ error: 'unavailable' }, 503);
+            }
             if (!credential) await this.#erase();
             return credential ? json(credential) : json({ error: 'expired' }, 401);
         }

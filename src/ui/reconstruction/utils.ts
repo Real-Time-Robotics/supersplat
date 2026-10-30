@@ -3,6 +3,7 @@ const OPENABLE_ARTIFACT_EXTENSIONS = /\.(?:ply|splat|sog|ksplat|spz|glb|gltf)$/i
 const PREPARED_DATASET_KEY = 'genesis.reconstruction.preparedDataset';
 const PIPELINE_KEY = 'genesis.reconstruction.pipeline';
 const JOB_NOT_FOUND_GRACE = 3;
+const JOB_POLL_FAILURE_GRACE = 60;
 
 const delay = (ms: number) => new Promise<void>((resolve) => {
     setTimeout(resolve, ms);
@@ -59,6 +60,7 @@ const readJson = async <T = any>(response: Response): Promise<T> => {
 export {
     IMAGE_EXTENSIONS,
     JOB_NOT_FOUND_GRACE,
+    JOB_POLL_FAILURE_GRACE,
     OPENABLE_ARTIFACT_EXTENSIONS,
     PIPELINE_KEY,
     PREPARED_DATASET_KEY,

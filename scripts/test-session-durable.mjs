@@ -23,6 +23,10 @@ const gatewayFor = (state) => createServer(async (req, res) => {
             state.refreshGate.started.resolve();
             await state.refreshGate.release.promise;
         }
+        if (grant === 'refresh_token' && state.breakRefresh) {
+            sendJson(res, 503, { error: 'unavailable' });
+            return;
+        }
         if (grant === 'refresh_token' && state.refuseRefresh) {
             sendJson(res, 400, { error: 'invalid_grant' });
             return;
@@ -159,6 +163,20 @@ test('a refresh Keycloak refuses logs the session out', async (context) => {
 
     assert.equal(answer.status, 401);
     assert.equal((await answer.json()).code, 'session_expired');
+});
+
+test('a refresh while Keycloak is down fails the request but keeps the session', async (context) => {
+    const { env, state } = await worldFor(context, { expiresIn: 1 });
+    const cookie = await signIn(env);
+    state.breakRefresh = true;
+
+    const down = await call(env, '/api/reconstruction/session', { headers: { Cookie: cookie } });
+    assert.equal(down.status, 503);
+    assert.equal((await down.json()).code, 'auth_unavailable');
+
+    state.breakRefresh = false;
+    const back = await call(env, '/api/reconstruction/session', { headers: { Cookie: cookie } });
+    assert.equal(back.status, 200);
 });
 
 test('a session id nobody minted buys nothing', async (context) => {

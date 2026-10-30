@@ -78,6 +78,33 @@ test('a job the server calls done reports done', async () => {
     assert.equal(await job.attach('job-done'), 'done');
 });
 
+test('a poll that fails in transit or with a 5xx is retried, not read as the job failing', async (context) => {
+    context.mock.timers.enable({ apis: ['setTimeout'] });
+    const replies: (() => Response)[] = [
+        () => {
+            throw new TypeError('Failed to fetch');
+        },
+        () => new Response('{}', { status: 503 }),
+        () => new Response(JSON.stringify({ job: { status: 'done', terminal: true }, artifacts: [{ name: 'model.ply', primary: true }] }), {
+            status: 200, headers: { 'content-type': 'application/json' }
+        })
+    ];
+    let polled = 0;
+    globalThis.fetch = (async () => replies[polled++]()) as typeof fetch;
+    const job = new ReconstructionJob(stubView([]), stubBilling, stubArtifacts);
+
+    const outcome = job.attach('job-blip');
+    for (let retry = 0; retry < 2; retry++) {
+        await new Promise<void>((resolve) => {
+            setImmediate(resolve);
+        });
+        context.mock.timers.tick(2500);
+    }
+
+    assert.equal(await outcome, 'done');
+    assert.equal(polled, 3);
+});
+
 test('a job the server calls failed throws rather than settling', async () => {
     serve({
         job: {
