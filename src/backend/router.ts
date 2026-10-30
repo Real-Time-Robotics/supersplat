@@ -95,6 +95,11 @@ const secureFor = (request: Request): boolean => {
     return forwarded === 'https' || new URL(request.url).protocol === 'https:';
 };
 
+const retire = async (request: Request, env: BackendEnv): Promise<void> => {
+    const previous = objectFor(request, env);
+    if (previous) await askSession(previous, '/destroy').catch((): void => undefined);
+};
+
 const establish = async (request: Request, env: BackendEnv,
     record: Record<string, unknown>): Promise<Response> => {
     const id = newSessionId();
@@ -103,6 +108,7 @@ const establish = async (request: Request, env: BackendEnv,
     if (!created.ok) {
         throw new HttpError(503, 'Session storage is unavailable.', 'sessions_unavailable');
     }
+    await retire(request, env);
     const { account, expiresAt } = await created.json() as
         { account: Account; expiresAt: number | null };
     return json({ authenticated: true, account, expiresAt }, 200, {
@@ -127,6 +133,7 @@ const authRoute = async (request: Request, env: BackendEnv,
         if (!pending.ok) {
             throw new HttpError(503, 'Sign-in state could not be stored.', 'sessions_unavailable');
         }
+        await retire(request, env);
         return new Response(null, {
             status: 302,
             headers: {

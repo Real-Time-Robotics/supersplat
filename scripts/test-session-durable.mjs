@@ -309,3 +309,28 @@ test('a missing Durable Object binding fails closed', async (context) => {
     assert.equal(answer.status, 503);
     assert.equal((await answer.json()).code, 'sessions_unavailable');
 });
+
+test('signing in again destroys the session the browser still held', async (context) => {
+    const { env } = await worldFor(context);
+    const paths = {
+        'api-key': (cookie) => call(env, '/api/reconstruction/session/api-key', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Cookie: cookie },
+            body: JSON.stringify({ apiKey: 'gp_live_second' })
+        }),
+        oidc: (cookie) => call(env, '/api/reconstruction/auth/start', {
+            headers: { Cookie: cookie }
+        })
+    };
+    for (const [name, signInAgain] of Object.entries(paths)) {
+        const held = await signIn(env);
+        const id = decodeURIComponent(held.split('=').slice(1).join('='));
+        assert.ok(env.RECON_SESSIONS.storageOf(id).tableNames().includes('session'));
+
+        const again = await signInAgain(held);
+
+        assert.ok(again.status === 200 || again.status === 302, `${name} sign-in succeeds`);
+        assert.deepEqual(env.RECON_SESSIONS.storageOf(id).tableNames(), [],
+            `${name} sign-in leaves no stored state behind the old cookie`);
+    }
+});
