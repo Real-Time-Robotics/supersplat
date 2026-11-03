@@ -79,6 +79,8 @@ class ReconstructionAuth {
     }
 
     async ensure() {
+        const notice = this.pendingNotice;
+        this.pendingNotice = '';
         if (this.account) {
             this.view.showApp(this.account.label);
             return;
@@ -88,8 +90,7 @@ class ReconstructionAuth {
         try {
             const response = await reconFetch('/api/reconstruction/session', { cache: 'no-store' });
             if (response.status === 401) {
-                this.setStatus(this.pendingNotice, Boolean(this.pendingNotice));
-                this.pendingNotice = '';
+                this.setStatus(notice, Boolean(notice));
                 return;
             }
             const session = await this.readResponse(response);
