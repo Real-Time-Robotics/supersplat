@@ -34,7 +34,8 @@ const env = {
     OIDC_ISSUER: process.env.OIDC_ISSUER || localEnv.OIDC_ISSUER ||
         'https://id-staging.rtrobotics.com/realms/rtrobotics',
     OIDC_CLIENT_ID: process.env.OIDC_CLIENT_ID || localEnv.OIDC_CLIENT_ID || 'supersplat-web',
-    OIDC_CLIENT_SECRET: process.env.OIDC_CLIENT_SECRET || localEnv.OIDC_CLIENT_SECRET || ''
+    OIDC_CLIENT_SECRET: process.env.OIDC_CLIENT_SECRET || localEnv.OIDC_CLIENT_SECRET || '',
+    SIGN_IN_LIMITER: { limit: () => Promise.resolve({ success: true }) }
 };
 env.RECON_SESSIONS = sessionNamespace(env);
 const port = Number(process.env.PORT || localEnv.PORT || 3000);

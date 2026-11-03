@@ -29,9 +29,12 @@ type BackendEnv = OidcEnv & {
     GENESIS_BASE_URL: string;
     EYRIE_ACCOUNTS_URL: string;
     RECON_SESSIONS: SessionNamespace;
+    SIGN_IN_LIMITER: Cloudflare.Env['SIGN_IN_LIMITER'];
 };
 
 const RECON_PREFIX = '/api/reconstruction';
+const SIGN_IN_PATHS = new Set([`${RECON_PREFIX}/auth/start`, `${RECON_PREFIX}/session/api-key`]);
+const SIGN_IN_WINDOW_SECONDS = 60;
 const MAX_JSON_BODY_BYTES = 256 * 1024;
 const MAX_REPLAY_BODY_BYTES = 1024 * 1024;
 
@@ -604,6 +607,16 @@ const handle = async (request: Request, env: BackendEnv): Promise<Response | nul
     const { pathname, searchParams } = new URL(request.url);
     if (!pathname.startsWith('/api/')) return null;
     try {
+        if (SIGN_IN_PATHS.has(pathname)) {
+            const key = request.headers.get('cf-connecting-ip') ?? 'unknown';
+            const { success } = await env.SIGN_IN_LIMITER.limit({ key });
+            if (!success) {
+                return json({
+                    error: 'Too many sign-in attempts. Try again in a minute.',
+                    code: 'rate_limited'
+                }, 429, { 'Retry-After': String(SIGN_IN_WINDOW_SECONDS) });
+            }
+        }
         if (pathname.startsWith(`${PROXY_PREFIX}/`)) {
             return await authenticated(request, env, (attempt, session) => proxyToGateway(attempt, session.token, env.GENESIS_BASE_URL));
         }

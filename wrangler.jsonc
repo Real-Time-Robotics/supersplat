@@ -25,6 +25,9 @@
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["ReconstructionSession"] }
   ],
+  "ratelimits": [
+    { "name": "SIGN_IN_LIMITER", "namespace_id": "7101", "simple": { "limit": 10, "period": 60 } }
+  ],
   "routes": [{ "pattern": "editor.rtrobotics.com", "custom_domain": true }],
   "observability": { "enabled": true },
   "env": {
@@ -43,6 +46,9 @@
       },
       "migrations": [
         { "tag": "v1", "new_sqlite_classes": ["ReconstructionSession"] }
+      ],
+      "ratelimits": [
+        { "name": "SIGN_IN_LIMITER", "namespace_id": "7102", "simple": { "limit": 10, "period": 60 } }
       ],
       "routes": [{ "pattern": "editor-staging.rtrobotics.com", "custom_domain": true }],
       "observability": { "enabled": true }

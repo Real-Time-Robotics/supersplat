@@ -21,7 +21,8 @@ const envFor = (gatewayPort) => {
         EYRIE_ACCOUNTS_URL: origin,
         OIDC_ISSUER: origin,
         OIDC_CLIENT_ID: 'supersplat-test',
-        OIDC_CLIENT_SECRET: 'test-secret'
+        OIDC_CLIENT_SECRET: 'test-secret',
+        SIGN_IN_LIMITER: { limit: () => Promise.resolve({ success: true }) }
     };
     env.RECON_SESSIONS = sessionNamespace(env);
     return env;

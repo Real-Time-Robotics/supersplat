@@ -5,7 +5,11 @@ import { test } from 'node:test';
 import { call, envFor, listenOnRandomPort, sendJson, signInWithApiKey } from './test-support.mjs';
 
 test('JSON endpoints reject malformed and oversized bodies', async () => {
-    const env = { GENESIS_BASE_URL: 'https://gateway.invalid', RECON_SESSIONS: undefined };
+    const env = {
+        GENESIS_BASE_URL: 'https://gateway.invalid',
+        RECON_SESSIONS: undefined,
+        SIGN_IN_LIMITER: { limit: () => Promise.resolve({ success: true }) }
+    };
     const malformed = await call(env, '/api/reconstruction/session/api-key', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
