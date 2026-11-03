@@ -90,7 +90,7 @@ class ReconstructionPanel extends Container {
         if (url.searchParams.get('sign_in') === 'rate_limited') {
             url.searchParams.delete('sign_in');
             history.replaceState(history.state, '', url);
-            auth.notice('Too many sign-in attempts. Try again in a minute.');
+            auth.notice('panel.reconstruction.auth.rate-limited');
             setVisible(true);
         }
     }

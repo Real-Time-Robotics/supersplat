@@ -1,3 +1,4 @@
+import { i18n, type LocalizeOptions } from '../localization';
 import { endSession, onSessionEnded, reconFetch, sessionRestored } from './http';
 import { SessionWatch } from './session-watch';
 import { ReconstructionView } from './view';
@@ -15,6 +16,10 @@ type SessionResponse = {
 
 type AuthValues = Record<string, string>;
 
+type StatusText = string | (() => string);
+
+const localized = (key: string, options?: LocalizeOptions) => () => i18n.t(key, options);
+
 const validEmail = (value: string) => {
     const at = value.indexOf('@');
     const dot = value.lastIndexOf('.');
@@ -23,14 +28,14 @@ const validEmail = (value: string) => {
 
 const validate = (mode: string, values: AuthValues): string | null => {
     if (mode === 'api-key') {
-        return values.apiKey.startsWith('gp_live_') ? null : 'Enter a valid Genesis API key beginning with gp_live_.';
+        return values.apiKey.startsWith('gp_live_') ? null : 'panel.reconstruction.auth.invalid-api-key';
     }
     if (mode === 'register') {
         if (!validEmail(values.email) || values.email.length > 255) {
-            return 'Enter a valid email address.';
+            return 'panel.reconstruction.auth.invalid-email';
         }
-        if (!values.firstName || values.firstName.length > 100) return 'First Name is required.';
-        if (!values.lastName || values.lastName.length > 100) return 'Last Name is required.';
+        if (!values.firstName || values.firstName.length > 100) return 'panel.reconstruction.auth.first-name-required';
+        if (!values.lastName || values.lastName.length > 100) return 'panel.reconstruction.auth.last-name-required';
         return null;
     }
     return null;
@@ -40,6 +45,7 @@ class ReconstructionAuth {
     private account: Account | null = null;
     private requestInFlight = false;
     private pendingNotice = '';
+    private status: StatusText = '';
     private readonly watch = new SessionWatch(() => endSession());
 
     constructor(
@@ -54,17 +60,24 @@ class ReconstructionAuth {
                 this.submit(form);
             });
         });
-        view.query<HTMLButtonElement>('.recon-auth-reveal').addEventListener('click', (event) => {
-            const button = event.currentTarget as HTMLButtonElement;
-            const input = view.query<HTMLInputElement>('[data-auth-form="api-key"] input[name="apiKey"]');
-            const reveal = input.type === 'password';
-            input.type = reveal ? 'text' : 'password';
-            button.textContent = reveal ? 'Hide' : 'Show';
-            button.setAttribute('aria-label', `${reveal ? 'Hide' : 'Show'} API key`);
+        const revealButton = view.query<HTMLButtonElement>('.recon-auth-reveal');
+        const apiKeyInput = view.query<HTMLInputElement>('[data-auth-form="api-key"] input[name="apiKey"]');
+        const renderReveal = () => {
+            const revealed = apiKeyInput.type !== 'password';
+            revealButton.textContent = i18n.t(revealed ? 'panel.reconstruction.auth.hide' : 'panel.reconstruction.auth.show');
+            revealButton.setAttribute('aria-label',
+                i18n.t(revealed ? 'panel.reconstruction.auth.hide-api-key' : 'panel.reconstruction.auth.show-api-key'));
+        };
+        revealButton.addEventListener('click', () => {
+            apiKeyInput.type = apiKeyInput.type === 'password' ? 'text' : 'password';
+            renderReveal();
+        });
+        i18n.onChange(() => {
+            renderReveal();
+            this.renderStatus();
         });
         view.query<HTMLButtonElement>('.recon-sign-out').addEventListener('click', () => this.signOut());
-        onSessionEnded(() => this.forgetSession(
-            'Phiên đăng nhập đã hết hạn. Hãy đăng nhập lại để tiếp tục.'));
+        onSessionEnded(() => this.forgetSession(localized('panel.reconstruction.auth.session-expired')));
         // A timer alone cannot be trusted: a background tab throttles it and a sleeping
         // machine skips it, so every wake-up re-reads the clock as well.
         const wake = () => {
@@ -86,11 +99,11 @@ class ReconstructionAuth {
             return;
         }
         this.view.showAuth();
-        this.setStatus('Checking your session...');
+        this.setStatus(localized('panel.reconstruction.auth.checking-session'));
         try {
             const response = await reconFetch('/api/reconstruction/session', { cache: 'no-store' });
             if (response.status === 401) {
-                this.setStatus(notice, Boolean(notice));
+                this.setStatus(notice ? localized(notice) : '', Boolean(notice));
                 return;
             }
             const session = await this.readResponse(response);
@@ -103,8 +116,8 @@ class ReconstructionAuth {
         }
     }
 
-    notice(message: string) {
-        this.pendingNotice = message;
+    notice(key: string) {
+        this.pendingNotice = key;
     }
 
     private setTab(mode: string) {
@@ -135,18 +148,20 @@ class ReconstructionAuth {
         );
         const validationError = validate(mode, values);
         if (validationError) {
-            this.setStatus(validationError, true);
+            this.setStatus(localized(validationError), true);
             return;
         }
         this.setBusy(true);
-        this.setStatus(mode === 'register' ? 'Creating your account...' : 'Signing in...');
+        this.setStatus(localized(mode === 'register' ?
+            'panel.reconstruction.auth.creating-account' :
+            'panel.reconstruction.auth.signing-in'));
         try {
             if (mode === 'register') {
                 await this.register(values);
                 form.reset();
                 this.setBusy(false);
                 this.setTab('login');
-                this.setStatus(`Account created. Open the link we sent to ${values.email} to verify it and set your password, then sign in.`);
+                this.setStatus(localized('panel.reconstruction.auth.account-created', { email: values.email }));
                 return;
             }
             const response = await fetch('/api/reconstruction/session/api-key', {
@@ -184,7 +199,8 @@ class ReconstructionAuth {
     private async readResponse<T = SessionResponse>(response: Response): Promise<T> {
         const payload = await response.json().catch(() => ({}));
         if (!response.ok) {
-            throw new Error(payload.error || payload.detail || payload.title || `Request failed (${response.status}).`);
+            throw new Error(payload.error || payload.detail || payload.title ||
+                i18n.t('panel.reconstruction.auth.request-failed', { status: response.status }));
         }
         return payload as T;
     }
@@ -203,7 +219,7 @@ class ReconstructionAuth {
         }
     }
 
-    private forgetSession(message: string) {
+    private forgetSession(message: StatusText) {
         this.watch.disarm();
         this.account = null;
         this.view.showAuth();
@@ -219,10 +235,15 @@ class ReconstructionAuth {
         });
     }
 
-    private setStatus(message: string, error = false) {
-        const status = this.view.query<HTMLElement>('.recon-auth-status');
-        status.textContent = message;
-        status.classList.toggle('error', error);
+    private setStatus(message: StatusText, error = false) {
+        this.status = message;
+        this.view.query<HTMLElement>('.recon-auth-status').classList.toggle('error', error);
+        this.renderStatus();
+    }
+
+    private renderStatus() {
+        this.view.query<HTMLElement>('.recon-auth-status').textContent =
+            typeof this.status === 'function' ? this.status() : this.status;
     }
 }
 
