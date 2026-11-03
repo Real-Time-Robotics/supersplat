@@ -17,7 +17,7 @@ const limiterFor = (success: boolean) => {
 test('sign-in routes are rate limited per client IP', async () => {
     const cases = [
         { path: '/api/reconstruction/auth/start', method: 'GET', success: true, status: 503, limited: true },
-        { path: '/api/reconstruction/auth/start', method: 'GET', success: false, status: 429, limited: true },
+        { path: '/api/reconstruction/auth/start', method: 'GET', success: false, status: 303, limited: true },
         { path: '/api/reconstruction/session/api-key', method: 'POST', success: true, status: 400, limited: true },
         { path: '/api/reconstruction/session/api-key', method: 'POST', success: false, status: 429, limited: true },
         { path: '/api/reconstruction/session/register', method: 'GET', success: false, status: 200, limited: false }
@@ -36,9 +36,10 @@ test('sign-in routes are rate limited per client IP', async () => {
         const label = `${method} ${path} success=${success}`;
         assert.equal(response.status, status, label);
         assert.deepEqual(limiter.keys, limited ? ['203.0.113.7'] : [], label);
-        if (status === 429) {
-            assert.equal(response.headers.get('Retry-After'), '60', label);
-            assert.equal((await response.json()).code, 'rate_limited', label);
+        if (limited && !success) assert.equal(response.headers.get('Retry-After'), '60', label);
+        if (status === 303) {
+            assert.equal(response.headers.get('Location'), 'https://editor.test/?sign_in=rate_limited', label);
         }
+        if (status === 429) assert.equal((await response.json()).code, 'rate_limited', label);
     }
 });

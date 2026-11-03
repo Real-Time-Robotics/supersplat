@@ -85,6 +85,14 @@ class ReconstructionPanel extends Container {
                 setVisible(false);
             }
         });
+
+        const url = new URL(window.location.href);
+        if (url.searchParams.get('sign_in') === 'rate_limited') {
+            url.searchParams.delete('sign_in');
+            history.replaceState(history.state, '', url);
+            auth.notice('Too many sign-in attempts. Try again in a minute.');
+            setVisible(true);
+        }
     }
 }
 

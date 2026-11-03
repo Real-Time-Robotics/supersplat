@@ -611,10 +611,21 @@ const handle = async (request: Request, env: BackendEnv): Promise<Response | nul
             const key = request.headers.get('cf-connecting-ip') ?? 'unknown';
             const { success } = await env.SIGN_IN_LIMITER.limit({ key });
             if (!success) {
+                const retryAfter = { 'Retry-After': String(SIGN_IN_WINDOW_SECONDS) };
+                if (pathname === `${RECON_PREFIX}/auth/start`) {
+                    return new Response(null, {
+                        status: 303,
+                        headers: {
+                            ...retryAfter,
+                            Location: new URL('/?sign_in=rate_limited', request.url).toString(),
+                            'Cache-Control': 'no-store'
+                        }
+                    });
+                }
                 return json({
                     error: 'Too many sign-in attempts. Try again in a minute.',
                     code: 'rate_limited'
-                }, 429, { 'Retry-After': String(SIGN_IN_WINDOW_SECONDS) });
+                }, 429, retryAfter);
             }
         }
         if (pathname.startsWith(`${PROXY_PREFIX}/`)) {

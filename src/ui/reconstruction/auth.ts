@@ -39,6 +39,7 @@ const validate = (mode: string, values: AuthValues): string | null => {
 class ReconstructionAuth {
     private account: Account | null = null;
     private requestInFlight = false;
+    private pendingNotice = '';
     private readonly watch = new SessionWatch(() => endSession());
 
     constructor(
@@ -87,7 +88,8 @@ class ReconstructionAuth {
         try {
             const response = await reconFetch('/api/reconstruction/session', { cache: 'no-store' });
             if (response.status === 401) {
-                this.setStatus('');
+                this.setStatus(this.pendingNotice, Boolean(this.pendingNotice));
+                this.pendingNotice = '';
                 return;
             }
             const session = await this.readResponse(response);
@@ -98,6 +100,10 @@ class ReconstructionAuth {
         } catch (error) {
             this.setStatus(error instanceof Error ? error.message : String(error), true);
         }
+    }
+
+    notice(message: string) {
+        this.pendingNotice = message;
     }
 
     private setTab(mode: string) {
