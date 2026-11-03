@@ -19,14 +19,13 @@
   // Free-tier Durable Objects require SQLite-backed classes.
   "durable_objects": {
     "bindings": [
-      { "name": "RECON_SESSIONS", "class_name": "ReconstructionSession" }
+      { "name": "RECON_SESSIONS", "class_name": "ReconstructionSession" },
+      { "name": "RATE_LIMITER", "class_name": "RateLimiter" }
     ]
   },
   "migrations": [
-    { "tag": "v1", "new_sqlite_classes": ["ReconstructionSession"] }
-  ],
-  "ratelimits": [
-    { "name": "SIGN_IN_LIMITER", "namespace_id": "7101", "simple": { "limit": 10, "period": 60 } }
+    { "tag": "v1", "new_sqlite_classes": ["ReconstructionSession"] },
+    { "tag": "v2", "new_sqlite_classes": ["RateLimiter"] }
   ],
   "routes": [{ "pattern": "editor.rtrobotics.com", "custom_domain": true }],
   "observability": { "enabled": true },
@@ -41,14 +40,13 @@
       },
       "durable_objects": {
         "bindings": [
-          { "name": "RECON_SESSIONS", "class_name": "ReconstructionSession" }
+          { "name": "RECON_SESSIONS", "class_name": "ReconstructionSession" },
+          { "name": "RATE_LIMITER", "class_name": "RateLimiter" }
         ]
       },
       "migrations": [
-        { "tag": "v1", "new_sqlite_classes": ["ReconstructionSession"] }
-      ],
-      "ratelimits": [
-        { "name": "SIGN_IN_LIMITER", "namespace_id": "7102", "simple": { "limit": 10, "period": 60 } }
+        { "tag": "v1", "new_sqlite_classes": ["ReconstructionSession"] },
+        { "tag": "v2", "new_sqlite_classes": ["RateLimiter"] }
       ],
       "routes": [{ "pattern": "editor-staging.rtrobotics.com", "custom_domain": true }],
       "observability": { "enabled": true }

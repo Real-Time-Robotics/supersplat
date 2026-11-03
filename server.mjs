@@ -4,7 +4,7 @@ import path from 'node:path';
 import { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 
-import { sessionNamespace } from './scripts/session-namespace.mjs';
+import { limiterNamespace, sessionNamespace } from './scripts/session-namespace.mjs';
 import { handle } from './src/backend/router.ts';
 
 const rootDir = path.dirname(fileURLToPath(import.meta.url));
@@ -35,7 +35,7 @@ const env = {
         'https://id-staging.rtrobotics.com/realms/rtrobotics',
     OIDC_CLIENT_ID: process.env.OIDC_CLIENT_ID || localEnv.OIDC_CLIENT_ID || 'supersplat-web',
     OIDC_CLIENT_SECRET: process.env.OIDC_CLIENT_SECRET || localEnv.OIDC_CLIENT_SECRET || '',
-    SIGN_IN_LIMITER: { limit: () => Promise.resolve({ success: true }) }
+    RATE_LIMITER: limiterNamespace()
 };
 env.RECON_SESSIONS = sessionNamespace(env);
 const port = Number(process.env.PORT || localEnv.PORT || 3000);

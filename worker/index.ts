@@ -1,7 +1,8 @@
+import { RateLimiter } from '../src/backend/rate-limiter';
 import { handle } from '../src/backend/router';
 import { ReconstructionSession } from '../src/backend/session-object';
 
-export { ReconstructionSession };
+export { RateLimiter, ReconstructionSession };
 
 export default {
     async fetch(request, env) {

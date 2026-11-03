@@ -2,13 +2,14 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { test } from 'node:test';
 
+import { limiterNamespace } from './session-namespace.mjs';
 import { call, envFor, listenOnRandomPort, sendJson, signInWithApiKey } from './test-support.mjs';
 
 test('JSON endpoints reject malformed and oversized bodies', async () => {
     const env = {
         GENESIS_BASE_URL: 'https://gateway.invalid',
         RECON_SESSIONS: undefined,
-        SIGN_IN_LIMITER: { limit: () => Promise.resolve({ success: true }) }
+        RATE_LIMITER: limiterNamespace()
     };
     const malformed = await call(env, '/api/reconstruction/session/api-key', {
         method: 'POST',

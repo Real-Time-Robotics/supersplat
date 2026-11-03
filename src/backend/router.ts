@@ -29,11 +29,12 @@ type BackendEnv = OidcEnv & {
     GENESIS_BASE_URL: string;
     EYRIE_ACCOUNTS_URL: string;
     RECON_SESSIONS: SessionNamespace;
-    SIGN_IN_LIMITER: Cloudflare.Env['SIGN_IN_LIMITER'];
+    RATE_LIMITER: Cloudflare.Env['RATE_LIMITER'];
 };
 
 const RECON_PREFIX = '/api/reconstruction';
 const SIGN_IN_PATHS = new Set([`${RECON_PREFIX}/auth/start`, `${RECON_PREFIX}/session/api-key`]);
+const SIGN_IN_LIMIT = 10;
 const SIGN_IN_WINDOW_SECONDS = 60;
 const MAX_JSON_BODY_BYTES = 256 * 1024;
 const MAX_REPLAY_BODY_BYTES = 1024 * 1024;
@@ -609,9 +610,10 @@ const handle = async (request: Request, env: BackendEnv): Promise<Response | nul
     try {
         if (SIGN_IN_PATHS.has(pathname)) {
             const key = request.headers.get('cf-connecting-ip') ?? 'unknown';
-            const { success } = await env.SIGN_IN_LIMITER.limit({ key });
-            if (!success) {
-                const retryAfter = { 'Retry-After': String(SIGN_IN_WINDOW_SECONDS) };
+            const limiter = env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName(`sign-in:${key}`));
+            const verdict = await limiter.hit(SIGN_IN_LIMIT, SIGN_IN_WINDOW_SECONDS);
+            if (!verdict.allowed) {
+                const retryAfter = { 'Retry-After': String(verdict.retryAfter) };
                 if (pathname === `${RECON_PREFIX}/auth/start`) {
                     return new Response(null, {
                         status: 303,

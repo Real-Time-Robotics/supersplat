@@ -1,5 +1,6 @@
 import { DatabaseSync } from 'node:sqlite';
 
+import { RateLimiter } from '../src/backend/rate-limiter.ts';
 import { ReconstructionSession } from '../src/backend/session-object.ts';
 
 const tableNamesOf = db => db.prepare(
@@ -7,6 +8,7 @@ const tableNamesOf = db => db.prepare(
 
 const doStorage = () => {
     const db = new DatabaseSync(':memory:');
+    const values = new Map();
     const state = { alarm: null };
     const sql = {
         exec: (query, ...bindings) => {
@@ -19,6 +21,10 @@ const doStorage = () => {
     };
     return {
         sql,
+        get: async key => structuredClone(values.get(key)),
+        put: async (key, value) => {
+            values.set(key, structuredClone(value));
+        },
         setAlarm: async (at) => {
             state.alarm = at;
         },
@@ -29,12 +35,13 @@ const doStorage = () => {
         tableNames: () => tableNamesOf(db),
         deleteAll: async () => {
             for (const name of tableNamesOf(db)) db.exec(`DROP TABLE "${name}"`);
+            values.clear();
             state.alarm = null;
         }
     };
 };
 
-const sessionNamespace = (env) => {
+const objectNamespace = (create) => {
     const objects = new Map();
     const storages = new Map();
     return {
@@ -43,7 +50,7 @@ const sessionNamespace = (env) => {
             if (!objects.has(id)) {
                 const storage = doStorage();
                 storages.set(id, storage);
-                objects.set(id, new ReconstructionSession({ storage }, env));
+                objects.set(id, create({ storage }));
             }
             return objects.get(id);
         },
@@ -52,4 +59,8 @@ const sessionNamespace = (env) => {
     };
 };
 
-export { sessionNamespace };
+const sessionNamespace = env => objectNamespace(ctx => new ReconstructionSession(ctx, env));
+
+const limiterNamespace = () => objectNamespace(ctx => new RateLimiter(ctx, {}));
+
+export { limiterNamespace, sessionNamespace };

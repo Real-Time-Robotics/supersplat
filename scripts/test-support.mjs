@@ -1,7 +1,7 @@
 import { once } from 'node:events';
 
 import { handle } from '../src/backend/router.ts';
-import { sessionNamespace } from './session-namespace.mjs';
+import { limiterNamespace, sessionNamespace } from './session-namespace.mjs';
 
 const listenOnRandomPort = async (server) => {
     server.listen(0, '127.0.0.1');
@@ -22,7 +22,7 @@ const envFor = (gatewayPort) => {
         OIDC_ISSUER: origin,
         OIDC_CLIENT_ID: 'supersplat-test',
         OIDC_CLIENT_SECRET: 'test-secret',
-        SIGN_IN_LIMITER: { limit: () => Promise.resolve({ success: true }) }
+        RATE_LIMITER: limiterNamespace()
     };
     env.RECON_SESSIONS = sessionNamespace(env);
     return env;

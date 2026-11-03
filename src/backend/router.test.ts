@@ -1,45 +1,42 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
+import { limiterNamespace } from '../../scripts/session-namespace.mjs';
 import { type BackendEnv, handle } from './router';
 
-const limiterFor = (success: boolean) => {
-    const keys: string[] = [];
-    return {
-        keys,
-        limit: async ({ key }: { key: string }) => {
-            keys.push(key);
-            return { success };
-        }
-    };
-};
-
-test('sign-in routes are rate limited per client IP', async () => {
+test('sign-in routes allow ten attempts a minute per client IP', async () => {
     const cases = [
-        { path: '/api/reconstruction/auth/start', method: 'GET', success: true, status: 503, limited: true },
-        { path: '/api/reconstruction/auth/start', method: 'GET', success: false, status: 303, limited: true },
-        { path: '/api/reconstruction/session/api-key', method: 'POST', success: true, status: 400, limited: true },
-        { path: '/api/reconstruction/session/api-key', method: 'POST', success: false, status: 429, limited: true },
-        { path: '/api/reconstruction/session/register', method: 'GET', success: false, status: 200, limited: false }
+        { path: '/api/reconstruction/auth/start', method: 'GET', allowed: 503, refused: 303 },
+        { path: '/api/reconstruction/session/api-key', method: 'POST', allowed: 400, refused: 429 },
+        { path: '/api/reconstruction/session/register', method: 'GET', allowed: 200, refused: 200 }
     ];
-    for (const { path, method, success, status, limited } of cases) {
-        const limiter = limiterFor(success);
+    for (const { path, method, allowed, refused } of cases) {
         const env = {
             EYRIE_ACCOUNTS_URL: 'https://accounts.invalid',
-            SIGN_IN_LIMITER: limiter
+            RATE_LIMITER: limiterNamespace()
         } as unknown as BackendEnv;
-        const response = await handle(new Request(`https://editor.test${path}`, {
+        const attempt = (ip: string) => handle(new Request(`https://editor.test${path}`, {
             method,
-            headers: { 'CF-Connecting-IP': '203.0.113.7', 'Content-Type': 'application/json' },
+            headers: { 'CF-Connecting-IP': ip, 'Content-Type': 'application/json' },
             ...(method === 'POST' ? { body: '{}' } : {})
         }), env);
-        const label = `${method} ${path} success=${success}`;
-        assert.equal(response.status, status, label);
-        assert.deepEqual(limiter.keys, limited ? ['203.0.113.7'] : [], label);
-        if (limited && !success) assert.equal(response.headers.get('Retry-After'), '60', label);
-        if (status === 303) {
-            assert.equal(response.headers.get('Location'), 'https://editor.test/?sign_in=rate_limited', label);
+        const label = `${method} ${path}`;
+
+        const statuses = [];
+        for (let i = 0; i < 10; i++) statuses.push((await attempt('203.0.113.7')).status);
+        const eleventh = await attempt('203.0.113.7');
+        const neighbour = await attempt('198.51.100.9');
+
+        assert.deepEqual(statuses, Array(10).fill(allowed), label);
+        assert.equal(eleventh.status, refused, label);
+        assert.equal(neighbour.status, allowed, label);
+        if (refused === allowed) continue;
+        const retryAfter = Number(eleventh.headers.get('Retry-After'));
+        assert.ok(retryAfter >= 1 && retryAfter <= 60, `${label} Retry-After ${retryAfter}`);
+        if (refused === 303) {
+            assert.equal(eleventh.headers.get('Location'), 'https://editor.test/?sign_in=rate_limited', label);
+        } else {
+            assert.equal((await eleventh.json()).code, 'rate_limited', label);
         }
-        if (status === 429) assert.equal((await response.json()).code, 'rate_limited', label);
     }
 });
