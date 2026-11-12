@@ -1,13 +1,33 @@
 import playcanvasConfig from '@playcanvas/eslint-config';
 import tsPlugin from '@typescript-eslint/eslint-plugin';
 import tsParser from '@typescript-eslint/parser';
+import { createTypeScriptImportResolver } from 'eslint-import-resolver-typescript';
+import importX from 'eslint-plugin-import-x';
 import globals from 'globals';
+
+const withImportX = config => {
+    if (!config.plugins?.import) return config;
+    const { import: _import, ...plugins } = config.plugins;
+    return {
+        ...config,
+        plugins: { ...plugins, 'import-x': importX },
+        rules: Object.fromEntries(Object.entries(config.rules ?? {}).map(
+            ([name, value]) => [name.replace(/^import\//, 'import-x/'), value]
+        ))
+    };
+};
+
+const cloudflareResolver = {
+    name: 'cloudflare',
+    interfaceVersion: 3,
+    resolve: source => ({ found: source.startsWith('cloudflare:'), path: null })
+};
 
 export default [
     {
         ignores: ['src/genesis-recon/schema.d.ts']
     },
-    ...playcanvasConfig,
+    ...playcanvasConfig.map(withImportX),
     {
         files: ['**/*.ts'],
         languageOptions: {
@@ -27,9 +47,7 @@ export default [
             '@typescript-eslint': tsPlugin
         },
         settings: {
-            'import/resolver': {
-                typescript: {}
-            }
+            'import-x/resolver-next': [cloudflareResolver, createTypeScriptImportResolver()]
         },
         rules: {
             ...tsPlugin.configs.recommended.rules,
@@ -58,7 +76,7 @@ export default [
             }
         },
         rules: {
-            'import/extensions': 'off',
+            'import-x/extensions': 'off',
             'require-await': 'off',
             'regexp/prefer-w': 'off',
             'regexp/use-ignore-case': 'off'
@@ -71,7 +89,7 @@ export default [
             }
         },
         rules: {
-            'import/no-unresolved': 'off'
+            'import-x/no-unresolved': 'off'
         }
     }
 ];

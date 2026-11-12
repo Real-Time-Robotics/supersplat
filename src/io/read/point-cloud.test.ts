@@ -3,8 +3,8 @@ import { test } from 'node:test';
 
 import { Column, DataTable, dataTableToChunkSource, type ChunkLayer } from '@playcanvas/splat-transform';
 
-import { FALLBACK_RADIUS, OPAQUE_LOGIT, estimatePointRadius, isPointCloudSource, pointCloudBudget, promotePointCloud } from './point-cloud.ts';
 import { dcDecode } from '../../splat-math.ts';
+import { FALLBACK_RADIUS, OPAQUE_LOGIT, estimatePointRadius, isPointCloudSource, pointCloudBudget, promotePointCloud } from './point-cloud.ts';
 
 const cloud = (positions: number[][], colours?: number[][]) => {
     const columns = [

@@ -2,8 +2,8 @@ import { Container, ContainerArgs, Label, NumericInput, VectorInput } from '@pla
 import { Quat, Vec3 } from 'playcanvas';
 
 import { Events } from '../events';
-import { i18n } from './localization';
 import { Pivot } from '../pivot';
+import { i18n } from './localization';
 
 const v = new Vec3();
 

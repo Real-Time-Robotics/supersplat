@@ -13,6 +13,8 @@ import {
     Vec2
 } from 'playcanvas';
 
+import { computeSplatValueWGSL } from '../shaders/splat-value-shader';
+import { Splat } from '../splat';
 import { NUM_BINS } from './histogram-config';
 import {
     createSplatValueTextureFormats,
@@ -20,8 +22,6 @@ import {
     setSplatValueParameters,
     SplatValueOptions
 } from './splat-value-compute';
-import { computeSplatValueWGSL } from '../shaders/splat-value-shader';
-import { Splat } from '../splat';
 
 type CalcHistogramOptions = SplatValueOptions;
 type CalcHistogramResult = {

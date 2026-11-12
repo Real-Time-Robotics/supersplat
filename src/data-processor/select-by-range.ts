@@ -13,6 +13,8 @@ import {
     Vec2
 } from 'playcanvas';
 
+import { computeSplatValueWGSL } from '../shaders/splat-value-shader';
+import { Splat } from '../splat';
 import { BufferPool } from './buffer-pool';
 import { maskByteSize } from './histogram-config';
 import {
@@ -21,8 +23,6 @@ import {
     setSplatValueParameters,
     SplatValueOptions
 } from './splat-value-compute';
-import { computeSplatValueWGSL } from '../shaders/splat-value-shader';
-import { Splat } from '../splat';
 
 type SelectByRangeOptions = SplatValueOptions & {
     min: number;

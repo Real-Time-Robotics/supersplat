@@ -1,8 +1,8 @@
+import { Events } from '../../events';
 import { reconFetch } from './http';
 import type { RecentDataset } from './types';
 import { messageOf, readJson } from './utils';
 import { ReconstructionView } from './view';
-import { Events } from '../../events';
 
 type PopupResult = {
     action: string;

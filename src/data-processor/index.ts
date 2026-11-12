@@ -10,6 +10,8 @@ import {
     BlendState
 } from 'playcanvas';
 
+import { fragmentShader as blitFragmentShader, vertexShader as blitVertexShader } from '../shaders/blit-shader';
+import { Splat } from '../splat';
 import { BufferPool } from './buffer-pool';
 import { CalcBound } from './calc-bound';
 import { CalcHistogram, CalcHistogramOptions } from './calc-histogram';
@@ -17,8 +19,6 @@ import { ColorMatch } from './color-match';
 import { Intersect, IntersectOptions } from './intersect';
 import { SelectByRange, SelectByRangeOptions } from './select-by-range';
 import { SplatValueOptions } from './splat-value-compute';
-import { fragmentShader as blitFragmentShader, vertexShader as blitVertexShader } from '../shaders/blit-shader';
-import { Splat } from '../splat';
 
 const resolve = (scope: ScopeSpace, values: any) => {
     for (const key in values) {

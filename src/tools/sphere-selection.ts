@@ -1,7 +1,6 @@
 import { Button, Container, Element, Label, NumericInput, VectorInput } from '@playcanvas/pcui';
 import { Vec3 } from 'playcanvas';
 
-import { ShapeGizmoMode, ShapeTransformGizmo } from './shape-transform-gizmo';
 import { ShapeTransformOp } from '../edit-ops';
 import { Events } from '../events';
 import { Scene } from '../scene';
@@ -14,6 +13,7 @@ import intersectSvg from '../ui/svg/select-intersect.svg';
 import removeSvg from '../ui/svg/select-remove.svg';
 import setSvg from '../ui/svg/select-set.svg';
 import { Tooltips } from '../ui/tooltips';
+import { ShapeGizmoMode, ShapeTransformGizmo } from './shape-transform-gizmo';
 
 const createSvg = (svgString: string) => {
     const decodedStr = decodeURIComponent(svgString.substring('data:image/svg+xml,'.length));

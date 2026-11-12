@@ -29,10 +29,10 @@ import {
     Vec2
 } from 'playcanvas';
 
-import { BufferPool } from './buffer-pool';
-import { maskByteSize } from './histogram-config';
 import { indexToUvWGSL, paletteMatrixWGSL } from '../shaders/palette-chunk';
 import { Splat } from '../splat';
+import { BufferPool } from './buffer-pool';
+import { maskByteSize } from './histogram-config';
 
 type MaskOptions = {
     mask: Texture;

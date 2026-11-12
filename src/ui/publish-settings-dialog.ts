@@ -2,9 +2,9 @@ import { BooleanInput, Button, ColorPicker, Container, Element, Label, SelectInp
 
 import { Pose } from '../camera-poses';
 import { Events } from '../events';
-import { i18n } from './localization';
 import { PublishSettings, UserStatus } from '../publish';
 import { AnimTrack, ExperienceSettings, defaultPostEffectSettings } from '../splat-serialize';
+import { i18n } from './localization';
 import sceneExport from './svg/export.svg';
 
 const createSvg = (svgString: string, args = {}) => {

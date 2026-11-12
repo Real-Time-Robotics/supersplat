@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { Transfer } from './transfer.ts';
 import { UploadError } from '../../genesis-recon/errors.ts';
+import { Transfer } from './transfer.ts';
 
 const target = { datasetId: 'ds1', label: 'set' };
 const retryDelays = [5_000, 15_000, 30_000];

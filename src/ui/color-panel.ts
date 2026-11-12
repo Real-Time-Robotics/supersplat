@@ -2,8 +2,8 @@ import { Button, ColorPicker, Container, Label, SliderInput } from '@playcanvas/
 import { Color } from 'playcanvas';
 
 import { Events } from '../events';
-import { i18n } from './localization';
 import { Splat } from '../splat';
+import { i18n } from './localization';
 import arrowSvg from './svg/arrow.svg';
 import checkSvg from './svg/check.svg';
 import colorsSvg from './svg/colors.svg';

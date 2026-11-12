@@ -1,9 +1,9 @@
 import { Container, Label, version as pcuiVersion, revision as pcuiRevision } from '@playcanvas/pcui';
 import { version as engineVersion, revision as engineRevision } from 'playcanvas';
 
+import { version as appVersion } from '../../package.json';
 import { i18n } from './localization';
 import logoSvg from './svg/logo.svg';
-import { version as appVersion } from '../../package.json';
 
 
 class AboutPopup extends Container {

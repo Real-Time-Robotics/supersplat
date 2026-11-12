@@ -1,3 +1,7 @@
+import { Events } from '../../events';
+import cachedSvg from '../svg/recon-cached.svg';
+import remoteSvg from '../svg/recon-remote.svg';
+import { createSvg } from '../svg-element';
 import { type CacheScope, artifactCache } from './artifact-cache';
 import { ReconstructionDatasets, confirmDestructive, deleteOrThrow } from './datasets';
 import { onSessionEnded, reconFetch } from './http';
@@ -13,10 +17,6 @@ import {
     readJson
 } from './utils';
 import { ReconstructionView } from './view';
-import { Events } from '../../events';
-import cachedSvg from '../svg/recon-cached.svg';
-import remoteSvg from '../svg/recon-remote.svg';
-import { createSvg } from '../svg-element';
 
 type ArtifactOpenResult = {
     status: 'opened' | 'downloaded' | 'cancelled' | 'failed';
