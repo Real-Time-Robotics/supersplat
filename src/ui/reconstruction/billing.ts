@@ -1,22 +1,29 @@
 import { reconFetch } from './http';
-import type { CheckoutStatus, PricingCatalog } from './types';
-import { delay, messageOf, readJson } from './utils';
+import { readJson } from './utils';
 import type { ReconstructionView } from './view';
+
+const studioPlanUrl = (base: string, accountId?: string | null) => {
+    const root = `${base.replace(/\/+$/, '')}/#plan`;
+    return accountId ? `${root}?${new URLSearchParams({ account: accountId })}` : root;
+};
 
 class ReconstructionBilling {
     private balance = 0;
     private cap: number | null = null;
-    private pricingLoaded = false;
-    private checkoutPollId = 0;
+    private accountId: string | null = null;
+    private studioUrl: string | null = null;
+    private studioOpened = false;
     private sessionGeneration = 0;
 
     constructor(
         private readonly view: ReconstructionView,
-        private readonly onCheckoutComplete: () => Promise<void>
+        private readonly onStudioReturn: () => Promise<void>
     ) {
-        view.buyCreditsButton.addEventListener('click', () => this.togglePricing());
-        view.query('.recon-custom-buy').addEventListener('click', () => this.purchaseCustomCredits());
-        view.customCreditsInput.addEventListener('input', () => this.updateCustomPrice());
+        for (const link of [view.buyCreditsLink, view.studioLink]) {
+            link.addEventListener('click', () => {
+                this.studioOpened = true;
+            });
+        }
     }
 
     get currentBalance() {
@@ -28,21 +35,17 @@ class ReconstructionBilling {
         this.view.creditValue.textContent = this.balance.toLocaleString();
     }
 
-    cancelPolling() {
-        this.checkoutPollId++;
-    }
-
     beginSession() {
         this.sessionGeneration++;
     }
 
     endSession() {
         this.sessionGeneration++;
-        this.cancelPolling();
         this.cap = null;
+        this.accountId = null;
+        this.studioOpened = false;
         this.setBalance(0);
-        this.view.purchaseCheckoutLink.hidden = true;
-        this.view.purchaseStatus.textContent = '';
+        this.renderStudioLinks();
     }
 
     get concurrentCap() {
@@ -53,10 +56,14 @@ class ReconstructionBilling {
         const generation = this.sessionGeneration;
         try {
             const response = await reconFetch('/api/reconstruction/credits', { cache: 'no-store' });
-            const data = await readJson<{ balance: number; concurrent?: number }>(response);
+            const data = await readJson<{ balance: number; concurrent?: number; account_id?: string }>(response);
             if (generation !== this.sessionGeneration) return null;
             this.setBalance(data.balance);
             if (typeof data.concurrent === 'number') this.cap = data.concurrent;
+            if (data.account_id) {
+                this.accountId = data.account_id;
+                this.renderStudioLinks();
+            }
             return this.balance;
         } catch {
             if (generation !== this.sessionGeneration) return null;
@@ -65,132 +72,42 @@ class ReconstructionBilling {
         }
     }
 
-    async showCreditShortfall(creditsNeeded: number) {
-        this.view.pricingPanel.classList.add('open');
-        this.view.pricingPanel.setAttribute('aria-hidden', 'false');
-        this.view.buyCreditsButton.setAttribute('aria-expanded', 'true');
-        if (!this.pricingLoaded) await this.loadPricing();
-        const minCredits = Number(this.view.customCreditsInput.min || 100);
-        const maxCredits = Number(this.view.customCreditsInput.max || 1_000_000);
-        this.view.customCreditsInput.value = String(Math.min(maxCredits, Math.max(minCredits, creditsNeeded)));
-        this.updateCustomPrice();
-    }
-
-    private async togglePricing() {
-        const open = !this.view.pricingPanel.classList.contains('open');
-        this.view.pricingPanel.classList.toggle('open', open);
-        this.view.pricingPanel.setAttribute('aria-hidden', String(!open));
-        this.view.buyCreditsButton.setAttribute('aria-expanded', String(open));
-        if (open && !this.pricingLoaded) await this.loadPricing();
-    }
-
-    private async loadPricing() {
+    async loadStudio() {
+        const generation = this.sessionGeneration;
+        let studioUrl: string | null = null;
         try {
-            const response = await reconFetch('/api/reconstruction/pricing', { cache: 'no-store' });
-            const catalog = await readJson<PricingCatalog>(response);
-            this.view.pricingPacks.textContent = '';
-            for (const pack of catalog.packs) {
-                const button = document.createElement('button');
-                button.type = 'button';
-                button.className = 'recon-button recon-price-pack';
-                const credits = document.createElement('strong');
-                credits.textContent = pack.credits_label || pack.credits.toLocaleString();
-                const label = document.createElement('span');
-                const price = pack.price_label || `$${((pack.price_cents || 0) / 100).toFixed(2)}`;
-                label.textContent = `${price} · PAYG`;
-                button.append(credits, label);
-                button.addEventListener('click', () => this.purchaseCredits({ packCredits: pack.credits }, pack.credits));
-                this.view.pricingPacks.appendChild(button);
-            }
-            this.view.pricingNote.textContent = catalog.note;
-            this.view.customCreditsInput.min = String(catalog.custom_min_credits);
-            this.view.customCreditsInput.max = String(catalog.custom_max_credits);
-            this.view.customCreditsInput.dataset.unitUsd = String(catalog.credit_unit_usd);
-            this.updateCustomPrice();
-            this.pricingLoaded = true;
-        } catch (error) {
-            this.view.pricingPacks.textContent = messageOf(error);
+            const response = await reconFetch('/api/reconstruction/config', { cache: 'no-store' });
+            const config = await readJson<{ studio_url?: string | null }>(response);
+            if (config.studio_url && /^https?:\/\//i.test(config.studio_url)) studioUrl = config.studio_url;
+        } catch {
+            studioUrl = null;
         }
+        if (generation !== this.sessionGeneration) return;
+        this.studioUrl = studioUrl;
+        this.renderStudioLinks();
     }
 
-    private updateCustomPrice() {
-        const credits = Number(this.view.customCreditsInput.value);
-        const unitUsd = Number(this.view.customCreditsInput.dataset.unitUsd || 0.01);
-        this.view.customPrice.textContent = Number.isFinite(credits) ? `≈ $${(credits * unitUsd).toFixed(2)}` : '—';
+    async returnFromStudio() {
+        if (!this.studioOpened) return;
+        this.studioOpened = false;
+        const before = this.balance;
+        const balance = await this.refreshCredits();
+        if (balance !== null && balance !== before) await this.onStudioReturn();
     }
 
-    private async purchaseCustomCredits() {
-        const customCredits = Number(this.view.customCreditsInput.value);
-        const min = Number(this.view.customCreditsInput.min || 100);
-        const max = Number(this.view.customCreditsInput.max || 1_000_000);
-        if (!Number.isInteger(customCredits) || customCredits < min || customCredits > max) {
-            this.view.purchaseStatus.textContent = `Enter between ${min.toLocaleString()} and ${max.toLocaleString()} credits.`;
-            return;
-        }
-        await this.purchaseCredits({ customCredits }, customCredits);
+    showCreditShortfall() {
+        this.view.studioLink.hidden = !this.studioUrl;
     }
 
-    private async purchaseCredits(body: { packCredits?: number; customCredits?: number }, expectedCredits: number) {
-        const balanceBefore = await this.refreshCredits() ?? this.balance;
-        const popup = window.open('about:blank', `reconstruction-checkout-${Date.now()}`, 'popup,width=520,height=760');
-        if (popup) popup.document.body.textContent = 'Creating checkout…';
-        this.view.purchaseStatus.textContent = 'Creating checkout…';
-        try {
-            const response = await reconFetch('/api/reconstruction/checkout', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(body)
-            });
-            const checkout = await readJson<{ id: string; url: string }>(response);
-            this.view.purchaseCheckoutLink.href = checkout.url;
-            this.view.purchaseCheckoutLink.hidden = false;
-            if (popup) popup.location.href = checkout.url;
-            this.view.purchaseStatus.textContent = `Waiting for ${expectedCredits.toLocaleString()} credits…`;
-            if (await this.waitForCheckout(checkout.id, balanceBefore, popup)) {
-                await this.onCheckoutComplete();
-            }
-        } catch (error) {
-            popup?.close();
-            this.view.purchaseStatus.textContent = messageOf(error);
+    private renderStudioLinks() {
+        const href = this.studioUrl ? studioPlanUrl(this.studioUrl, this.accountId) : null;
+        for (const link of [this.view.buyCreditsLink, this.view.studioLink]) {
+            if (href) link.href = href;
+            else link.removeAttribute('href');
         }
-    }
-
-    private async waitForCheckout(checkoutId: string, balanceBefore: number,
-        popup: Window | null): Promise<boolean> {
-        const pollId = ++this.checkoutPollId;
-        let paymentConfirmed = false;
-        for (let attempt = 0; attempt < 150 && pollId === this.checkoutPollId; attempt++) {
-            let checkout: CheckoutStatus | null = null;
-            try {
-                const response = await reconFetch(`/api/reconstruction/checkouts/${encodeURIComponent(checkoutId)}`, {
-                    cache: 'no-store'
-                });
-                checkout = await readJson<CheckoutStatus>(response);
-            } catch {
-                // Checkout and balance are independent signals.
-            }
-            const balance = await this.refreshCredits();
-            paymentConfirmed ||= checkout?.status === 'paid';
-            if (balance != null && balance > balanceBefore) {
-                if (popup && !popup.closed) popup.close();
-                const received = balance - balanceBefore;
-                this.view.purchaseStatus.textContent = `Received ${received.toLocaleString()} credits.`;
-                this.view.purchaseCheckoutLink.hidden = true;
-                return true;
-            }
-            if (paymentConfirmed) {
-                this.view.purchaseStatus.textContent = 'Payment confirmed. Waiting for the credit balance to update…';
-            }
-            if (checkout?.status === 'expired' || checkout?.status === 'failed') {
-                throw new Error(`Checkout ended with status “${checkout.status}”.`);
-            }
-            await delay(2000);
-        }
-        if (pollId === this.checkoutPollId) {
-            throw new Error('Checkout is still not complete. You can reopen the checkout or check your balance later.');
-        }
-        return false;
+        this.view.buyCreditsLink.hidden = !href;
+        if (!href) this.view.studioLink.hidden = true;
     }
 }
 
-export { ReconstructionBilling };
+export { ReconstructionBilling, studioPlanUrl };

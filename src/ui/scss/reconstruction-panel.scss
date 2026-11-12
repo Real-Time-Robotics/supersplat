@@ -548,35 +548,17 @@
 }
 
 .recon-buy-credits {
+    display: inline-flex;
+    box-sizing: border-box;
+    align-items: center;
     min-height: 24px;
     padding: 2px 7px;
     color: $clr-icon-hilight;
+    text-decoration: none;
     white-space: nowrap;
 
-    &[aria-expanded='true'] {
-        color: $clr-active;
-        background-color: $bcg-darkest;
-    }
-}
-
-.recon-pricing {
-    display: none;
-    position: absolute;
-    z-index: 2;
-    top: 40px;
-    right: 10px;
-    box-sizing: border-box;
-    width: min(420px, calc(100% - 20px));
-    max-height: min(340px, calc(100% - 60px));
-    padding: 10px;
-    overflow: auto;
-    background-color: $bcg-darkest;
-    border: 1px solid $bcg-lighter;
-    border-radius: 6px;
-    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.6);
-
-    &.open {
-        display: block;
+    &[hidden] {
+        display: none;
     }
 }
 
@@ -601,98 +583,10 @@
     margin-bottom: 8px;
 }
 
-.recon-pricing-packs {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 4px;
-
-    > span {
-        color: $text-secondary;
-    }
-}
-
-.recon-price-pack {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 2px;
-    min-width: 0;
-    padding: 7px 8px;
-    text-align: left;
-
-    strong {
-        color: $text-primary;
-    }
-
-    span {
-        color: $text-secondary;
-    }
-
-    &:hover {
-        box-shadow: inset 2px 0 0 $clr-hilight;
-    }
-}
-
-.recon-custom-credits {
-    margin-top: 9px;
-
-    label {
-        display: block;
-        margin-bottom: 4px;
-        color: $text-secondary;
-    }
-
-    > div {
-        display: grid;
-        grid-template-columns: minmax(0, 1fr) auto auto;
-        align-items: center;
-        gap: 5px;
-    }
-
-    input {
-        box-sizing: border-box;
-        min-width: 0;
-        height: 28px;
-        padding: 4px 7px;
-        color: $text-primary;
-        background-color: $bcg-dark;
-        border: 1px solid $bcg-lighter;
-        border-radius: 2px;
-        outline: none;
-        user-select: text;
-
-        &:focus {
-            border-color: $clr-hilight;
-        }
-    }
-}
-
-.recon-custom-price {
-    color: $text-secondary;
-    font-variant-numeric: tabular-nums;
-}
-
-.recon-pricing-note,
-.recon-purchase-status,
 .recon-note {
     margin: 7px 0 0;
     color: $text-secondary;
     line-height: 1.35;
-}
-
-.recon-purchase-status {
-    color: $text-primary;
-}
-
-.recon-purchase-checkout {
-    display: block;
-    margin-top: 7px;
-    color: $clr-icon-hilight;
-    text-decoration: none;
-
-    &[hidden] {
-        display: none;
-    }
 }
 
 .recon-pipeline-picker,
@@ -1210,7 +1104,7 @@
     }
 }
 
-.recon-checkout {
+.recon-studio-link {
     display: block;
     margin-bottom: 8px;
     padding: 7px 9px;

@@ -3,30 +3,10 @@ import type { JobDatasetEvent, JobGpuEvent, JobPullProgress } from '../../genesi
 type ReconstructionPipeline = 'splat' | 'photogrammetry';
 
 type UploadResponse = {
-    state: 'ready' | 'checkout_required';
+    state: 'ready' | 'insufficient_credits';
     datasetId: string;
     quote: { required: number; balance: number; billable_gpx: number };
     creditsNeeded?: number;
-};
-
-type PricingPack = {
-    credits: number;
-    credits_label?: string;
-    price_cents?: number;
-    price_label?: string;
-};
-
-type PricingCatalog = {
-    credit_unit_usd: number;
-    note: string;
-    packs: PricingPack[];
-    custom_min_credits: number;
-    custom_max_credits: number;
-};
-
-type CheckoutStatus = {
-    id: string;
-    status: 'pending' | 'paid' | 'expired' | 'failed';
 };
 
 type UploadProgress = {
@@ -143,7 +123,6 @@ type ArtifactSource =
 export type {
     Artifact,
     ArtifactSource,
-    CheckoutStatus,
     JobArtifactAvailableEvent,
     JobDatasetAvailableEvent,
     JobFailure,
@@ -152,8 +131,6 @@ export type {
     JobProgressEvent,
     JobPullProgress,
     JobStatus,
-    PricingCatalog,
-    PricingPack,
     RecentDataset,
     RecentRun,
     ReconstructionPipeline,

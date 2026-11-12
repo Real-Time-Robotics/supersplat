@@ -1,3 +1,5 @@
+import { Client } from '../genesis-recon/client';
+import { ApiError } from '../genesis-recon/errors';
 import {
     type OidcEnv,
     authorizationUrl,
@@ -19,8 +21,6 @@ import {
     readCookie,
     sessionCookieHeader
 } from './session';
-import { Client } from '../genesis-recon/client';
-import { ApiError } from '../genesis-recon/errors';
 
 type SessionNamespace = Cloudflare.Env['RECON_SESSIONS'];
 type SessionStub = ReturnType<SessionNamespace['get']>;
@@ -407,7 +407,10 @@ const reconRoute = async (request: Request, env: BackendEnv, session: Credential
         return json({ ok: true, baseUrl: gp.baseUrl, credits: await gp.getCreditBalance() });
     }
     if (head === 'credits' && method === 'GET') return json(await gp.getCreditBalance());
-    if (head === 'pricing' && method === 'GET') return json(await gp.getPricingCatalog());
+    if (head === 'config' && method === 'GET') {
+        const config = await gp.getConfig();
+        return json({ studio_url: config.studio_url ?? null });
+    }
 
     if (head === 'estimate' && method === 'POST') {
         const body = await bodyOf(request);
@@ -420,20 +423,6 @@ const reconRoute = async (request: Request, env: BackendEnv, session: Credential
             return json({ error: 'totalPixels phải là số nguyên lớn hơn 0.' }, 400);
         }
         return json(await gp.estimate(nImages, pipelineFor(body.pipeline), { totalPixels }));
-    }
-
-    if (head === 'checkout' && method === 'POST') {
-        const body = await bodyOf(request);
-        const packCredits = body.packCredits == null ? undefined : Number(body.packCredits);
-        const customCredits = body.customCredits == null ? undefined : Number(body.customCredits);
-        if ((packCredits == null) === (customCredits == null)) {
-            return json({ error: 'Hãy chọn đúng một gói hoặc nhập số credit tùy chỉnh.' }, 400);
-        }
-        const amount = packCredits != null ? { packCredits } : { customCredits };
-        return json(await gp.createCheckout({ ...amount, client: 'web' }));
-    }
-    if (head === 'checkouts' && second && method === 'GET') {
-        return json(await gp.getCheckout(second));
     }
 
     if (head === 'runs' && method === 'GET') {

@@ -6,6 +6,7 @@ import { i18n } from '../localization';
 import { ReconstructionArtifacts } from './artifacts';
 import { ReconstructionAuth } from './auth';
 import { ReconstructionBilling } from './billing';
+import { messageOf } from './utils';
 import { ReconstructionView } from './view';
 import { ReconstructionWorkflow } from './workflow';
 
@@ -23,8 +24,11 @@ class ReconstructionPanel extends Container {
 
         const runtime: { workflow?: ReconstructionWorkflow } = {};
         const billing = new ReconstructionBilling(view, async () => {
-            await runtime.workflow?.refreshPreparedQuote();
+            await runtime.workflow?.refreshPreparedQuote().catch((error) => {
+                view.setState('Could not update quote', messageOf(error), { mode: 'failed' });
+            });
         });
+        window.addEventListener('focus', () => billing.returnFromStudio());
         const artifacts = new ReconstructionArtifacts(
             events,
             view,
@@ -40,6 +44,7 @@ class ReconstructionPanel extends Container {
             workflow.beginSession();
             await Promise.all([
                 billing.refreshCredits(),
+                billing.loadStudio(),
                 artifacts.refreshRecentRuns(),
                 workflow.restoreOpenSessions(),
                 workflow.loadSites()

@@ -70,8 +70,8 @@ class ReconstructionView {
         return this.shell.creditValue;
     }
 
-    get buyCreditsButton() {
-        return this.shell.buyCreditsButton;
+    get buyCreditsLink() {
+        return this.shell.buyCreditsLink;
     }
 
     get cancelButton() {
@@ -86,36 +86,8 @@ class ReconstructionView {
         return this.shell.openPrimaryButton;
     }
 
-    get checkoutLink() {
-        return this.shell.checkoutLink;
-    }
-
-    get pricingPanel() {
-        return this.shell.pricingPanel;
-    }
-
-    get pricingPacks() {
-        return this.shell.pricingPacks;
-    }
-
-    get pricingNote() {
-        return this.shell.pricingNote;
-    }
-
-    get purchaseStatus() {
-        return this.shell.purchaseStatus;
-    }
-
-    get purchaseCheckoutLink() {
-        return this.shell.purchaseCheckoutLink;
-    }
-
-    get customCreditsInput() {
-        return this.shell.customCreditsInput;
-    }
-
-    get customPrice() {
-        return this.shell.customPrice;
+    get studioLink() {
+        return this.shell.studioLink;
     }
 
     // -- auth ----------------------------------------------------------------

@@ -27,7 +27,7 @@ const TABS: { tab: DashboardTab; label: string; hint: string; icon: string }[] =
 ];
 
 /**
- * The dashboard chrome: topbar, credit strip, pricing popover, sidebar, and the stage
+ * The dashboard chrome: topbar, credit strip, sidebar, and the stage
  * the tab panels mount into. The tab views are appended to {@link stage}.
  */
 class DashboardShell {
@@ -35,20 +35,13 @@ class DashboardShell {
     readonly title: HTMLElement;
     readonly closeButton: HTMLButtonElement;
     readonly creditValue: HTMLElement;
-    readonly buyCreditsButton: HTMLButtonElement;
-    readonly pricingPanel: HTMLElement;
-    readonly pricingPacks: HTMLElement;
-    readonly pricingNote: HTMLElement;
-    readonly purchaseStatus: HTMLElement;
-    readonly purchaseCheckoutLink: HTMLAnchorElement;
-    readonly customCreditsInput: HTMLInputElement;
-    readonly customPrice: HTMLElement;
+    readonly buyCreditsLink: HTMLAnchorElement;
     readonly tabButtons: HTMLButtonElement[];
     readonly stage: HTMLElement;
     readonly cancelButton: HTMLButtonElement;
     readonly downloadCancelButton: HTMLButtonElement;
     readonly openPrimaryButton: HTMLButtonElement;
-    readonly checkoutLink: HTMLAnchorElement;
+    readonly studioLink: HTMLAnchorElement;
 
     constructor(host: HTMLElement) {
         const root = document.createElement('div');
@@ -60,32 +53,12 @@ class DashboardShell {
                 <div class="recon-credit">
                     <i aria-hidden="true"></i>
                     <span>Credit: <strong class="recon-credit-value">—</strong></span>
-                    <button class="recon-button recon-buy-credits" type="button"
-                            aria-expanded="false">Buy Credit</button>
+                    <a class="recon-button recon-buy-credits" target="_blank" rel="noopener"
+                       title="Buy credits or change plan in Eyrie Studio" hidden>Buy Credit</a>
                 </div>
                 <button class="recon-topbar-close" type="button"
                         aria-label="Close Reconstruction" title="Close">&#xD7;</button>
             </header>
-            <section class="recon-pricing" aria-hidden="true" aria-label="Buy PAYG credits">
-                <div class="recon-section-heading">
-                    <strong>Buy PAYG credits</strong>
-                </div>
-                <div class="recon-pricing-packs"><span>Loading pricing…</span></div>
-                <div class="recon-custom-credits">
-                    <label for="recon-custom-credits">Custom credits</label>
-                    <div>
-                        <input id="recon-custom-credits" type="number" min="100" max="1000000"
-                               step="100" value="1000">
-                        <span class="recon-custom-price">≈ $10.00</span>
-                        <button class="recon-button recon-primary recon-custom-buy"
-                                type="button">Buy</button>
-                    </div>
-                </div>
-                <p class="recon-pricing-note"></p>
-                <p class="recon-purchase-status" role="status"></p>
-                <a class="recon-purchase-checkout" target="reconstruction-checkout"
-                   rel="noopener" hidden>Reopen checkout ↗</a>
-            </section>
             <div class="recon-main">
                 <nav class="recon-sidebar" role="tablist" aria-label="Reconstruction">${
     TABS.map(({ tab, label, hint }) => `
@@ -125,7 +98,7 @@ class DashboardShell {
                                   aria-valuemin="0" aria-valuemax="100"><i></i></span>
                             <span class="recon-transfer-detail"></span>
                         </div>
-                        <a class="recon-checkout" target="reconstruction-checkout" rel="noopener" hidden>Open checkout &#8599;</a>
+                        <a class="recon-studio-link" target="_blank" rel="noopener" hidden>Buy credits in Studio &#8599;</a>
                         <div class="recon-shared-actions">
                             <button class="recon-button recon-primary recon-open-primary" type="button" hidden>Open model now</button>
                             <button class="recon-button recon-cancel" type="button" hidden>Cancel job</button>
@@ -139,20 +112,13 @@ class DashboardShell {
         this.title = root.querySelector('.recon-topbar-title');
         this.closeButton = root.querySelector('.recon-topbar-close');
         this.creditValue = root.querySelector('.recon-credit-value');
-        this.buyCreditsButton = root.querySelector('.recon-buy-credits');
-        this.pricingPanel = root.querySelector('.recon-pricing');
-        this.pricingPacks = root.querySelector('.recon-pricing-packs');
-        this.pricingNote = root.querySelector('.recon-pricing-note');
-        this.purchaseStatus = root.querySelector('.recon-purchase-status');
-        this.purchaseCheckoutLink = root.querySelector('.recon-purchase-checkout');
-        this.customCreditsInput = root.querySelector('.recon-custom-credits input');
-        this.customPrice = root.querySelector('.recon-custom-price');
+        this.buyCreditsLink = root.querySelector('.recon-buy-credits');
         this.tabButtons = Array.from(root.querySelectorAll<HTMLButtonElement>('.recon-nav'));
         this.stage = root.querySelector('.recon-panels');
         this.cancelButton = root.querySelector('.recon-cancel');
         this.downloadCancelButton = root.querySelector('.recon-download-cancel');
         this.openPrimaryButton = root.querySelector('.recon-open-primary');
-        this.checkoutLink = root.querySelector('.recon-checkout');
+        this.studioLink = root.querySelector('.recon-studio-link');
 
         for (const button of this.tabButtons) {
             const icon = TABS.find(entry => entry.tab === button.dataset.tab)?.icon;

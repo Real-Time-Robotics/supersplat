@@ -1,3 +1,5 @@
+import { Events } from '../../events';
+import type { Tags } from '../../genesis-recon/client';
 import { ReconstructionArtifacts } from './artifacts';
 import { ReconstructionBilling } from './billing';
 import { estimateTotalPixels, shortfallNote } from './estimate';
@@ -36,8 +38,6 @@ import {
     readJson
 } from './utils';
 import { ReconstructionView } from './view';
-import { Events } from '../../events';
-import type { Tags } from '../../genesis-recon/client';
 
 type PickedFolder = {
     named: Named[];
@@ -167,7 +167,7 @@ class ReconstructionWorkflow {
         this.clearPreparedDataset();
         this.view.setTab('create');
         this.view.resetStartLabel();
-        this.view.checkoutLink.hidden = true;
+        this.view.studioLink.hidden = true;
         this.view.fileSummary.textContent =
             `${datasetLabel} · ${dataset.image_count.toLocaleString()} existing images`;
         this.view.setNameEditable(false, datasetLabel);
@@ -245,7 +245,7 @@ class ReconstructionWorkflow {
         this.submitting.clear();
         this.site = NO_SITE;
         this.view.renderSite(this.site);
-        this.view.checkoutLink.hidden = true;
+        this.view.studioLink.hidden = true;
     }
 
     async restoreOpenSessions() {
@@ -318,7 +318,7 @@ class ReconstructionWorkflow {
         const target = this.runs.selected();
         this.view.cancelButton.disabled = true;
         this.view.resetStartLabel();
-        this.view.checkoutLink.hidden = true;
+        this.view.studioLink.hidden = true;
         try {
             const accepted = await this.job.cancel();
             if (!accepted) {
@@ -326,7 +326,6 @@ class ReconstructionWorkflow {
                 return;
             }
             if (target) this.cancelling.add(target.id);
-            this.billing.cancelPolling();
             this.view.cancelButton.hidden = true;
         } catch (error) {
             if (target) this.cancelling.delete(target.id);
@@ -373,17 +372,19 @@ class ReconstructionWorkflow {
         this.persistPreparedDataset();
         this.billing.setBalance(quote.balance);
         const creditsNeeded = Math.max(0, Math.ceil(quote.required - quote.balance));
+        this.view.studioLink.hidden = true;
         if (creditsNeeded === 0) {
             this.view.setState('Credits available',
                 `The dataset is already uploaded. Press ${this.actionLabel} to start the ${quote.required.toLocaleString()}-credit job.`,
                 { mode: 'done', center: 'Ready' });
         } else {
             this.view.setState('Insufficient credits',
-                `The dataset is already on R2; ${creditsNeeded.toLocaleString()} more credits are needed. Buy credits and press Start again; the images will not be uploaded twice.`,
+                `The dataset is already on R2; ${creditsNeeded.toLocaleString()} more credits are needed. Buy credits in Studio and press Start again; the images will not be uploaded twice.`,
                 { mode: 'idle', center: 'Credit' });
+            this.billing.showCreditShortfall();
         }
         return {
-            state: creditsNeeded === 0 ? 'ready' : 'checkout_required',
+            state: creditsNeeded === 0 ? 'ready' : 'insufficient_credits',
             datasetId: this.preparedDataset.datasetId,
             quote,
             creditsNeeded
@@ -769,7 +770,7 @@ class ReconstructionWorkflow {
         const quote = await readJson<UploadResponse['quote']>(response);
         const creditsNeeded = Math.max(0, Math.ceil(quote.required - quote.balance));
         return {
-            state: creditsNeeded === 0 ? 'ready' : 'checkout_required',
+            state: creditsNeeded === 0 ? 'ready' : 'insufficient_credits',
             datasetId,
             quote,
             creditsNeeded
@@ -828,7 +829,7 @@ class ReconstructionWorkflow {
             this.submitting.delete(run.id);
             throw new Error('Luồng này không ở trạng thái có thể bắt đầu lại.');
         }
-        this.view.checkoutLink.hidden = true;
+        this.view.studioLink.hidden = true;
         try {
             const datasetId = transferring ?
                 await this.transfer(run) :
@@ -844,18 +845,17 @@ class ReconstructionWorkflow {
                 `Needs ${prepared.quote.required.toLocaleString()} credits for ${prepared.quote.billable_gpx.toFixed(2)} billable Gpx.`,
                 { mode: 'done', center: 'Ready' });
 
-            if (prepared.state === 'checkout_required') {
+            if (prepared.state === 'insufficient_credits') {
                 const creditsNeeded = prepared.creditsNeeded ?? Math.max(
                     0,
                     Math.ceil(prepared.quote.required - prepared.quote.balance)
                 );
-                await this.billing.showCreditShortfall(creditsNeeded);
-                if (signal.aborted) return;
+                this.billing.showCreditShortfall();
                 this.coordinator.transition(run.id, 'failed', {
                     detail: `Thiếu ${creditsNeeded.toLocaleString()} credit`
                 });
                 this.card(run, 'Insufficient credits',
-                    `This run needs ${prepared.quote.required.toLocaleString()} credits and the balance is ${prepared.quote.balance.toLocaleString()}, so ${creditsNeeded.toLocaleString()} more are needed. Buy credits, then press “Thử lại” on the run; the images will not be uploaded twice.`,
+                    `This run needs ${prepared.quote.required.toLocaleString()} credits and the balance is ${prepared.quote.balance.toLocaleString()}, so ${creditsNeeded.toLocaleString()} more are needed. Buy credits in Studio, then press “Thử lại” on the run; the images will not be uploaded twice.`,
                     { mode: 'idle', center: 'Credit' });
                 return;
             }
