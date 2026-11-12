@@ -1,5 +1,3 @@
-import { ApiError, Client } from 'genesis-recon';
-
 import {
     type OidcEnv,
     authorizationUrl,
@@ -21,6 +19,8 @@ import {
     readCookie,
     sessionCookieHeader
 } from './session';
+import { Client } from '../genesis-recon/client';
+import { ApiError } from '../genesis-recon/errors';
 
 type SessionNamespace = Cloudflare.Env['RECON_SESSIONS'];
 type SessionStub = ReturnType<SessionNamespace['get']>;

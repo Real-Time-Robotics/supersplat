@@ -1,13 +1,3 @@
-import {
-    Client,
-    optionsFromPolicy,
-    type ClientPolicy,
-    type TagOptions,
-    type Tags,
-    type UploadOptions,
-    type Uploadable
-} from 'genesis-recon';
-
 import { describeFailure } from './failure';
 import { reconFetch } from './http';
 import type { ProgressVisual } from './progress';
@@ -16,6 +6,15 @@ import type { UploadProgress } from './types';
 import { RateMeter, formatTransferDetail, type TransferRate } from './upload-rate';
 import { UploadRecords, type UploadRecord } from './upload-records';
 import { delay, formatBytes, formatDuration, readJson } from './utils';
+import {
+    Client,
+    optionsFromPolicy,
+    type ClientPolicy,
+    type TagOptions,
+    type Tags,
+    type UploadOptions,
+    type Uploadable
+} from '../../genesis-recon/client';
 
 const GP_BASE_URL = `${location.origin}/api/gp`;
 type GenesisConnection = { client: Client; policy: ClientPolicy };

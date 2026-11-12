@@ -1,6 +1,6 @@
-import { GenesisError, type FailureClass } from 'genesis-recon';
-
 import { messageOf } from './utils';
+import { GenesisError } from '../../genesis-recon/errors';
+import type { FailureClass } from '../../genesis-recon/failure';
 
 type FailureAction = 'retrying' | 'sign-in' | 'resume' | 'fail';
 

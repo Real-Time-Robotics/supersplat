@@ -1,5 +1,3 @@
-import type { Tags } from 'genesis-recon';
-
 import { ReconstructionArtifacts } from './artifacts';
 import { ReconstructionBilling } from './billing';
 import { estimateTotalPixels, shortfallNote } from './estimate';
@@ -39,6 +37,7 @@ import {
 } from './utils';
 import { ReconstructionView } from './view';
 import { Events } from '../../events';
+import type { Tags } from '../../genesis-recon/client';
 
 type PickedFolder = {
     named: Named[];

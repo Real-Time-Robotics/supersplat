@@ -1,9 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { UploadError } from 'genesis-recon';
-
 import { classOf, describeFailure } from './failure.ts';
+import { UploadError } from '../../genesis-recon/errors.ts';
 
 test('a classified SDK error keeps its class and maps to an action', () => {
     const throttled = new UploadError('store asked for less load', 429, 'peer-unavailable');

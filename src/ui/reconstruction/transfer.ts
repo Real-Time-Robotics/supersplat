@@ -1,6 +1,6 @@
-import { isRetryable, type UploadOptions, type Uploadable } from 'genesis-recon';
-
 import { classOf } from './failure';
+import type { UploadOptions, Uploadable } from '../../genesis-recon/client';
+import { isRetryable } from '../../genesis-recon/failure';
 
 type TransferDeps = {
     uploadDataset(files: Uploadable[], opts: UploadOptions): Promise<string>;

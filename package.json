@@ -14,8 +14,6 @@
     "license": "MIT",
     "main": "index.js",
     "scripts": {
-        "sdk:build": "npm run build --prefix ../reconstruction/sdk/typescript",
-        "prebuild": "npm run sdk:build",
         "clean": "node -e \"require('fs').rmSync('dist', { recursive: true, force: true })\"",
         "build": "npm run clean && rollup -c",
         "watch": "rollup -c -w",
@@ -23,6 +21,8 @@
         "deploy": "npm run typecheck:worker && npm run build && wrangler deploy",
         "deploy:staging": "npm run typecheck:worker && npm run build && wrangler deploy --env staging",
         "typecheck": "wrangler types && tsc --noEmit && tsc -p tsconfig.worker.json",
+        "reconstruction:types": "openapi-typescript contracts/vendor/reconstruction/openapi.json -o src/genesis-recon/schema.d.ts",
+        "test:genesis-recon": "node --experimental-transform-types --import ./scripts/ts-resolve.mjs --test \"src/genesis-recon/*.test.ts\"",
         "test:backend": "node --experimental-transform-types --import ./scripts/ts-resolve.mjs --test \"src/backend/*.test.ts\"",
         "test:ui": "node --experimental-transform-types --import ./scripts/ts-resolve.mjs --test \"src/ui/**/*.test.ts\"",
         "test:io": "node --experimental-transform-types --import ./scripts/ts-resolve.mjs --test \"src/io/**/*.test.ts\"",
@@ -66,6 +66,7 @@
         "i18next-browser-languagedetector": "8.2.1",
         "i18next-http-backend": "4.0.2",
         "mediabunny": "1.56.0",
+        "openapi-typescript": "7.13.0",
         "playcanvas": "2.22.1",
         "postcss": "8.5.28",
         "rollup": "4.63.1",
@@ -77,7 +78,12 @@
         "wrangler": "^4.122.0"
     },
     "dependencies": {
-        "genesis-recon": "file:../reconstruction/sdk/typescript",
-        "meshoptimizer": "1.2.0"
+        "meshoptimizer": "1.2.0",
+        "openapi-fetch": "0.17.0"
+    },
+    "overrides": {
+        "openapi-typescript": {
+            "typescript": "$typescript"
+        }
     }
 }

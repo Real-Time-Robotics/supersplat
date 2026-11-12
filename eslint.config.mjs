@@ -4,6 +4,9 @@ import tsParser from '@typescript-eslint/parser';
 import globals from 'globals';
 
 export default [
+    {
+        ignores: ['src/genesis-recon/schema.d.ts']
+    },
     ...playcanvasConfig,
     {
         files: ['**/*.ts'],
@@ -43,7 +46,7 @@ export default [
             'require-atomic-updates': 'off'
         }
     }, {
-        files: ['worker/**/*.ts', 'src/backend/**/*.ts'],
+        files: ['worker/**/*.ts', 'src/backend/**/*.ts', 'src/genesis-recon/**/*.ts'],
         rules: {
             'no-undef': 'off'
         }

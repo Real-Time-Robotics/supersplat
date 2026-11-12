@@ -1,4 +1,4 @@
-import type { TagOptions, Tags } from 'genesis-recon';
+import type { TagOptions, Tags } from '../../genesis-recon/client';
 
 const SITE = 'eyrie:genesis:site';
 const CODE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;

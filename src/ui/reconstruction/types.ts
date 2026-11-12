@@ -1,4 +1,4 @@
-import type { JobDatasetEvent, JobGpuEvent, JobPullProgress } from 'genesis-recon';
+import type { JobDatasetEvent, JobGpuEvent, JobPullProgress } from '../../genesis-recon/client';
 
 type ReconstructionPipeline = 'splat' | 'photogrammetry';
 

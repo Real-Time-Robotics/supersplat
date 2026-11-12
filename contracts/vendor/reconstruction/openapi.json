@@ -1,0 +1,6274 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "genesis-point pipeline server",
+    "description": "Public HTTP API for the genesis-point reconstruction control plane (photogrammetry + gaussian splatting). Upload a dataset, submit a job, stream its progress over SSE, then list and download the run's artifacts.\n\n**Auth:** every endpoint requires `Authorization: Bearer <token>` except the health/bootstrap probes. **Long-running jobs:** progress streams over SSE at `GET /v1/jobs/{job_id}/stream` (resume with `Last-Event-ID`). **Downloads:** artifact/image endpoints return a `307` to a short-lived presigned URL — your HTTP client must follow redirects. **Errors:** non-2xx responses are `application/problem+json` (RFC 9457): branch on `code`, quote `request_id` to support.",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/v1/config": {
+      "get": {
+        "tags": [
+          "Meta"
+        ],
+        "summary": "Client Config",
+        "description": "Public bootstrap config for clients using OIDC authentication.",
+        "operationId": "client_config",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientConfig"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "x-genesis-access": "public",
+        "security": []
+      }
+    },
+    "/v1/runtime-settings": {
+      "get": {
+        "tags": [
+          "Meta"
+        ],
+        "summary": "Get Runtime Settings",
+        "description": "Return the effective mutable policy for an operator dashboard.",
+        "operationId": "get_runtime_settings",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuntimeSettings"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "x-genesis-access": "admin"
+      },
+      "put": {
+        "tags": [
+          "Meta"
+        ],
+        "summary": "Put Runtime Settings",
+        "description": "Atomically replace mutable policy; readers observe it within two seconds.",
+        "operationId": "put_runtime_settings",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RuntimeSettings"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuntimeSettings"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "x-genesis-access": "admin"
+      }
+    },
+    "/v1/pipelines": {
+      "get": {
+        "tags": [
+          "Meta"
+        ],
+        "summary": "Pipelines",
+        "operationId": "pipelines",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/PipelineInfo"
+                  },
+                  "type": "array",
+                  "title": "Response Pipelines"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "x-genesis-access": "authenticated"
+      }
+    },
+    "/v1/pipelines/{pipeline}/presets": {
+      "get": {
+        "tags": [
+          "Meta"
+        ],
+        "summary": "Public List Presets",
+        "description": "Named, server-tuned configs readable by any authenticated caller.",
+        "operationId": "public_list_presets",
+        "parameters": [
+          {
+            "name": "pipeline",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pipeline"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PresetList"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "x-genesis-access": "authenticated"
+      },
+      "post": {
+        "tags": [
+          "Meta"
+        ],
+        "summary": "Create Preset",
+        "description": "Create a preset, returning 409 if its name exists.",
+        "operationId": "create_preset",
+        "parameters": [
+          {
+            "name": "pipeline",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pipeline"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PresetSave"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PresetSaved"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "x-genesis-access": "admin"
+      }
+    },
+    "/v1/pipelines/{pipeline}/presets/{name}": {
+      "get": {
+        "tags": [
+          "Meta"
+        ],
+        "summary": "Public Get Preset",
+        "description": "Return a preset config ready for job submission.",
+        "operationId": "public_get_preset",
+        "parameters": [
+          {
+            "name": "pipeline",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pipeline"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Preset"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "x-genesis-access": "authenticated"
+      },
+      "put": {
+        "tags": [
+          "Meta"
+        ],
+        "summary": "Update Preset",
+        "description": "Create or replace a named preset.",
+        "operationId": "update_preset",
+        "parameters": [
+          {
+            "name": "pipeline",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pipeline"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "PresetUpdateConfig"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PresetSaved"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "x-genesis-access": "admin"
+      },
+      "delete": {
+        "tags": [
+          "Meta"
+        ],
+        "summary": "Delete Preset",
+        "description": "Delete a preset if present.",
+        "operationId": "delete_preset",
+        "parameters": [
+          {
+            "name": "pipeline",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pipeline"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ok"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "x-genesis-access": "admin"
+      }
+    },
+    "/v1/pipelines/{pipeline}/defaults": {
+      "get": {
+        "tags": [
+          "Meta"
+        ],
+        "summary": "Pipeline Defaults",
+        "description": "Return a pipeline's seed config.",
+        "operationId": "pipeline_defaults",
+        "parameters": [
+          {
+            "name": "pipeline",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pipeline"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PipelineDefaults"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "x-genesis-access": "authenticated"
+      }
+    },
+    "/v1/pipelines/{pipeline}/schema": {
+      "get": {
+        "tags": [
+          "Meta"
+        ],
+        "summary": "Pipeline Schema",
+        "description": "Return the form layout for pipeline config.",
+        "operationId": "pipeline_schema",
+        "parameters": [
+          {
+            "name": "pipeline",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pipeline"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PipelineForm"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "x-genesis-access": "authenticated"
+      }
+    },
+    "/v1/pricing": {
+      "get": {
+        "tags": [
+          "Meta"
+        ],
+        "summary": "Pricing Catalog",
+        "description": "Return Eyrie's published price list.",
+        "operationId": "pricing_catalog",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Pricing Catalog"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "x-genesis-access": "public",
+        "security": []
+      }
+    },
+    "/v1/jobs": {
+      "post": {
+        "tags": [
+          "Jobs"
+        ],
+        "summary": "Start Job",
+        "operationId": "start_job",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{16,64}$",
+              "title": "Idempotency-Key"
+            },
+            "description": "One key per user action, reused for every retry of it. A replay returns the first response with `Idempotent-Replayed: true`."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JobRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobCreated"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "x-genesis-access": "authenticated",
+        "x-genesis-capability": "jobs:submit"
+      }
+    },
+    "/v1/active": {
+      "get": {
+        "tags": [
+          "Jobs"
+        ],
+        "summary": "Active",
+        "operationId": "active",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActiveJobs"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "x-genesis-access": "authenticated",
+        "x-genesis-capability": "jobs:read"
+      }
+    },
+    "/v1/jobs/{job_id}/label": {
+      "put": {
+        "tags": [
+          "Jobs"
+        ],
+        "summary": "Set Job Label",
+        "description": "Rename a run. Display only -- its artifacts keep the object-store prefix they were\nwritten under, so this is safe on a finished job and on a running one alike.",
+        "operationId": "set_job_label",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LabelBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobLabelSet"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "x-genesis-access": "authenticated",
+        "x-genesis-capability": "jobs:write"
+      }
+    },
+    "/v1/jobs/{job_id}": {
+      "get": {
+        "tags": [
+          "Jobs"
+        ],
+        "summary": "Job Status",
+        "operationId": "job_status",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobStatus"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "x-genesis-access": "authenticated",
+        "x-genesis-capability": "jobs:read"
+      },
+      "delete": {
+        "tags": [
+          "Jobs"
+        ],
+        "summary": "Delete Job",
+        "description": "Erase a finished run: its artifacts, its log and its row. Not recoverable.",
+        "operationId": "delete_job",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ok"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "x-genesis-access": "authenticated",
+        "x-genesis-capability": "jobs:delete"
+      }
+    },
+    "/v1/jobs/{job_id}/cancel": {
+      "post": {
+        "tags": [
+          "Jobs"
+        ],
+        "summary": "Cancel Job",
+        "operationId": "cancel_job",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ok"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "x-genesis-access": "authenticated",
+        "x-genesis-capability": "jobs:cancel"
+      }
+    },
+    "/v1/jobs/{job_id}/stream": {
+      "get": {
+        "tags": [
+          "Jobs"
+        ],
+        "summary": "Stream",
+        "description": "`events` narrows the stream to a comma-separated subset of the kinds in\n`_EVENT_LINE`; empty means all of them. A progress row wants `stage,progress,gpu,end`\nand would otherwise be sent -- and have to drop -- the job's whole log.",
+        "operationId": "stream",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          },
+          {
+            "name": "events",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Events"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "x-genesis-access": "authenticated",
+        "x-genesis-capability": "jobs:read",
+        "x-sse-events": {
+          "artifact": {
+            "$ref": "#/components/schemas/JobArtifactEvent"
+          },
+          "dataset": {
+            "$ref": "#/components/schemas/JobDatasetEvent"
+          },
+          "gpu": {
+            "$ref": "#/components/schemas/JobGpuEvent"
+          }
+        }
+      }
+    },
+    "/v1/jobs/{job_id}/artifacts": {
+      "get": {
+        "tags": [
+          "Artifacts"
+        ],
+        "summary": "List Job Artifacts",
+        "operationId": "list_job_artifacts",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtifactList"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "x-genesis-access": "authenticated",
+        "x-genesis-capability": "artifacts:read"
+      }
+    },
+    "/v1/jobs/{job_id}/artifacts/{name}": {
+      "get": {
+        "tags": [
+          "Artifacts"
+        ],
+        "summary": "Download Artifact",
+        "operationId": "download_artifact",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          },
+          {
+            "name": "redirect",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": true,
+              "title": "Redirect"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "x-genesis-access": "authenticated",
+        "x-genesis-capability": "artifacts:read"
+      },
+      "delete": {
+        "tags": [
+          "Artifacts"
+        ],
+        "summary": "Delete Artifact",
+        "description": "Delete one of a job's output files, leaving the rest of the run in place.",
+        "operationId": "delete_artifact",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ok"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "x-genesis-access": "authenticated",
+        "x-genesis-capability": "artifacts:delete"
+      }
+    },
+    "/v1/datasets/{dataset_id}/runs/{pipeline}/{run_name}/artifacts": {
+      "get": {
+        "tags": [
+          "Artifacts"
+        ],
+        "summary": "List Run Artifacts",
+        "operationId": "list_run_artifacts",
+        "parameters": [
+          {
+            "name": "dataset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Dataset Id"
+            }
+          },
+          {
+            "name": "pipeline",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pipeline"
+            }
+          },
+          {
+            "name": "run_name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Run Name"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtifactList"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "x-genesis-access": "authenticated",
+        "x-genesis-capability": "artifacts:read"
+      }
+    },
+    "/v1/datasets/{dataset_id}/runs/{pipeline}/{run_name}/artifacts/{name}": {
+      "get": {
+        "tags": [
+          "Artifacts"
+        ],
+        "summary": "Download Run Artifact",
+        "operationId": "download_run_artifact",
+        "parameters": [
+          {
+            "name": "dataset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Dataset Id"
+            }
+          },
+          {
+            "name": "pipeline",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pipeline"
+            }
+          },
+          {
+            "name": "run_name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Run Name"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          },
+          {
+            "name": "redirect",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": true,
+              "title": "Redirect"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "x-genesis-access": "authenticated",
+        "x-genesis-capability": "artifacts:read"
+      },
+      "delete": {
+        "tags": [
+          "Artifacts"
+        ],
+        "summary": "Delete Run Artifact",
+        "description": "The by-run twin of `delete_artifact`: a finished run outlives the job that made it,\nand the gallery addresses it by path rather than by job id.",
+        "operationId": "delete_run_artifact",
+        "parameters": [
+          {
+            "name": "dataset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Dataset Id"
+            }
+          },
+          {
+            "name": "pipeline",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pipeline"
+            }
+          },
+          {
+            "name": "run_name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Run Name"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ok"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "x-genesis-access": "authenticated",
+        "x-genesis-capability": "artifacts:delete"
+      }
+    },
+    "/v1/datasets/{dataset_id}": {
+      "put": {
+        "tags": [
+          "Datasets"
+        ],
+        "summary": "Set Dataset Label",
+        "operationId": "set_dataset_label",
+        "parameters": [
+          {
+            "name": "dataset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Dataset Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LabelBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LabelSet"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "x-genesis-access": "authenticated",
+        "x-genesis-capability": "datasets:write"
+      },
+      "delete": {
+        "tags": [
+          "Datasets"
+        ],
+        "summary": "Delete Dataset",
+        "operationId": "delete_dataset",
+        "parameters": [
+          {
+            "name": "dataset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Dataset Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ok"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "x-genesis-access": "authenticated",
+        "x-genesis-capability": "datasets:delete"
+      }
+    },
+    "/v1/datasets/tags": {
+      "get": {
+        "tags": [
+          "Datasets"
+        ],
+        "summary": "List Dataset Tags",
+        "operationId": "list_dataset_tags",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TagOptions"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "x-genesis-access": "authenticated",
+        "x-genesis-capability": "datasets:read"
+      }
+    },
+    "/v1/datasets/{dataset_id}/tags": {
+      "put": {
+        "tags": [
+          "Datasets"
+        ],
+        "summary": "Set Dataset Tags",
+        "operationId": "set_dataset_tags",
+        "parameters": [
+          {
+            "name": "dataset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Dataset Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TagsBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TagsSet"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "x-genesis-access": "authenticated",
+        "x-genesis-capability": "datasets:tag"
+      }
+    },
+    "/v1/datasets/{dataset_id}/runs/{pipeline}/{run_name}": {
+      "delete": {
+        "tags": [
+          "Datasets"
+        ],
+        "summary": "Delete Run",
+        "description": "Delete a run's outputs. The run lives in the object store (the listing and download\nroutes read it from `run_prefix`), so that is what has to go; the local rmtree only\ncovers a pre-S3 leftover, and its absence is not a 404.",
+        "operationId": "delete_run",
+        "parameters": [
+          {
+            "name": "dataset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Dataset Id"
+            }
+          },
+          {
+            "name": "pipeline",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pipeline"
+            }
+          },
+          {
+            "name": "run_name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Run Name"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ok"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "x-genesis-access": "authenticated",
+        "x-genesis-capability": "artifacts:delete"
+      }
+    },
+    "/v1/datasets/{dataset_id}/images": {
+      "get": {
+        "tags": [
+          "Datasets"
+        ],
+        "summary": "List Dataset Images",
+        "operationId": "list_dataset_images",
+        "parameters": [
+          {
+            "name": "dataset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Dataset Id"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImageList"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "x-genesis-access": "authenticated",
+        "x-genesis-capability": "datasets:read"
+      }
+    },
+    "/v1/datasets/{dataset_id}/images/{name}": {
+      "delete": {
+        "tags": [
+          "Datasets"
+        ],
+        "summary": "Delete Dataset Image",
+        "operationId": "delete_dataset_image",
+        "parameters": [
+          {
+            "name": "dataset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Dataset Id"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ok"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "x-genesis-access": "authenticated",
+        "x-genesis-capability": "datasets:delete"
+      },
+      "get": {
+        "tags": [
+          "Datasets"
+        ],
+        "summary": "Get Dataset Image",
+        "operationId": "get_dataset_image",
+        "parameters": [
+          {
+            "name": "dataset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Dataset Id"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          },
+          {
+            "name": "redirect",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": true,
+              "title": "Redirect"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "x-genesis-access": "authenticated",
+        "x-genesis-capability": "datasets:read"
+      }
+    },
+    "/v1/datasets/{dataset_id}/images/{name}/thumbnail": {
+      "get": {
+        "tags": [
+          "Datasets"
+        ],
+        "summary": "Get Dataset Image Thumbnail",
+        "operationId": "get_dataset_image_thumbnail",
+        "parameters": [
+          {
+            "name": "dataset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Dataset Id"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          },
+          {
+            "name": "redirect",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": true,
+              "title": "Redirect"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "x-genesis-access": "authenticated",
+        "x-genesis-capability": "datasets:read"
+      }
+    },
+    "/v1/datasets": {
+      "get": {
+        "tags": [
+          "Datasets"
+        ],
+        "summary": "List Datasets",
+        "operationId": "list_datasets",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 100,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatasetList"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "x-genesis-access": "authenticated",
+        "x-genesis-capability": "datasets:read"
+      }
+    },
+    "/v1/datasets/{dataset_id}/runs": {
+      "get": {
+        "tags": [
+          "Datasets"
+        ],
+        "summary": "List Runs",
+        "operationId": "list_runs",
+        "parameters": [
+          {
+            "name": "dataset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Dataset Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunList"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "x-genesis-access": "authenticated",
+        "x-genesis-capability": "artifacts:read"
+      }
+    },
+    "/v1/datasets/{dataset_id}/sparse": {
+      "get": {
+        "tags": [
+          "Sparse"
+        ],
+        "summary": "Get Sparse Summary",
+        "operationId": "get_sparse_summary",
+        "parameters": [
+          {
+            "name": "dataset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Dataset Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SparseSummary"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "x-genesis-access": "authenticated",
+        "x-genesis-capability": "artifacts:read"
+      }
+    },
+    "/v1/datasets/{dataset_id}/sparse/points": {
+      "get": {
+        "tags": [
+          "Sparse"
+        ],
+        "summary": "Get Sparse Points",
+        "operationId": "get_sparse_points",
+        "parameters": [
+          {
+            "name": "dataset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Dataset Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "x-genesis-access": "authenticated",
+        "x-genesis-capability": "artifacts:read"
+      }
+    },
+    "/v1/datasets/{dataset_id}/sparse/cameras": {
+      "get": {
+        "tags": [
+          "Sparse"
+        ],
+        "summary": "Get Sparse Cameras",
+        "operationId": "get_sparse_cameras",
+        "parameters": [
+          {
+            "name": "dataset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Dataset Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SparseCameras"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "x-genesis-access": "authenticated",
+        "x-genesis-capability": "artifacts:read"
+      }
+    },
+    "/v1/datasets/sessions": {
+      "post": {
+        "tags": [
+          "Upload"
+        ],
+        "summary": "Create Dataset Session",
+        "description": "Open an upload session: mint a dataset id and record it as 'uploading'.",
+        "operationId": "create_dataset_session",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{16,64}$",
+              "title": "Idempotency-Key"
+            },
+            "description": "One key per user action, reused for every retry of it. A replay returns the first response with `Idempotent-Replayed: true`."
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SessionReq",
+                "default": {
+                  "tags": {}
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionCreated"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "x-genesis-access": "authenticated",
+        "x-genesis-capability": "datasets:create"
+      },
+      "get": {
+        "tags": [
+          "Upload"
+        ],
+        "summary": "List Open Sessions",
+        "description": "The caller's sessions that never committed. GET /v1/datasets lists only committed\ndatasets, so a client that lost its dataset_id could neither resume nor delete it.",
+        "operationId": "list_open_sessions",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenSessionList"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "x-genesis-access": "authenticated",
+        "x-genesis-capability": "datasets:read"
+      }
+    },
+    "/v1/datasets/sessions/{dataset_id}": {
+      "get": {
+        "tags": [
+          "Upload"
+        ],
+        "summary": "List Dataset Session",
+        "description": "Objects already in the store under this session, in the shape the client's\n(name, size) resume-skip already expects.",
+        "operationId": "list_dataset_session",
+        "parameters": [
+          {
+            "name": "dataset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Dataset Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionListing"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "x-genesis-access": "authenticated",
+        "x-genesis-capability": "datasets:read"
+      }
+    },
+    "/v1/datasets/sessions/{dataset_id}/presign": {
+      "post": {
+        "tags": [
+          "Upload"
+        ],
+        "summary": "Presign Images",
+        "operationId": "presign_images",
+        "parameters": [
+          {
+            "name": "dataset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Dataset Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PresignReq"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PresignResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "x-genesis-access": "authenticated",
+        "x-genesis-capability": "datasets:write"
+      }
+    },
+    "/v1/datasets/sessions/{dataset_id}/finalize": {
+      "post": {
+        "tags": [
+          "Upload"
+        ],
+        "summary": "Finalize Dataset Session",
+        "operationId": "finalize_dataset_session",
+        "parameters": [
+          {
+            "name": "dataset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Dataset Id"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{16,64}$",
+              "title": "Idempotency-Key"
+            },
+            "description": "One key per user action, reused for every retry of it. A replay returns the first response with `Idempotent-Replayed: true`."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FinalizeResult"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Ingest still running; poll GET /v1/uploads/{upload_id}",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FinalizeAccepted"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "x-genesis-access": "authenticated",
+        "x-genesis-capability": "datasets:write"
+      }
+    },
+    "/v1/datasets/sessions/{dataset_id}/multipart": {
+      "post": {
+        "tags": [
+          "Upload"
+        ],
+        "summary": "Multipart Create",
+        "operationId": "multipart_create",
+        "parameters": [
+          {
+            "name": "dataset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Dataset Id"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{16,64}$",
+              "title": "Idempotency-Key"
+            },
+            "description": "One key per user action, reused for every retry of it. A replay returns the first response with `Idempotent-Replayed: true`."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MultipartReq"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MultipartCreated"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "x-genesis-access": "authenticated",
+        "x-genesis-capability": "datasets:write"
+      }
+    },
+    "/v1/datasets/sessions/{dataset_id}/multipart/{upload_id}/urls": {
+      "post": {
+        "tags": [
+          "Upload"
+        ],
+        "summary": "Multipart Part Urls",
+        "operationId": "multipart_part_urls",
+        "parameters": [
+          {
+            "name": "dataset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Dataset Id"
+            }
+          },
+          {
+            "name": "upload_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Upload Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PartUrlsReq"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PartUrlsResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "x-genesis-access": "authenticated",
+        "x-genesis-capability": "datasets:write"
+      }
+    },
+    "/v1/datasets/sessions/{dataset_id}/multipart/{upload_id}/parts": {
+      "get": {
+        "tags": [
+          "Upload"
+        ],
+        "summary": "Multipart List Parts",
+        "operationId": "multipart_list_parts",
+        "parameters": [
+          {
+            "name": "dataset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Dataset Id"
+            }
+          },
+          {
+            "name": "upload_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Upload Id"
+            }
+          },
+          {
+            "name": "key",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PartsList"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "x-genesis-access": "authenticated",
+        "x-genesis-capability": "datasets:write"
+      }
+    },
+    "/v1/datasets/sessions/{dataset_id}/multipart/{upload_id}/complete": {
+      "post": {
+        "tags": [
+          "Upload"
+        ],
+        "summary": "Multipart Complete",
+        "operationId": "multipart_complete",
+        "parameters": [
+          {
+            "name": "dataset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Dataset Id"
+            }
+          },
+          {
+            "name": "upload_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Upload Id"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{16,64}$",
+              "title": "Idempotency-Key"
+            },
+            "description": "One key per user action, reused for every retry of it. A replay returns the first response with `Idempotent-Replayed: true`."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CompleteReq"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MultipartCompleted"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "x-genesis-access": "authenticated",
+        "x-genesis-capability": "datasets:write"
+      }
+    },
+    "/v1/datasets/sessions/{dataset_id}/multipart/{upload_id}": {
+      "delete": {
+        "tags": [
+          "Upload"
+        ],
+        "summary": "Multipart Abort",
+        "operationId": "multipart_abort",
+        "parameters": [
+          {
+            "name": "dataset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Dataset Id"
+            }
+          },
+          {
+            "name": "upload_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Upload Id"
+            }
+          },
+          {
+            "name": "key",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ok"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "x-genesis-access": "authenticated",
+        "x-genesis-capability": "datasets:write"
+      }
+    },
+    "/v1/uploads/{upload_id}": {
+      "get": {
+        "tags": [
+          "Upload"
+        ],
+        "summary": "Get Upload Status",
+        "description": "Ingest poll target. Byte progress is tracked client-side against the S3 parts, so\nbytes_received here only moves at the end.",
+        "operationId": "get_upload_status",
+        "parameters": [
+          {
+            "name": "upload_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Upload Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UploadStatus"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "x-genesis-access": "authenticated",
+        "x-genesis-capability": "datasets:read"
+      }
+    },
+    "/v1/nodes": {
+      "get": {
+        "tags": [
+          "Nodes"
+        ],
+        "summary": "List Nodes",
+        "operationId": "list_nodes",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NodeList"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "x-genesis-access": "authenticated",
+        "x-genesis-capability": "nodes:read"
+      }
+    },
+    "/v1/billing/credits": {
+      "get": {
+        "tags": [
+          "Billing"
+        ],
+        "summary": "Get Credits",
+        "description": "The account's spendable credit balance and platform plan. `plan_name` is the plan's\ndisplay name from the active price list (null when unknown). `billable` is false only\nfor the service principal, which is never charged. `credits_ok` is false when new paid\nwork would be refused (no credit left or a monthly spending cap reached);\n`has_purchased` says whether the account has ever bought credits.",
+        "operationId": "get_credits",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreditBalance"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "x-genesis-access": "authenticated",
+        "x-genesis-capability": "billing:read"
+      }
+    },
+    "/v1/billing/quote": {
+      "get": {
+        "tags": [
+          "Billing"
+        ],
+        "summary": "Get Quote",
+        "description": "Pre-submit credit estimate: the exact number POST /jobs will hold before it runs\n(same measurement, same price) and the spendable balance. `allowed` says whether that\nhold would be granted now; when it is false, `reason` carries the code POST /jobs would\nanswer (`insufficient_credits`, `purchase_required`, `spend_cap`, `service_held`,\n`service_disabled`, `account_closed`), so the client can send the user to Studio first.\n404s a dataset of another account or an unknown pipeline (no leak of either).",
+        "operationId": "get_quote",
+        "parameters": [
+          {
+            "name": "dataset",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Dataset"
+            }
+          },
+          {
+            "name": "pipeline",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pipeline"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreditQuote"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "x-genesis-access": "authenticated",
+        "x-genesis-capability": "jobs:estimate"
+      }
+    },
+    "/v1/billing/estimate": {
+      "post": {
+        "tags": [
+          "Billing"
+        ],
+        "summary": "Post Estimate",
+        "operationId": "post_estimate",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EstimateReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreditQuote"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "x-genesis-access": "authenticated",
+        "x-genesis-capability": "jobs:estimate"
+      }
+    },
+    "/v1/context": {
+      "get": {
+        "tags": [
+          "Access"
+        ],
+        "summary": "Account Context",
+        "operationId": "account_context",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountContext"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "x-genesis-access": "authenticated"
+      }
+    },
+    "/v1/me": {
+      "get": {
+        "tags": [
+          "Access"
+        ],
+        "summary": "Me",
+        "operationId": "me",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EffectiveAccess"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "x-genesis-access": "authenticated"
+      }
+    },
+    "/v1/transcribe": {
+      "post": {
+        "tags": [
+          "Speech",
+          "Speech"
+        ],
+        "summary": "Transcribe",
+        "operationId": "transcribe",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_transcribe"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TranscriptionResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "x-genesis-access": "authenticated",
+        "x-genesis-capability": "speech:transcribe"
+      }
+    },
+    "/health": {
+      "get": {
+        "tags": [
+          "Meta"
+        ],
+        "summary": "Health Probe",
+        "operationId": "health_probe",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "x-genesis-access": "public",
+        "security": []
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AccountContext": {
+        "properties": {
+          "accounts": {
+            "items": {
+              "$ref": "#/components/schemas/AccountMembership"
+            },
+            "type": "array",
+            "title": "Accounts"
+          }
+        },
+        "type": "object",
+        "required": [
+          "accounts"
+        ],
+        "title": "AccountContext"
+      },
+      "AccountMembership": {
+        "properties": {
+          "account_id": {
+            "type": "string",
+            "title": "Account Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "role": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Role"
+          },
+          "services": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Services"
+          }
+        },
+        "type": "object",
+        "required": [
+          "account_id",
+          "name",
+          "status",
+          "role",
+          "services"
+        ],
+        "title": "AccountMembership"
+      },
+      "ActiveJob": {
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "title": "Job Id"
+          },
+          "dataset_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dataset Id"
+          },
+          "pipeline_name": {
+            "type": "string",
+            "title": "Pipeline Name"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label",
+            "default": ""
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "node": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Node"
+          }
+        },
+        "type": "object",
+        "required": [
+          "job_id",
+          "pipeline_name",
+          "status"
+        ],
+        "title": "ActiveJob"
+      },
+      "ActiveJobs": {
+        "properties": {
+          "jobs": {
+            "items": {
+              "$ref": "#/components/schemas/ActiveJob"
+            },
+            "type": "array",
+            "title": "Jobs"
+          }
+        },
+        "type": "object",
+        "required": [
+          "jobs"
+        ],
+        "title": "ActiveJobs"
+      },
+      "Artifact": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "format": {
+            "type": "string",
+            "title": "Format"
+          },
+          "size": {
+            "type": "integer",
+            "title": "Size"
+          },
+          "primary": {
+            "type": "boolean",
+            "title": "Primary",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "kind",
+          "format",
+          "size"
+        ],
+        "title": "Artifact",
+        "description": "One downloadable deliverable of a finished run. `name` is the path relative\nto the run output dir (POSIX, may contain '/'); `primary` flags the model the\nUI should suggest by default for this pipeline."
+      },
+      "ArtifactList": {
+        "properties": {
+          "artifacts": {
+            "items": {
+              "$ref": "#/components/schemas/Artifact"
+            },
+            "type": "array",
+            "title": "Artifacts"
+          }
+        },
+        "type": "object",
+        "required": [
+          "artifacts"
+        ],
+        "title": "ArtifactList"
+      },
+      "BBox": {
+        "properties": {
+          "min": {
+            "items": {
+              "type": "number"
+            },
+            "type": "array",
+            "title": "Min"
+          },
+          "max": {
+            "items": {
+              "type": "number"
+            },
+            "type": "array",
+            "title": "Max"
+          }
+        },
+        "type": "object",
+        "required": [
+          "min",
+          "max"
+        ],
+        "title": "BBox"
+      },
+      "Body_transcribe": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "format": "binary",
+            "title": "File"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file"
+        ],
+        "title": "Body_transcribe"
+      },
+      "ClientConfig": {
+        "properties": {
+          "oidc_issuer": {
+            "type": "string",
+            "title": "Oidc Issuer"
+          },
+          "oidc_client_id": {
+            "type": "string",
+            "title": "Oidc Client Id"
+          },
+          "policy": {
+            "$ref": "#/components/schemas/ClientPolicy"
+          },
+          "studio_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Studio Url",
+            "description": "Where customers buy credits and manage their plan; null when unset"
+          }
+        },
+        "type": "object",
+        "required": [
+          "oidc_issuer",
+          "oidc_client_id",
+          "policy"
+        ],
+        "title": "ClientConfig"
+      },
+      "ClientPolicy": {
+        "properties": {
+          "policy_refresh_ms": {
+            "type": "integer",
+            "maximum": 300000.0,
+            "minimum": 500.0,
+            "title": "Policy Refresh Ms",
+            "default": 2000
+          },
+          "request_timeout_ms": {
+            "type": "integer",
+            "maximum": 3600000.0,
+            "minimum": 0.0,
+            "title": "Request Timeout Ms",
+            "default": 30000
+          },
+          "connect_timeout_ms": {
+            "type": "integer",
+            "maximum": 300000.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Connect Timeout Ms",
+            "default": 30000
+          },
+          "retry_max_attempts": {
+            "type": "integer",
+            "maximum": 20.0,
+            "minimum": 1.0,
+            "title": "Retry Max Attempts",
+            "default": 4
+          },
+          "retry_backoff_ms": {
+            "type": "integer",
+            "maximum": 60000.0,
+            "minimum": 0.0,
+            "title": "Retry Backoff Ms",
+            "default": 500
+          },
+          "ingest_timeout_ms": {
+            "type": "integer",
+            "maximum": 86400000.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Ingest Timeout Ms",
+            "default": 3600000
+          },
+          "ingest_poll_ms": {
+            "type": "integer",
+            "maximum": 60000.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Ingest Poll Ms",
+            "default": 2000
+          },
+          "upload_concurrency": {
+            "type": "integer",
+            "maximum": 64.0,
+            "minimum": 1.0,
+            "title": "Upload Concurrency",
+            "default": 8
+          },
+          "upload_stall_timeout_ms": {
+            "type": "integer",
+            "maximum": 3600000.0,
+            "minimum": 0.0,
+            "title": "Upload Stall Timeout Ms",
+            "default": 300000
+          },
+          "upload_retry_delays_ms": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "maxItems": 19,
+            "title": "Upload Retry Delays Ms"
+          },
+          "max_parallel_uploads": {
+            "type": "integer",
+            "maximum": 16.0,
+            "minimum": 1.0,
+            "title": "Max Parallel Uploads",
+            "default": 4
+          },
+          "stream_give_up_ms": {
+            "type": "integer",
+            "maximum": 3600000.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Stream Give Up Ms",
+            "default": 300000
+          },
+          "auto_resume_delays_ms": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "maxItems": 19,
+            "minItems": 1,
+            "title": "Auto Resume Delays Ms"
+          },
+          "auto_resume_jitter": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Auto Resume Jitter",
+            "default": 0.25
+          },
+          "offline_poll_ms": {
+            "type": "integer",
+            "maximum": 60000.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Offline Poll Ms",
+            "default": 1000
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "ClientPolicy"
+      },
+      "CompleteReq": {
+        "properties": {
+          "key": {
+            "type": "string",
+            "title": "Key"
+          },
+          "parts": {
+            "items": {
+              "$ref": "#/components/schemas/PartInfo"
+            },
+            "type": "array",
+            "title": "Parts"
+          }
+        },
+        "type": "object",
+        "required": [
+          "key",
+          "parts"
+        ],
+        "title": "CompleteReq"
+      },
+      "CreditBalance": {
+        "properties": {
+          "account_id": {
+            "type": "string",
+            "title": "Account Id"
+          },
+          "balance": {
+            "type": "integer",
+            "title": "Balance"
+          },
+          "billable": {
+            "type": "boolean",
+            "title": "Billable"
+          },
+          "concurrent": {
+            "type": "integer",
+            "title": "Concurrent"
+          },
+          "plan": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plan"
+          },
+          "plan_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plan Name"
+          },
+          "credits_ok": {
+            "type": "boolean",
+            "title": "Credits Ok"
+          },
+          "has_purchased": {
+            "type": "boolean",
+            "title": "Has Purchased"
+          }
+        },
+        "type": "object",
+        "required": [
+          "account_id",
+          "balance",
+          "billable",
+          "concurrent",
+          "plan",
+          "plan_name",
+          "credits_ok",
+          "has_purchased"
+        ],
+        "title": "CreditBalance"
+      },
+      "CreditQuote": {
+        "properties": {
+          "required": {
+            "type": "integer",
+            "title": "Required"
+          },
+          "balance": {
+            "type": "integer",
+            "title": "Balance"
+          },
+          "billable_gpx": {
+            "type": "number",
+            "title": "Billable Gpx"
+          },
+          "allowed": {
+            "type": "boolean",
+            "title": "Allowed"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "type": "object",
+        "required": [
+          "required",
+          "balance",
+          "billable_gpx",
+          "allowed",
+          "reason"
+        ],
+        "title": "CreditQuote",
+        "description": "Required credits, the caller's current balance, and whether the hold would be granted."
+      },
+      "DatasetList": {
+        "properties": {
+          "datasets": {
+            "items": {
+              "$ref": "#/components/schemas/DatasetSummary"
+            },
+            "type": "array",
+            "title": "Datasets"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          }
+        },
+        "type": "object",
+        "required": [
+          "datasets",
+          "total"
+        ],
+        "title": "DatasetList"
+      },
+      "DatasetSummary": {
+        "properties": {
+          "dataset_id": {
+            "type": "string",
+            "title": "Dataset Id"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "tags": {
+            "$ref": "#/components/schemas/Tags",
+            "default": {}
+          },
+          "image_count": {
+            "type": "integer",
+            "title": "Image Count"
+          },
+          "bytes": {
+            "type": "integer",
+            "title": "Bytes"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "runs": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Runs"
+          },
+          "models": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Models",
+            "default": {}
+          }
+        },
+        "type": "object",
+        "required": [
+          "dataset_id",
+          "label",
+          "image_count",
+          "bytes",
+          "created_at",
+          "runs"
+        ],
+        "title": "DatasetSummary"
+      },
+      "EffectiveAccess": {
+        "properties": {
+          "actor": {
+            "type": "string",
+            "title": "Actor"
+          },
+          "account_id": {
+            "type": "string",
+            "title": "Account Id"
+          },
+          "account_role": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Role"
+          },
+          "credential_type": {
+            "type": "string",
+            "title": "Credential Type"
+          },
+          "credential_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Credential Id"
+          },
+          "capabilities": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Capabilities"
+          }
+        },
+        "type": "object",
+        "required": [
+          "actor",
+          "account_id",
+          "account_role",
+          "credential_type",
+          "credential_id",
+          "capabilities"
+        ],
+        "title": "EffectiveAccess"
+      },
+      "EstimateReq": {
+        "properties": {
+          "n_images": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "N Images"
+          },
+          "total_pixels": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Pixels"
+          },
+          "pipeline": {
+            "type": "string",
+            "title": "Pipeline"
+          }
+        },
+        "type": "object",
+        "required": [
+          "n_images",
+          "pipeline"
+        ],
+        "title": "EstimateReq"
+      },
+      "FinalizeAccepted": {
+        "properties": {
+          "dataset_id": {
+            "type": "string",
+            "title": "Dataset Id"
+          },
+          "upload_id": {
+            "type": "string",
+            "title": "Upload Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          }
+        },
+        "type": "object",
+        "required": [
+          "dataset_id",
+          "upload_id",
+          "status"
+        ],
+        "title": "FinalizeAccepted",
+        "description": "202 body: the ingest outran finalize's inline budget. Poll\nGET /v1/uploads/{upload_id} until `terminal`."
+      },
+      "FinalizeResult": {
+        "properties": {
+          "dataset_id": {
+            "type": "string",
+            "title": "Dataset Id"
+          },
+          "image_count": {
+            "type": "integer",
+            "title": "Image Count"
+          },
+          "bytes": {
+            "type": "integer",
+            "title": "Bytes"
+          }
+        },
+        "type": "object",
+        "required": [
+          "dataset_id",
+          "image_count",
+          "bytes"
+        ],
+        "title": "FinalizeResult"
+      },
+      "Health": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "title": "Health"
+      },
+      "ImageInfo": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "size": {
+            "type": "integer",
+            "title": "Size"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "size"
+        ],
+        "title": "ImageInfo"
+      },
+      "ImageList": {
+        "properties": {
+          "dataset_id": {
+            "type": "string",
+            "title": "Dataset Id"
+          },
+          "images": {
+            "items": {
+              "$ref": "#/components/schemas/ImageInfo"
+            },
+            "type": "array",
+            "title": "Images"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          }
+        },
+        "type": "object",
+        "required": [
+          "dataset_id",
+          "images",
+          "total"
+        ],
+        "title": "ImageList"
+      },
+      "JobCreated": {
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "title": "Job Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "job_id"
+        ],
+        "title": "JobCreated"
+      },
+      "JobFailure": {
+        "properties": {
+          "code": {
+            "type": "string",
+            "title": "Code"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "stage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stage"
+          },
+          "retryable": {
+            "type": "boolean",
+            "title": "Retryable"
+          },
+          "class": {
+            "type": "string",
+            "title": "Class"
+          }
+        },
+        "type": "object",
+        "required": [
+          "code",
+          "message",
+          "retryable",
+          "class"
+        ],
+        "title": "JobFailure"
+      },
+      "JobGpu": {
+        "properties": {
+          "state": {
+            "type": "string",
+            "enum": [
+              "creating",
+              "loading",
+              "running"
+            ],
+            "title": "GpuState"
+          },
+          "provider": {
+            "type": "string",
+            "title": "Provider"
+          },
+          "started_at": {
+            "type": "string",
+            "title": "Started At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "state",
+          "provider",
+          "started_at"
+        ],
+        "title": "JobGpu"
+      },
+      "JobLabelSet": {
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "title": "Job Id"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          }
+        },
+        "type": "object",
+        "required": [
+          "job_id",
+          "label"
+        ],
+        "title": "JobLabelSet"
+      },
+      "JobProgress": {
+        "properties": {
+          "stage": {
+            "type": "string",
+            "title": "Stage"
+          },
+          "phase": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phase"
+          },
+          "mode": {
+            "type": "string",
+            "title": "Mode"
+          },
+          "current": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current"
+          },
+          "total": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total"
+          },
+          "unit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rate"
+          },
+          "eta_seconds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Eta Seconds"
+          },
+          "file": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File"
+          },
+          "file_index": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File Index"
+          },
+          "file_total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File Total"
+          },
+          "file_loaded": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File Loaded"
+          },
+          "file_size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File Size"
+          },
+          "observed_at": {
+            "type": "string",
+            "title": "Observed At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "stage",
+          "mode",
+          "observed_at"
+        ],
+        "title": "JobProgress"
+      },
+      "JobRequest": {
+        "properties": {
+          "pipeline_name": {
+            "type": "string",
+            "title": "Pipeline Name"
+          },
+          "config": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Config"
+          },
+          "node": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Node"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
+          "preset": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 100
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preset"
+          }
+        },
+        "type": "object",
+        "required": [
+          "pipeline_name",
+          "config"
+        ],
+        "title": "JobRequest"
+      },
+      "JobStatus": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "dataset_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dataset Id"
+          },
+          "pipeline_name": {
+            "type": "string",
+            "title": "Pipeline Name"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label",
+            "default": ""
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "terminal": {
+            "type": "boolean",
+            "title": "Terminal"
+          },
+          "steps": {
+            "items": {},
+            "type": "array",
+            "title": "Steps"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "node": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Node"
+          },
+          "worker_alive": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Worker Alive"
+          },
+          "heartbeat_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Heartbeat At"
+          },
+          "current_stage": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StageInfo"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "progress": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/JobProgress"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "failure": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/JobFailure"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "gpu": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/JobGpu"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "pipeline_name",
+          "status",
+          "terminal",
+          "steps",
+          "created_at"
+        ],
+        "title": "JobStatus"
+      },
+      "LabelBody": {
+        "properties": {
+          "label": {
+            "type": "string",
+            "title": "Label",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "title": "LabelBody",
+        "description": "The rename request for anything that carries a display name -- a dataset or a run."
+      },
+      "LabelSet": {
+        "properties": {
+          "dataset_id": {
+            "type": "string",
+            "title": "Dataset Id"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          }
+        },
+        "type": "object",
+        "required": [
+          "dataset_id",
+          "label"
+        ],
+        "title": "LabelSet"
+      },
+      "MultipartCompleted": {
+        "properties": {
+          "upload_id": {
+            "type": "string",
+            "title": "Upload Id"
+          },
+          "dataset_id": {
+            "type": "string",
+            "title": "Dataset Id"
+          },
+          "key": {
+            "type": "string",
+            "title": "Key"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          }
+        },
+        "type": "object",
+        "required": [
+          "upload_id",
+          "dataset_id",
+          "key",
+          "status"
+        ],
+        "title": "MultipartCompleted"
+      },
+      "MultipartCreated": {
+        "properties": {
+          "key": {
+            "type": "string",
+            "title": "Key"
+          },
+          "upload_id": {
+            "type": "string",
+            "title": "Upload Id"
+          },
+          "part_size": {
+            "type": "integer",
+            "title": "Part Size"
+          },
+          "part_count": {
+            "type": "integer",
+            "title": "Part Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "key",
+          "upload_id",
+          "part_size",
+          "part_count"
+        ],
+        "title": "MultipartCreated"
+      },
+      "MultipartReq": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "size": {
+            "type": "integer",
+            "title": "Size"
+          },
+          "content_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content Type"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "size"
+        ],
+        "title": "MultipartReq"
+      },
+      "NodeInfo": {
+        "properties": {
+          "node_id": {
+            "type": "string",
+            "title": "Node Id"
+          },
+          "host": {
+            "type": "string",
+            "title": "Host"
+          },
+          "gpu_model": {
+            "type": "string",
+            "title": "Gpu Model"
+          },
+          "gpu_vram_mb": {
+            "type": "integer",
+            "title": "Gpu Vram Mb"
+          },
+          "driver": {
+            "type": "string",
+            "title": "Driver"
+          },
+          "cpu_count": {
+            "type": "integer",
+            "title": "Cpu Count"
+          },
+          "ram_mb": {
+            "type": "integer",
+            "title": "Ram Mb"
+          },
+          "gpu_util": {
+            "type": "integer",
+            "title": "Gpu Util"
+          },
+          "gpu_mem_used_mb": {
+            "type": "integer",
+            "title": "Gpu Mem Used Mb"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "current_job": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Job"
+          },
+          "queued": {
+            "type": "integer",
+            "title": "Queued"
+          },
+          "last_seen_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Seen At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "node_id",
+          "host",
+          "gpu_model",
+          "gpu_vram_mb",
+          "driver",
+          "cpu_count",
+          "ram_mb",
+          "gpu_util",
+          "gpu_mem_used_mb",
+          "status",
+          "queued",
+          "last_seen_at"
+        ],
+        "title": "NodeInfo"
+      },
+      "NodeList": {
+        "properties": {
+          "nodes": {
+            "items": {
+              "$ref": "#/components/schemas/NodeInfo"
+            },
+            "type": "array",
+            "title": "Nodes"
+          },
+          "shared_queued": {
+            "type": "integer",
+            "title": "Shared Queued"
+          }
+        },
+        "type": "object",
+        "required": [
+          "nodes",
+          "shared_queued"
+        ],
+        "title": "NodeList"
+      },
+      "Ok": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "title": "Ok"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ok"
+        ],
+        "title": "Ok"
+      },
+      "OpenSession": {
+        "properties": {
+          "dataset_id": {
+            "type": "string",
+            "title": "Dataset Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "tags": {
+            "$ref": "#/components/schemas/Tags",
+            "default": {}
+          }
+        },
+        "type": "object",
+        "required": [
+          "dataset_id",
+          "status",
+          "created_at",
+          "label"
+        ],
+        "title": "OpenSession"
+      },
+      "OpenSessionList": {
+        "properties": {
+          "sessions": {
+            "items": {
+              "$ref": "#/components/schemas/OpenSession"
+            },
+            "type": "array",
+            "title": "Sessions"
+          }
+        },
+        "type": "object",
+        "required": [
+          "sessions"
+        ],
+        "title": "OpenSessionList"
+      },
+      "PartInfo": {
+        "properties": {
+          "part_number": {
+            "type": "integer",
+            "title": "Part Number"
+          },
+          "etag": {
+            "type": "string",
+            "title": "Etag"
+          }
+        },
+        "type": "object",
+        "required": [
+          "part_number",
+          "etag"
+        ],
+        "title": "PartInfo"
+      },
+      "PartUrl": {
+        "properties": {
+          "part_number": {
+            "type": "integer",
+            "title": "Part Number"
+          },
+          "url": {
+            "type": "string",
+            "title": "Url"
+          }
+        },
+        "type": "object",
+        "required": [
+          "part_number",
+          "url"
+        ],
+        "title": "PartUrl"
+      },
+      "PartUrlsReq": {
+        "properties": {
+          "key": {
+            "type": "string",
+            "title": "Key"
+          },
+          "part_numbers": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Part Numbers"
+          }
+        },
+        "type": "object",
+        "required": [
+          "key",
+          "part_numbers"
+        ],
+        "title": "PartUrlsReq"
+      },
+      "PartUrlsResult": {
+        "properties": {
+          "urls": {
+            "items": {
+              "$ref": "#/components/schemas/PartUrl"
+            },
+            "type": "array",
+            "title": "Urls"
+          },
+          "expires_in": {
+            "type": "integer",
+            "title": "Expires In"
+          }
+        },
+        "type": "object",
+        "required": [
+          "urls",
+          "expires_in"
+        ],
+        "title": "PartUrlsResult"
+      },
+      "PartsList": {
+        "properties": {
+          "parts": {
+            "items": {
+              "$ref": "#/components/schemas/UploadedPart"
+            },
+            "type": "array",
+            "title": "Parts"
+          }
+        },
+        "type": "object",
+        "required": [
+          "parts"
+        ],
+        "title": "PartsList"
+      },
+      "PipelineDefaults": {
+        "properties": {
+          "defaults": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "PipelineConfigDefaults"
+          }
+        },
+        "type": "object",
+        "required": [
+          "defaults"
+        ],
+        "title": "PipelineDefaults",
+        "description": "Named wrapper for a pipeline-specific seed config."
+      },
+      "PipelineForm": {
+        "properties": {
+          "groups": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "PipelineFormGroups"
+          },
+          "stage_presets": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "PipelineStagePresets"
+          }
+        },
+        "type": "object",
+        "required": [
+          "groups",
+          "stage_presets"
+        ],
+        "title": "PipelineForm",
+        "description": "Open form layout for pipeline config editors."
+      },
+      "PipelineInfo": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "supports_viewer": {
+            "type": "boolean",
+            "title": "Supports Viewer"
+          },
+          "run_name_field": {
+            "type": "string",
+            "title": "Run Name Field"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "label",
+          "supports_viewer",
+          "run_name_field"
+        ],
+        "title": "PipelineInfo"
+      },
+      "Preset": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "config": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "PresetConfig"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "config"
+        ],
+        "title": "Preset"
+      },
+      "PresetList": {
+        "properties": {
+          "presets": {
+            "items": {
+              "$ref": "#/components/schemas/PresetSummary"
+            },
+            "type": "array",
+            "title": "Presets"
+          }
+        },
+        "type": "object",
+        "required": [
+          "presets"
+        ],
+        "title": "PresetList"
+      },
+      "PresetSave": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "config": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "PresetSaveConfig"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "config"
+        ],
+        "title": "PresetSave"
+      },
+      "PresetSaved": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "title": "Ok"
+          },
+          "slug": {
+            "type": "string",
+            "title": "Slug"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ok",
+          "slug"
+        ],
+        "title": "PresetSaved"
+      },
+      "PresetSummary": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "PresetSummary"
+      },
+      "PresignReq": {
+        "properties": {
+          "names": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Names"
+          },
+          "expires_in": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires In"
+          }
+        },
+        "type": "object",
+        "required": [
+          "names"
+        ],
+        "title": "PresignReq"
+      },
+      "PresignResult": {
+        "properties": {
+          "urls": {
+            "items": {
+              "$ref": "#/components/schemas/PresignedPut"
+            },
+            "type": "array",
+            "title": "Urls"
+          },
+          "expires_in": {
+            "type": "integer",
+            "title": "Expires In"
+          }
+        },
+        "type": "object",
+        "required": [
+          "urls",
+          "expires_in"
+        ],
+        "title": "PresignResult"
+      },
+      "PresignedPut": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "key": {
+            "type": "string",
+            "title": "Key"
+          },
+          "url": {
+            "type": "string",
+            "title": "Url"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "key",
+          "url"
+        ],
+        "title": "PresignedPut"
+      },
+      "RunInfo": {
+        "properties": {
+          "pipeline": {
+            "type": "string",
+            "title": "Pipeline"
+          },
+          "run_name": {
+            "type": "string",
+            "title": "Run Name"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label",
+            "default": ""
+          },
+          "job_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Job Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "artifact_count": {
+            "type": "integer",
+            "title": "Artifact Count"
+          },
+          "bytes": {
+            "type": "integer",
+            "title": "Bytes"
+          },
+          "primary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Primary"
+          },
+          "node": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Node"
+          }
+        },
+        "type": "object",
+        "required": [
+          "pipeline",
+          "run_name",
+          "status",
+          "created_at",
+          "artifact_count",
+          "bytes"
+        ],
+        "title": "RunInfo"
+      },
+      "RunList": {
+        "properties": {
+          "dataset_id": {
+            "type": "string",
+            "title": "Dataset Id"
+          },
+          "runs": {
+            "items": {
+              "$ref": "#/components/schemas/RunInfo"
+            },
+            "type": "array",
+            "title": "Runs"
+          }
+        },
+        "type": "object",
+        "required": [
+          "dataset_id",
+          "runs"
+        ],
+        "title": "RunList"
+      },
+      "RuntimeSettings": {
+        "properties": {
+          "revision": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Revision",
+            "default": 1
+          },
+          "client": {
+            "$ref": "#/components/schemas/ClientPolicy"
+          },
+          "max_upload_bytes": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Max Upload Bytes",
+            "default": 32212254720
+          },
+          "upload_gc_ttl_seconds": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Upload Gc Ttl Seconds",
+            "default": 604800
+          },
+          "min_free_bytes": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Min Free Bytes",
+            "default": 21474836480
+          },
+          "presign_expiry_seconds": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Presign Expiry Seconds",
+            "default": 3600
+          },
+          "presign_max_expiry_seconds": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Presign Max Expiry Seconds",
+            "default": 43200
+          },
+          "presign_max_names": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Presign Max Names",
+            "default": 5000
+          },
+          "multipart_threshold_bytes": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Multipart Threshold Bytes",
+            "default": 16777216
+          },
+          "s3_part_size_bytes": {
+            "type": "integer",
+            "minimum": 5242880.0,
+            "title": "S3 Part Size Bytes",
+            "default": 33554432
+          },
+          "s3_transfer_concurrency": {
+            "type": "integer",
+            "maximum": 128.0,
+            "minimum": 1.0,
+            "title": "S3 Transfer Concurrency",
+            "default": 16
+          },
+          "log_stream_maxlen": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Log Stream Maxlen",
+            "default": 5000
+          },
+          "job_heartbeat_ttl_seconds": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Job Heartbeat Ttl Seconds",
+            "default": 90
+          },
+          "job_heartbeat_interval_seconds": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Job Heartbeat Interval Seconds",
+            "default": 30
+          },
+          "job_cancel_ttl_seconds": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Job Cancel Ttl Seconds",
+            "default": 86400
+          },
+          "node_ttl_seconds": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Node Ttl Seconds",
+            "default": 45
+          },
+          "node_heartbeat_interval_seconds": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Node Heartbeat Interval Seconds",
+            "default": 15
+          },
+          "job_credential_ttl_seconds": {
+            "type": "integer",
+            "maximum": 7200.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Job Credential Ttl Seconds",
+            "default": 7200
+          },
+          "job_credential_burst": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Job Credential Burst",
+            "default": 10
+          },
+          "job_credential_burst_window_seconds": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Job Credential Burst Window Seconds",
+            "default": 60
+          },
+          "rental_enabled": {
+            "type": "boolean",
+            "title": "Rental Enabled",
+            "default": true
+          },
+          "rental_provider": {
+            "type": "string",
+            "enum": [
+              "vast",
+              "runpod"
+            ],
+            "title": "Rental Provider",
+            "default": "vast"
+          },
+          "rental_plan_interval_seconds": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Rental Plan Interval Seconds",
+            "default": 15
+          },
+          "rental_sweep_interval_seconds": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Rental Sweep Interval Seconds",
+            "default": 300
+          },
+          "rental_gpu_name": {
+            "type": "string",
+            "title": "Rental Gpu Name",
+            "default": "RTX 5090"
+          },
+          "rental_secure_cloud": {
+            "type": "boolean",
+            "title": "Rental Secure Cloud",
+            "default": true
+          },
+          "rental_geolocations": {
+            "type": "string",
+            "title": "Rental Geolocations",
+            "default": ""
+          },
+          "rental_disk_gb": {
+            "type": "number",
+            "exclusiveMinimum": 0.0,
+            "title": "Rental Disk Gb",
+            "default": 50
+          },
+          "rental_min_reliability": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Rental Min Reliability",
+            "default": 0.98
+          },
+          "rental_idle_seconds": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Rental Idle Seconds",
+            "default": 300
+          },
+          "rental_boot_seconds": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Rental Boot Seconds",
+            "default": 1200
+          },
+          "rental_max_attempts": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Rental Max Attempts",
+            "default": 2
+          },
+          "rental_max_hours": {
+            "type": "number",
+            "exclusiveMinimum": 0.0,
+            "title": "Rental Max Hours",
+            "default": 6
+          },
+          "rental_max_usd_per_hour": {
+            "type": "number",
+            "exclusiveMinimum": 0.0,
+            "title": "Rental Max Usd Per Hour",
+            "default": 2
+          },
+          "rental_max_concurrent": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Rental Max Concurrent",
+            "default": 8
+          },
+          "rental_expected_down_gib": {
+            "type": "number",
+            "minimum": 0.0,
+            "title": "Rental Expected Down Gib",
+            "default": 20
+          },
+          "rental_expected_up_gib": {
+            "type": "number",
+            "minimum": 0.0,
+            "title": "Rental Expected Up Gib",
+            "default": 10
+          },
+          "rental_reconcile_seconds": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Rental Reconcile Seconds",
+            "default": 300
+          },
+          "accounts_outage_grace_seconds": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Accounts Outage Grace Seconds",
+            "default": 900
+          },
+          "transcribe_limits_enforced": {
+            "type": "boolean",
+            "title": "Transcribe Limits Enforced",
+            "default": true
+          },
+          "transcribe_max_upload_bytes": {
+            "type": "integer",
+            "maximum": 26214400.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Transcribe Max Upload Bytes",
+            "default": 26214400
+          },
+          "transcribe_max_duration_seconds": {
+            "type": "integer",
+            "maximum": 3600.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Transcribe Max Duration Seconds",
+            "default": 600
+          },
+          "transcribe_principal_concurrency": {
+            "type": "integer",
+            "maximum": 16.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Transcribe Principal Concurrency",
+            "default": 1
+          },
+          "transcribe_principal_requests_per_minute": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Transcribe Principal Requests Per Minute",
+            "default": 6
+          },
+          "transcribe_principal_request_burst": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Transcribe Principal Request Burst",
+            "default": 2
+          },
+          "transcribe_principal_audio_seconds_per_hour": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Transcribe Principal Audio Seconds Per Hour",
+            "default": 600
+          },
+          "transcribe_principal_audio_seconds_per_day": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Transcribe Principal Audio Seconds Per Day",
+            "default": 3600
+          },
+          "transcribe_global_concurrency": {
+            "type": "integer",
+            "maximum": 64.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Transcribe Global Concurrency",
+            "default": 4
+          },
+          "transcribe_global_requests_per_minute": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Transcribe Global Requests Per Minute",
+            "default": 16
+          },
+          "transcribe_global_request_burst": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Transcribe Global Request Burst",
+            "default": 4
+          },
+          "transcribe_global_audio_seconds_per_hour": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Transcribe Global Audio Seconds Per Hour",
+            "default": 5760
+          },
+          "transcribe_global_audio_seconds_per_day": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Transcribe Global Audio Seconds Per Day",
+            "default": 23040
+          },
+          "transcribe_usd_per_audio_hour": {
+            "type": "number",
+            "minimum": 0.0,
+            "title": "Transcribe Usd Per Audio Hour",
+            "default": 0.04
+          },
+          "max_datasets_per_user": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Max Datasets Per User",
+            "default": 0
+          },
+          "max_concurrent_jobs_per_user": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Max Concurrent Jobs Per User",
+            "default": 0
+          },
+          "gpu_seconds_allowance_per_gpx": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Gpu Seconds Allowance Per Gpx",
+            "default": 400
+          },
+          "gpu_seconds_allowance_floor": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Gpu Seconds Allowance Floor",
+            "default": 7200
+          },
+          "max_job_gpu_seconds": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Max Job Gpu Seconds",
+            "default": 21600
+          },
+          "max_delivery_seconds": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Max Delivery Seconds",
+            "default": 21600
+          },
+          "max_credits_per_hour": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Max Credits Per Hour",
+            "default": 12000
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "RuntimeSettings"
+      },
+      "SessionCreated": {
+        "properties": {
+          "dataset_id": {
+            "type": "string",
+            "title": "Dataset Id"
+          },
+          "tags": {
+            "$ref": "#/components/schemas/Tags",
+            "default": {}
+          }
+        },
+        "type": "object",
+        "required": [
+          "dataset_id"
+        ],
+        "title": "SessionCreated"
+      },
+      "SessionImage": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "bytes": {
+            "type": "integer",
+            "title": "Bytes"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "bytes"
+        ],
+        "title": "SessionImage"
+      },
+      "SessionListing": {
+        "properties": {
+          "dataset_id": {
+            "type": "string",
+            "title": "Dataset Id"
+          },
+          "images": {
+            "items": {
+              "$ref": "#/components/schemas/SessionImage"
+            },
+            "type": "array",
+            "title": "Images"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          },
+          "bytes": {
+            "type": "integer",
+            "title": "Bytes"
+          }
+        },
+        "type": "object",
+        "required": [
+          "dataset_id",
+          "images",
+          "count",
+          "bytes"
+        ],
+        "title": "SessionListing"
+      },
+      "SessionReq": {
+        "properties": {
+          "tags": {
+            "$ref": "#/components/schemas/Tags",
+            "default": {}
+          }
+        },
+        "type": "object",
+        "title": "SessionReq"
+      },
+      "SparseCameras": {
+        "properties": {
+          "cameras": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Cameras"
+          }
+        },
+        "type": "object",
+        "required": [
+          "cameras"
+        ],
+        "title": "SparseCameras"
+      },
+      "SparseSummary": {
+        "properties": {
+          "model": {
+            "type": "string",
+            "title": "Model"
+          },
+          "points": {
+            "type": "integer",
+            "title": "Points"
+          },
+          "cameras": {
+            "type": "integer",
+            "title": "Cameras"
+          },
+          "has_geo": {
+            "type": "boolean",
+            "title": "Has Geo"
+          },
+          "bbox": {
+            "$ref": "#/components/schemas/BBox"
+          }
+        },
+        "type": "object",
+        "required": [
+          "model",
+          "points",
+          "cameras",
+          "has_geo",
+          "bbox"
+        ],
+        "title": "SparseSummary"
+      },
+      "StageInfo": {
+        "properties": {
+          "phase": {
+            "type": "string",
+            "title": "Phase"
+          },
+          "step": {
+            "type": "string",
+            "title": "Step"
+          },
+          "index": {
+            "type": "integer",
+            "title": "Index"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "returncode": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Returncode"
+          },
+          "seconds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Seconds"
+          }
+        },
+        "type": "object",
+        "required": [
+          "phase",
+          "step",
+          "index",
+          "total"
+        ],
+        "title": "StageInfo"
+      },
+      "TagOptions": {
+        "properties": {
+          "keys": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Keys"
+          },
+          "values": {
+            "additionalProperties": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "type": "object",
+            "title": "Values"
+          },
+          "restricted_to": {
+            "additionalProperties": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "type": "object",
+            "title": "Restricted To"
+          }
+        },
+        "type": "object",
+        "required": [
+          "keys",
+          "values",
+          "restricted_to"
+        ],
+        "title": "TagOptions"
+      },
+      "Tags": {
+        "additionalProperties": {
+          "type": "string"
+        },
+        "type": "object",
+        "title": "Tags"
+      },
+      "TagsBody": {
+        "properties": {
+          "tags": {
+            "$ref": "#/components/schemas/Tags"
+          }
+        },
+        "type": "object",
+        "required": [
+          "tags"
+        ],
+        "title": "TagsBody"
+      },
+      "TagsSet": {
+        "properties": {
+          "dataset_id": {
+            "type": "string",
+            "title": "Dataset Id"
+          },
+          "tags": {
+            "$ref": "#/components/schemas/Tags"
+          }
+        },
+        "type": "object",
+        "required": [
+          "dataset_id",
+          "tags"
+        ],
+        "title": "TagsSet"
+      },
+      "TranscriptionResult": {
+        "properties": {
+          "text": {
+            "type": "string",
+            "title": "Text"
+          }
+        },
+        "type": "object",
+        "required": [
+          "text"
+        ],
+        "title": "TranscriptionResult"
+      },
+      "UploadStatus": {
+        "properties": {
+          "upload_id": {
+            "type": "string",
+            "title": "Upload Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "terminal": {
+            "type": "boolean",
+            "title": "Terminal"
+          },
+          "dataset_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dataset Id"
+          },
+          "bytes_received": {
+            "type": "integer",
+            "title": "Bytes Received"
+          },
+          "total_size": {
+            "type": "integer",
+            "title": "Total Size"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "required": [
+          "upload_id",
+          "status",
+          "terminal",
+          "bytes_received",
+          "total_size"
+        ],
+        "title": "UploadStatus"
+      },
+      "UploadedPart": {
+        "properties": {
+          "part_number": {
+            "type": "integer",
+            "title": "Part Number"
+          },
+          "etag": {
+            "type": "string",
+            "title": "Etag"
+          },
+          "size": {
+            "type": "integer",
+            "title": "Size"
+          }
+        },
+        "type": "object",
+        "required": [
+          "part_number",
+          "etag",
+          "size"
+        ],
+        "title": "UploadedPart"
+      },
+      "FieldError": {
+        "description": "One rejected input. Exactly one of `pointer` (JSON body, RFC 6901), `parameter`\n(query or path name) and `header` says where it is.",
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "pointer": {
+            "title": "Pointer",
+            "type": "string"
+          },
+          "parameter": {
+            "title": "Parameter",
+            "type": "string"
+          },
+          "header": {
+            "title": "Header",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "detail"
+        ],
+        "title": "FieldError",
+        "type": "object"
+      },
+      "Problem": {
+        "description": "Body of every non-2xx response (`application/problem+json`, RFC 9457). Branch on\n`code`; `detail` is text for a developer. `errors` comes with `validation_failed`,\n`required` and `available` with a credit refusal, `hold_reason` with `service_held`.",
+        "properties": {
+          "type": {
+            "title": "Type",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "integer"
+          },
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "request_id": {
+            "title": "Request Id",
+            "type": "string"
+          },
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "errors": {
+            "items": {
+              "$ref": "#/components/schemas/FieldError"
+            },
+            "title": "Errors",
+            "type": "array"
+          },
+          "required": {
+            "title": "Required",
+            "type": "integer"
+          },
+          "available": {
+            "title": "Available",
+            "type": "integer"
+          },
+          "hold_reason": {
+            "title": "Hold Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "title",
+          "status",
+          "code",
+          "request_id"
+        ],
+        "title": "Problem",
+        "type": "object"
+      },
+      "JobArtifactEvent": {
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "format": {
+            "title": "Format",
+            "type": "string"
+          },
+          "size": {
+            "title": "Size",
+            "type": "integer"
+          },
+          "primary": {
+            "title": "Primary",
+            "type": "boolean"
+          },
+          "state": {
+            "const": "available",
+            "title": "State",
+            "type": "string"
+          },
+          "available_at": {
+            "title": "Available At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "kind",
+          "format",
+          "size",
+          "primary",
+          "state",
+          "available_at"
+        ],
+        "title": "JobArtifactEvent",
+        "type": "object"
+      },
+      "JobDatasetEvent": {
+        "description": "The dataset-level deliverable of a run, once it is readable in the store.\n`name` is the model subdir under datasets/{id}/sparse/ ('0_geo' when the run\ngeo-registered), and `url` is the endpoint that serves it.",
+        "properties": {
+          "dataset_id": {
+            "title": "Dataset Id",
+            "type": "string"
+          },
+          "kind": {
+            "const": "sparse",
+            "title": "Kind",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "size": {
+            "title": "Size",
+            "type": "integer"
+          },
+          "state": {
+            "const": "available",
+            "title": "State",
+            "type": "string"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          },
+          "available_at": {
+            "title": "Available At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "dataset_id",
+          "kind",
+          "name",
+          "size",
+          "state",
+          "url",
+          "available_at"
+        ],
+        "title": "JobDatasetEvent",
+        "type": "object"
+      },
+      "JobPullProgress": {
+        "description": "How far a rented box has got through pulling its image. Layer-grained because that\nis all Vast reports.",
+        "properties": {
+          "layer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Layer"
+          },
+          "phase": {
+            "enum": [
+              "waiting",
+              "pulling fs layer",
+              "downloading",
+              "verifying checksum",
+              "download complete",
+              "extracting",
+              "pull complete",
+              "loaded",
+              "error"
+            ],
+            "title": "PullPhase",
+            "type": "string"
+          },
+          "layers_done": {
+            "title": "Layers Done",
+            "type": "integer"
+          },
+          "layers_total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Layers Total"
+          }
+        },
+        "required": [
+          "layer",
+          "phase",
+          "layers_done",
+          "layers_total"
+        ],
+        "title": "JobPullProgress",
+        "type": "object"
+      },
+      "JobGpuEvent": {
+        "properties": {
+          "state": {
+            "enum": [
+              "creating",
+              "loading",
+              "running"
+            ],
+            "title": "GpuState",
+            "type": "string"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "started_at": {
+            "title": "Started At",
+            "type": "string"
+          },
+          "pull": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/JobPullProgress"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "state",
+          "provider",
+          "started_at",
+          "pull"
+        ],
+        "title": "JobGpuEvent",
+        "type": "object"
+      }
+    },
+    "securitySchemes": {
+      "BearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "A gp_live_ API key or a Keycloak OIDC access token."
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "Jobs",
+      "description": "Submit, monitor, and cancel reconstruction jobs."
+    },
+    {
+      "name": "Datasets",
+      "description": "Datasets, their runs, and source images."
+    },
+    {
+      "name": "Artifacts",
+      "description": "List and download run outputs (307 -> presigned URL)."
+    },
+    {
+      "name": "Sparse",
+      "description": "COLMAP sparse-model read endpoints (for a 3D viewer)."
+    },
+    {
+      "name": "Upload",
+      "description": "Presigned S3 image-upload flow (sessions / multipart)."
+    },
+    {
+      "name": "Meta",
+      "description": "Health probe, client bootstrap, pipeline catalog, per-pipeline config form + presets, price catalog."
+    },
+    {
+      "name": "Nodes",
+      "description": "GPU fleet view: node specs, live status, queue depths."
+    },
+    {
+      "name": "Billing",
+      "description": "Credit balance and pre-submit quotes; credits are bought in Studio."
+    },
+    {
+      "name": "Access",
+      "description": "The caller's effective account and capabilities."
+    }
+  ],
+  "security": [
+    {
+      "BearerAuth": []
+    }
+  ]
+}
